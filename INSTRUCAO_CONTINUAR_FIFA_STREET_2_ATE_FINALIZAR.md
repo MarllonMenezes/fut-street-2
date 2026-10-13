@@ -354,6 +354,16 @@ Não executar XBE/`--launch`; headless/replay original não alegados. Gates
 `NOT_READY`. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.48, 2026-10-13): patches 0009–0010
+adicionam DAA/DAS/AF e guard conservador de CF no mesmo basic block. Sites sem
+evidência de CF permanecem não traduzidos; não inferir flags entre blocos nem
+declarar alcançabilidade. Pilha limpa 0001–0010: 531 passed/38 skipped;
+geração 15702/15702, zero falhas, 71 stubs, 96 instruções/29 mnemonics sem
+lowering; Release/link, CTest 4/4 e `--help` aprovados. Nenhum XBE iniciado;
+nenhum boot/headless/replay do jogo alegado. Gates permanecem `NOT_READY`,
+projeto não concluído. ISO somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 

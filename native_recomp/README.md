@@ -160,3 +160,27 @@ XboxRecomp v0.13.1 and does not execute the XBE.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0008-lift-aam-aad-immediate-base.patch'
 ```
+
+Patch `0009-lift-daa-das-and-track-af.patch` follows patches 0001–0008. It
+tracks auxiliary carry only in functions where DAA/DAS or LAHF reads it, and
+adds the AF effects needed by the supported arithmetic producers. DAA/DAS
+sites use the Intel decimal-adjust transformations and update the defined
+AL/CF/AF/SF/ZF/PF results; undefined flags are not promoted to known values.
+This is static instruction lowering, not evidence that any site executes in
+the game.
+
+Patch `0010-guard-decimal-adjust-unknown-cf.patch` follows patches 0001–0009.
+It conservatively lowers a DAA/DAS site only when a CF-producing instruction
+appears earlier in that same basic block. It intentionally does not infer
+inter-block or path-sensitive flag provenance; unsupported sites remain
+`RECOMP_UNIMPL`, and their later flag snapshots are invalidated to avoid stale
+conditions. This filter is a safety boundary, not a proof of reachability or
+that all incoming paths define CF.
+
+The clean 0001–0010 stack was tested against pinned XboxRecomp v0.13.1
+(`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`): 531 tests passed, 38 skipped;
+generation translated 15,702/15,702 functions with zero generation failures,
+71 call stubs, and 96 unsupported instruction sites across 29 mnemonics.
+The 64 generated C translation units built and linked in Release, and CTest
+passed 4/4. These are translator/build checks only: no XBE boot, rendering,
+assets, gameplay, animation, or audio gate is claimed as validated.

@@ -6470,6 +6470,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Pilha limpa 0001–0008: `525 passed, 38 skipped`; geração 15702/15702, 71 stubs, TODOs `116/29` mnemonics; CMake Release/link, CTest 4/4 e `--help` aprovados.
 - XBE não executado; sem headless/replay original ou alegação de alcance. Gates `NOT_READY`. ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Prosseguir por evidência e publicar cada marco validado.
 
+## Continuação após a etapa 1.48 (2026-10-13)
+
+- Patches 0009–0010 implementam DAA/DAS com AF e preservam sites sem produtor de CF no mesmo bloco como não traduzidos; não há inferência interblocos nem alcance alegado.
+- Pilha limpa 0001–0010: 531 testes aprovados, 38 ignorados; geração 15702/15702, zero falhas, 71 stubs, 96 instruções/29 mnemonics sem lowering.
+- CMake Release/link das 64 unidades C e CTest 4/4 passaram; `--help` passou. Nenhum XBE iniciado; sem runtime headless/replay do jogo. Gates `NOT_READY`, projeto incompleto.
+- ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Próxima prioridade: investigar famílias restantes por evidência arquitetural, começando AAA/AAS e cobertura de exceções/flags; manter TODO nos casos sem semântica segura.
+
 
 
 

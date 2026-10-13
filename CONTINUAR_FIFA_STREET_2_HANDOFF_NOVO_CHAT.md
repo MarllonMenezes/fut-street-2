@@ -4492,6 +4492,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Aplicação reproduzida sobre XboxRecomp v0.13.1 fixado após patches 0001–0007. Testes: 525 passed, 38 skipped; geração: 15702/15702 funções, 71 call stubs, 116 instruções/29 mnemonics sem lowering.
 - CMake Release compilou 64 unidades e linkou; CTest 4/4 e `--help` passaram. XBE não iniciado; sem boot/headless/replay original. ISO SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; readiness `NOT_READY`.
 
+## Continuação após a etapa 1.48 (2026-10-13)
+
+- Patches 0009–0010 adicionam lowering conservador para DAA/DAS/AF. DAA/DAS só traduz quando há produtor de CF no mesmo bloco; os demais permanecem não implementados, sem alegar análise de caminhos/alcançabilidade.
+- Testes limpos XboxRecomp v0.13.1: 531 passed, 38 skipped. Geração: 15702/15702 funções, zero falhas, 71 stubs, 96 TODOs em 29 mnemonics. Release compilou/linkou 64 unidades; CTest 4/4 e `--help` passaram.
+- Nenhum XBE executado; não alegar boot/headless/replay do jogo. Gates rendering/assets/gameplay/áudio `NOT_READY`; projeto não concluído. ISO SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`, somente leitura.
+
 
 
 

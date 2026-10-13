@@ -1,0 +1,268 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -339,6 +339,7 @@ FLAG_SETTERS = frozenset({
+     "cmp", "test", "sub", "add", "and", "or", "xor",
+     "inc", "dec", "neg", "shl", "shr", "sar", "imul", "adc", "sbb",
+     "comiss", "comisd", "ucomiss", "ucomisd",  # SSE float compare
++    "daa", "das",
+     "aam", "aad",  # SF/ZF/PF are defined; CF/AF/OF are undefined
+ })
+ 
+@@ -366,6 +367,7 @@ _RESULT_SRC_SETTERS = frozenset({"add", "sub"})
+ 
+ CF_TRACKED = frozenset({
+     "add", "sub", "adc", "sbb", "shl", "shr", "sar",
++    "daa", "das",
+ })
+ 
+ # bt reports CF without touching the operand, so its CF can be rebuilt at the
+@@ -530,6 +532,23 @@ def _make_condition(jcc, flag_setter, flag_ops):
+             return f"({odd} {parity})", desc
+         return None
+ 
++    # DAA/DAS define SF, ZF and PF from adjusted AL. CF is tracked in _cf;
++    # OF is undefined.
++    if flag_setter in ("daa", "das"):
++        if jcc in ("je", "jz"):
++            return "(_fa == 0)", desc
++        if jcc in ("jne", "jnz"):
++            return "(_fa != 0)", desc
++        if jcc == "js":
++            return "(_fas < 0)", desc
++        if jcc == "jns":
++            return "(_fas >= 0)", desc
++        if jcc in ("jp", "jpe", "jnp", "jpo"):
++            odd = "((0x6996u >> ((_fa ^ (_fa >> 4)) & 0xFu)) & 1u)"
++            parity = "== 0" if jcc in ("jp", "jpe") else "!= 0"
++            return f"({odd} {parity})", desc
++        return None
++
+     # A join whose predecessors disagree on which instruction set the flags,
+     # but agree that the zero flag came from the same destination register.
+     #
+@@ -1314,6 +1333,7 @@ class Lifter:
+         self.func_start = 0  # Set per-function by translator
+         self.func_end = 0
+         self.needs_cf = False  # Set per-function by translator (has adc/sbb)
++        self.needs_af = False  # Set per-function when DAA/DAS or LAHF reads AF
+         self.publishes_ebp = False  # Set per-function: has a real frame
+         self.trace_exit_name = None  # Set per-function when traced
+         self.force_return_value = None   # Set per-function by --force-return
+@@ -1687,6 +1707,27 @@ class Lifter:
+         if m == "salc":
+             return ["SET_LO8(eax, _cf ? 0xFFu : 0u); /* salc: AL = CF ? 0xFF : 0 */"]
+ 
++        if m in ("daa", "das"):
++            if not self.needs_cf or not self.needs_af:
++                return self._unimplemented(insn, m)
++            if m == "daa":
++                adjust_low = "_al += 6u; _cf_out = _old_cf || (_al > 0xFFu);"
++                adjust_high = "_al += 0x60u;"
++            else:
++                adjust_low = "_cf_out = _old_cf || (_al < 6u); _al -= 6u;"
++                adjust_high = "_al -= 0x60u;"
++            return [
++                "{ uint32_t _old_al = LO8(eax), _al = _old_al;",
++                "  int _old_cf = _cf, _cf_out = 0, _af_out = 0;",
++                f"  if (((_old_al & 0x0Fu) > 9u) || _af) {{ {adjust_low} _af_out = 1; }}",
++                "  if (_al > 0xFFu) _al &= 0xFFu;",
++                "  if (_old_al > 0x99u || _old_cf) { " + adjust_high + " _cf_out = 1; }",
++                "  _al &= 0xFFu; SET_LO8(eax, _al);",
++                "  _cf = _cf_out; _af = _af_out;",
++                "  _fa = _al; _fas = (int32_t)(int8_t)_al;",
++                f"}} /* {m}: decimal adjust AL */",
++            ]
++
+         if m in ("aam", "aad"):
+             if (len(ops) != 1 or ops[0].type != "imm"
+                     or ops[0].imm == 0):
+@@ -1986,6 +2027,10 @@ class Lifter:
+                 out.append("_cf = 0; /* logical op clears CF */")
+         out.append(_fmt_operand_write(ops[0], expr))
+         out.append(self._result_snapshot(ops, m))
++        if self.needs_af and m == "add":
++            out.append("_af = ((_fa & 0xFu) < (_fb & 0xFu)); /* add auxiliary carry */")
++        elif self.needs_af and m == "sub":
++            out.append("_af = (((_fa & 0xFu) + (_fb & 0xFu)) > 0xFu); /* sub auxiliary borrow */")
+         return out
+ 
+     def _lift_inc_dec(self, insn, ops, m):
+@@ -2005,6 +2050,8 @@ class Lifter:
+         overflow_result = (1 << (size * 8 - 1)) - (m == "dec")
+         out += [f"_fa = (uint32_t)({val}) & {mask};",
+                 f"_fas = (int32_t){sx}(_fa); _fb = (_fa == 0x{overflow_result:X}u); /* {m} result/SF/OF; CF unchanged */"]
++        if self.needs_af:
++            out.append(f"_af = ((_fa & 0xFu) == 0x{'0' if m == 'inc' else 'F'}u); /* {m} auxiliary carry */")
+         return out
+ 
+     def _lift_neg(self, insn, ops, preserve_carry=False):
+@@ -2017,6 +2064,8 @@ class Lifter:
+             out.append(f"_cf = (int)(({val}) != 0);")
+         out.append(_fmt_operand_write(ops[0], f"(uint32_t)(-(int32_t){val})"))
+         out.append(self._result_snapshot(ops, "neg"))
++        if self.needs_af:
++            out.append("_af = ((_fa & 0xFu) != 0); /* neg auxiliary carry */")
+         return out
+ 
+     def _lift_not(self, insn, ops):
+@@ -2033,10 +2082,22 @@ class Lifter:
+         src = _fmt_operand_read(ops[1])
+         # sbb reg, reg is a common idiom: result is 0 or 0xFFFFFFFF depending on CF
+         if ops[0].type == "reg" and ops[1].type == "reg" and ops[0].reg == ops[1].reg:
++            if self.needs_af:
++                return ["_af = _cf; /* sbb same operand auxiliary borrow */",
++                        _fmt_operand_write(ops[0], "_cf ? 0xFFFFFFFF : 0")
++                        + " /* sbb self (CF extend) */",
++                        self._result_snapshot(ops, "sbb")]
+             return [_fmt_operand_write(ops[0], "_cf ? 0xFFFFFFFF : 0")
+                     + " /* sbb self (CF extend) */",
+                     self._result_snapshot(ops, "sbb")]
+         w = (_operand_width(ops[0]) or 4) * 8
++        if self.needs_af:
++            return ["{ uint32_t _orig_a = (uint32_t)(%s), _orig_b = (uint32_t)(%s); int _cin = _cf;"
++                    " _af = ((_orig_a & 0xFu) < ((_orig_b & 0xFu) + (uint32_t)_cin));"
++                    " uint64_t _t = (uint64_t)_orig_a - (uint64_t)_orig_b - (uint64_t)_cin;"
++                    " _cf = (int)((_t >> %d) & 1); %s } /* sbb */" %
++                    (dst, src, w, _fmt_operand_write(ops[0], "(uint32_t)_t")),
++                    self._result_snapshot(ops, "sbb")]
+         return ["{ uint64_t _t = (uint64_t)(%s) - (uint64_t)(%s) - (uint64_t)_cf;"
+                 " _cf = (int)((_t >> %d) & 1); %s }  /* sbb */"
+                 % (dst, src, w, _fmt_operand_write(ops[0], "(uint32_t)_t")),
+@@ -2049,6 +2110,13 @@ class Lifter:
+         dst = _fmt_operand_read(ops[0])
+         src = _fmt_operand_read(ops[1])
+         w = (_operand_width(ops[0]) or 4) * 8
++        if self.needs_af:
++            return ["{ uint32_t _orig_a = (uint32_t)(%s), _orig_b = (uint32_t)(%s); int _cin = _cf;"
++                    " _af = (((_orig_a & 0xFu) + (_orig_b & 0xFu) + (uint32_t)_cin) > 0xFu);"
++                    " uint64_t _t = (uint64_t)_orig_a + (uint64_t)_orig_b + (uint64_t)_cin;"
++                    " _cf = (int)((_t >> %d) & 1); %s } /* adc */" %
++                    (dst, src, w, _fmt_operand_write(ops[0], "(uint32_t)_t")),
++                    self._result_snapshot(ops, "adc")]
+         return ["{ uint64_t _t = (uint64_t)(%s) + (uint64_t)(%s) + (uint64_t)_cf;"
+                 " _cf = (int)((_t >> %d) & 1); %s }  /* adc */"
+                 % (dst, src, w, _fmt_operand_write(ops[0], "(uint32_t)_t")),
+@@ -2291,6 +2359,8 @@ class Lifter:
+             f"_fas = (int32_t){sx}(_fa); _fbs = (int32_t){sx}(_fb);"
+             f" /* {kind} {lhs}, {rhs} ({size*8}-bit) */",
+         ]
++        if self.needs_af and kind == "cmp":
++            out.append("_af = ((_fa & 0xFu) < (_fb & 0xFu)); /* cmp auxiliary borrow */")
+         # A cmp sets the carry flag too, and sbb/adc/setc/rcl read it directly
+         # rather than through _fa/_fb. Leaving CF alone here let those pick up
+         # whatever an earlier instruction had left in it.
+@@ -3968,6 +4038,8 @@ def lift_basic_block(lifter, bb, flag_state=None):
+         # conditions the jcc forms use. AF is not modelled and reads 0.
+         if curr.mnemonic == "lahf" and last_flag_setter:
+             bits = []
++            if lifter.needs_af:
++                bits.append("((_af ? 0x10u : 0u))")
+             for jcc, bit in (("js", 0x80), ("je", 0x40), ("jp", 0x04),
+                              ("jb", 0x01)):
+                 probe = _make_condition(jcc, last_flag_setter, last_flag_ops)
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1375,7 +1375,7 @@ class FunctionTranslator:
+         last_setter = None
+         for insn in instructions:
+             m = insn.mnemonic
+-            if m in ("adc", "sbb", "stc", "clc", "cmc", "rcl", "rcr", "salc"):
++            if m in ("adc", "sbb", "stc", "clc", "cmc", "rcl", "rcr", "salc", "daa", "das", "lahf"):
+                 return True
+             cc = None
+             if m.startswith("j") and len(m) > 1:
+@@ -1401,6 +1401,12 @@ class FunctionTranslator:
+                 last_setter = None
+         return False
+ 
++    @staticmethod
++    def _function_needs_af(instructions):
++        """True when a function reads AF or exports it through LAHF."""
++        return any(insn.mnemonic in ("daa", "das", "lahf")
++                   for insn in instructions)
++
+     def _func_has_prologue(self, instructions):
+         """Check if function starts with push ebp; mov ebp, esp."""
+         if len(instructions) < 2:
+@@ -2351,11 +2357,15 @@ class FunctionTranslator:
+         has_carry = self._function_needs_cf(instructions)
+         if has_carry:
+             lines.append(f"    int _cf = 0; /* carry flag */")
++        has_auxiliary = self._function_needs_af(instructions)
++        if has_auxiliary:
++            lines.append("    int _af = 0; /* auxiliary carry flag */")
+         # Only functions that consume CF pay for producing it: an adc/sbb
+         # reading a never-written _cf silently drops every carry, which
+         # corrupts multi-word arithmetic (add/adc pairs) and the shr/adc
+         # idiom MSVC emits for odd trailing elements.
+         self.lifter.needs_cf = has_carry
++        self.lifter.needs_af = has_auxiliary
+         self.lifter.publishes_ebp = self._func_owns_a_frame(instructions)
+ 
+         # SSE and MMX are architectural state, declared globally by the
+diff --git a/tools/recomp/test_lifter_daa_das.py b/tools/recomp/test_lifter_daa_das.py
+new file mode 100644
+--- /dev/null
++++ b/tools/recomp/test_lifter_daa_das.py
+@@ -0,0 +1,59 @@
++import unittest
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter, _make_condition
++from .translator import FunctionTranslator
++
++
++class DaaDasLifterTest(unittest.TestCase):
++    @staticmethod
++    def _insn(mnemonic, operands=None, op_str=""):
++        insn = Instruction(0x1000, 1, mnemonic, op_str, "90")
++        insn.operands = list(operands or [])
++        return insn
++
++    def test_daa_and_das_consume_and_update_cf_af_and_al(self):
++        for mnemonic in ("daa", "das"):
++            lifter = Lifter()
++            lifter.needs_cf = True
++            lifter.needs_af = True
++            generated = "\n".join(lifter.lift_instruction(self._insn(mnemonic)))
++            self.assertIn("_old_cf = _cf", generated)
++            self.assertIn("|| _af", generated)
++            self.assertIn("_cf = _cf_out; _af = _af_out", generated)
++            self.assertIn("SET_LO8(eax, _al)", generated)
++            self.assertIn("_fa = _al", generated)
++
++    def test_daa_das_conditions_use_adjusted_al_and_parity(self):
++        for mnemonic in ("daa", "das"):
++            self.assertEqual(_make_condition("je", mnemonic, [])[0], "(_fa == 0)")
++            self.assertEqual(_make_condition("js", mnemonic, [])[0], "(_fas < 0)")
++            self.assertIn("0x6996u", _make_condition("jp", mnemonic, [])[0])
++            self.assertIsNone(_make_condition("jo", mnemonic, []))
++
++    def test_all_arithmetic_writers_needed_by_daa_produce_af(self):
++        af_users = ("daa", "lahf")
++        self.assertTrue(FunctionTranslator._function_needs_af(
++            [self._insn("add"), self._insn("daa")]))
++        self.assertTrue(FunctionTranslator._function_needs_af(
++            [self._insn("lahf")]))
++        self.assertFalse(FunctionTranslator._function_needs_af(
++            [self._insn("add")]))
++
++        lifter = Lifter()
++        lifter.needs_af = True
++        al = Operand(type="reg", reg="al")
++        imm = Operand(type="imm", imm=1)
++        for mnemonic in ("add", "sub"):
++            generated = "\n".join(lifter.lift_instruction(
++                self._insn(mnemonic, [al, imm], "al, 1")))
++            self.assertIn("_af =", generated)
++
++    def test_function_declares_both_flags_for_daa_lahf_consumers(self):
++        insns = [self._insn("add"), self._insn("daa"), self._insn("lahf")]
++        self.assertTrue(FunctionTranslator._function_needs_af(insns))
++        self.assertTrue(FunctionTranslator._function_needs_cf(insns))
++
++
++if __name__ == "__main__":
++    unittest.main()

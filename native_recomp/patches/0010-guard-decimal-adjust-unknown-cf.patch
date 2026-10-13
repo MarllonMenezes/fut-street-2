@@ -1,0 +1,140 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1334,6 +1334,7 @@ class Lifter:
+         self.func_end = 0
+         self.needs_cf = False  # Set per-function by translator (has adc/sbb)
+         self.needs_af = False  # Set per-function when DAA/DAS or LAHF reads AF
++        self.supported_decimal_adjust_sites = set()
+         self.publishes_ebp = False  # Set per-function: has a real frame
+         self.trace_exit_name = None  # Set per-function when traced
+         self.force_return_value = None   # Set per-function by --force-return
+@@ -1708,7 +1709,8 @@ class Lifter:
+             return ["SET_LO8(eax, _cf ? 0xFFu : 0u); /* salc: AL = CF ? 0xFF : 0 */"]
+ 
+         if m in ("daa", "das"):
+-            if not self.needs_cf or not self.needs_af:
++            if (not self.needs_cf or not self.needs_af
++                    or insn.address not in self.supported_decimal_adjust_sites):
+                 return self._unimplemented(insn, m)
+             if m == "daa":
+                 adjust_low = "_al += 6u; _cf_out = _old_cf || (_al > 0xFFu);"
+@@ -4137,6 +4139,13 @@ def lift_basic_block(lifter, bb, flag_state=None):
+             last_flag_ops = list(curr.operands)
+         elif curr.mnemonic in _SSE_CMP_NAMED:
+             pass  # SSE compares write a mask, not EFLAGS
++        elif (curr.mnemonic in ("daa", "das")
++              and curr.address not in lifter.supported_decimal_adjust_sites):
++            # The translation deliberately left this decimal-adjust site
++            # untranslated because CF has no definition earlier in the
++            # function. Do not let later conditions consume stale snapshots.
++            last_flag_setter = None
++            last_flag_ops = []
+         elif curr.mnemonic in FLAG_SETTERS:
+             last_flag_setter, last_flag_ops = normalise_zero_test(
+                 curr.mnemonic, list(curr.operands))
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1407,6 +1407,41 @@ class FunctionTranslator:
+         return any(insn.mnemonic in ("daa", "das", "lahf")
+                    for insn in instructions)
+ 
++    @staticmethod
++    def _supported_decimal_adjust_sites(instructions):
++        """Keep DAA/DAS untranslated until this function has defined CF."""
++        cf_writers = {
++            "add", "sub", "cmp", "test", "and", "or", "xor", "adc", "sbb",
++            "shl", "shr", "sar", "neg", "imul", "stc", "clc", "cmc",
++            "rcl", "rcr", "bt", "bts", "btr", "btc", "cmpxchg", "xadd",
++            "daa", "das",
++        }
++        from .lifter import _is_rep_compare
++
++        addresses = {insn.address for insn in instructions}
++        leaders = set()
++        if instructions:
++            leaders.add(instructions[0].address)
++        for index, insn in enumerate(instructions):
++            if insn.is_branch:
++                target = insn.jump_target
++                if target in addresses:
++                    leaders.add(target)
++            if (insn.is_branch or insn.is_call or insn.is_ret) and index + 1 < len(instructions):
++                leaders.add(instructions[index + 1].address)
++
++        seen_cf_definition = False
++        supported = set()
++        for insn in instructions:
++            if insn.address in leaders:
++                seen_cf_definition = False
++            if insn.mnemonic in ("daa", "das"):
++                if seen_cf_definition:
++                    supported.add(insn.address)
++            elif insn.mnemonic in cf_writers or _is_rep_compare(insn):
++                seen_cf_definition = True
++        return supported
++
+     def _func_has_prologue(self, instructions):
+         """Check if function starts with push ebp; mov ebp, esp."""
+         if len(instructions) < 2:
+@@ -2360,6 +2395,8 @@ class FunctionTranslator:
+         has_auxiliary = self._function_needs_af(instructions)
+         if has_auxiliary:
+             lines.append("    int _af = 0; /* auxiliary carry flag */")
++        self.lifter.supported_decimal_adjust_sites = (
++            self._supported_decimal_adjust_sites(instructions))
+         # Only functions that consume CF pay for producing it: an adc/sbb
+         # reading a never-written _cf silently drops every carry, which
+         # corrupts multi-word arithmetic (add/adc pairs) and the shr/adc
+diff --git a/tools/recomp/test_lifter_daa_das.py b/tools/recomp/test_lifter_daa_das.py
+--- a/tools/recomp/test_lifter_daa_das.py
++++ b/tools/recomp/test_lifter_daa_das.py
+@@ -17,6 +17,7 @@ class DaaDasLifterTest(unittest.TestCase):
+             lifter = Lifter()
+             lifter.needs_cf = True
+             lifter.needs_af = True
++            lifter.supported_decimal_adjust_sites = {0x1000}
+             generated = "\n".join(lifter.lift_instruction(self._insn(mnemonic)))
+             self.assertIn("_old_cf = _cf", generated)
+             self.assertIn("|| _af", generated)
+@@ -32,7 +33,6 @@ class DaaDasLifterTest(unittest.TestCase):
+             self.assertIsNone(_make_condition("jo", mnemonic, []))
+ 
+     def test_all_arithmetic_writers_needed_by_daa_produce_af(self):
+-        af_users = ("daa", "lahf")
+         self.assertTrue(FunctionTranslator._function_needs_af(
+             [self._insn("add"), self._insn("daa")]))
+         self.assertTrue(FunctionTranslator._function_needs_af(
+@@ -54,6 +54,30 @@ class DaaDasLifterTest(unittest.TestCase):
+         self.assertTrue(FunctionTranslator._function_needs_af(insns))
+         self.assertTrue(FunctionTranslator._function_needs_cf(insns))
+ 
++    def test_daa_das_remain_unimplemented_until_cf_is_defined(self):
++        entry_adjust = self._insn("daa")
++        after_inc = [self._insn("inc"), self._insn("das")]
++        after_add = [self._insn("add"), self._insn("inc"), self._insn("das")]
++        for index, insn in enumerate([entry_adjust, *after_inc, *after_add]):
++            insn.address = 0x1000 + index
++        self.assertEqual(FunctionTranslator._supported_decimal_adjust_sites(
++            [entry_adjust]), set())
++        self.assertEqual(FunctionTranslator._supported_decimal_adjust_sites(
++            after_inc), set())
++        self.assertEqual(FunctionTranslator._supported_decimal_adjust_sites(
++            after_add), {after_add[-1].address})
++
++    def test_daa_das_cf_writer_must_dominate_inside_the_basic_block(self):
++        branch = self._insn("jmp")
++        branch.address = 0x2000
++        branch.jump_target = 0x2003
++        skipped_add = self._insn("add")
++        skipped_add.address = 0x2001
++        target_das = self._insn("das")
++        target_das.address = 0x2003
++        self.assertEqual(FunctionTranslator._supported_decimal_adjust_sites(
++            [branch, skipped_add, target_das]), set())
++
+ 
+ if __name__ == "__main__":
+     unittest.main()
+

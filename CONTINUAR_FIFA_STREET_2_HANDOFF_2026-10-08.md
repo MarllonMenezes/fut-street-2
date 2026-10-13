@@ -1370,6 +1370,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Release CMake/link, CTest 4/4 e host `--help` passaram. XBE não lançado; sem boot/headless/replay original. Gates de rendering/assets/gameplay/áudio continuam `NOT_READY`.
 - ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; seguir implementando apenas semântica respaldada.
 
+## Atualização mais recente: etapa 1.48 (2026-10-13)
+
+- Patches 0009–0010 adicionam DAA/DAS com tracking AF e um guard conservador para CF definido no mesmo bloco; sem evidência suficiente, o site segue `RECOMP_UNIMPL`.
+- Pilha limpa: 531 passed/38 skipped; geração 15702/15702, zero falhas, 71 stubs, 96 instruções/29 mnemonics não baixadas. CMake Release/link e CTest 4/4 aprovados.
+- CLI `--help` passou; nenhum XBE executado, sem boot/headless/replay original. Rendering/assets/gameplay/áudio seguem `NOT_READY`, e o projeto não está finalizado.
+- ISO preservada somente leitura; SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 

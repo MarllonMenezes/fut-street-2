@@ -648,3 +648,11 @@ atributo `Archive`, SHA-256
 - CMake Release (`-O3 -DNDEBUG`) compilou as 64 unidades C e linkou o host; warnings de parênteses redundantes no C gerado e warnings preexistentes no kernel, sem erro. CTest seguro `4/4` e host `--help` passaram. O primeiro intento de build não tinha `FUT_STREET2_ZIG` no ambiente; repetido com o caminho local do Zig, completou. CTest foi executado pelo `ctest.exe` do CMake empacotado.
 - Nenhum XBE/`--launch` foi executado; headless/replay do original não são aplicáveis sem iniciar o XBE e não foram alegados. Build/link/testes validam a compilabilidade da tradução, não boot ou fidelidade. Nenhum gate de rendering, assets, gameplay original ou áudio muda; readiness permanece `NOT_READY`.
 - A ISO permaneceu somente leitura: 2.013.003.776 bytes, `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+## Etapa 1.48 — DAA/DAS e proveniência conservadora de CF (2026-10-13)
+
+- Patches `0009-lift-daa-das-and-track-af.patch` e `0010-guard-decimal-adjust-unknown-cf.patch` adicionam o estado AF necessário a DAA/DAS/LAHF e aos produtores aritméticos relevantes. Sites DAA/DAS só são baixados quando há produtor de CF antes deles no mesmo basic block; não se infere proveniência entre blocos nem se declara alcançabilidade. Sites sem evidência ficam `RECOMP_UNIMPL`, evitando fabricar valor para CF/AF ou reusar snapshots de flags obsoletos.
+- Especificação consultada: Intel SDM IA-32, instruções DAA/DAS e efeitos definidos/indefinidos nas flags. Pilha limpa 0001–0010 reaplicada ao XboxRecomp v0.13.1 fixado (`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`): `531 passed, 38 skipped`.
+- Geração: `15702/15702` funções traduzidas, zero falhas, 71 stubs, 1.761.271 linhas C; 96 instruções/29 mnemonics sem lowering. A contagem inclui casos de DAA/DAS sem CF seguro; esses permanecem TODOs por projeto.
+- CMake Release compilou e linkou as 64 unidades C geradas; CTest `4/4`; host `--help` passou. É verificação de tradução/compilação e inicialização da CLI, não prova de boot ou comportamento do jogo. Nenhum XBE foi iniciado; sem headless/replay do jogo.
+- Sem alteração de estado dos gates de rendering/assets/gameplay/áudio: todos `NOT_READY`; projeto não concluído. ISO somente leitura, 2.013.003.776 bytes, `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
