@@ -18,6 +18,10 @@ On Windows with the portable Zig compiler, set `FUT_STREET2_ZIG` to the
 `zig.exe` path and pass `-DRECOMP_ARCHIVER="D:/path/to/native_recomp/zig-ar.cmd"`.
 The wrapper only dispatches Zig's bundled `ar` subcommand.
 
+When configuring another CMake project that needs static libraries with Zig,
+also pass
+`-DCMAKE_USER_MAKE_RULES_OVERRIDE="D:/path/to/native_recomp/ZigArchiverOverride.cmake"`.
+
 Use a C compiler supported by XboxRecomp and retain all build diagnostics.
 The full runtime target remains separate because XboxRecomp's GPU and APU
 libraries include emulation components; that runtime has not been integrated

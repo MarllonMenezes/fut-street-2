@@ -60,6 +60,9 @@ Este repositório contém apenas fontes, testes e documentação. A ISO, os asse
 originais, mídia extraída, relatórios gerados e builds são locais e ignorados.
 Instruções de build/testes e limites de reprodução:
 [publicação source-only](docs/GITHUB_PUBLICACAO.md).
+Para usar o Codex Cloud sem enviar insumos locais, siga
+[continuação segura no Cloud](docs/CODEX_CLOUD_CONTINUACAO.md); tarefas Cloud
+podem trabalhar no código versionado, mas não fechar os gates dependentes do XBE.
 
 ```powershell
 dotnet build fifa_pc/FifaStreetPc.csproj -c Release

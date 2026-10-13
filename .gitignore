@@ -47,6 +47,7 @@
 !/native_recomp/CMakeLists.txt
 !/native_recomp/README.md
 !/native_recomp/zig-ar.cmd
+!/native_recomp/ZigArchiverOverride.cmake
 !/native_recomp/patches/
 /native_recomp/patches/*
 !/native_recomp/patches/*.patch
