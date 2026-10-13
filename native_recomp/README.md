@@ -97,8 +97,10 @@ static function coverage; it does not establish ABI correctness or runtime
 behavior for the title.
 
 Patch `0003-alias-cross-function-conditional-branches.patch` follows patches
-0001 and 0002. It adds aliases for direct conditional-branch targets only when
-both the branch source and interior target have exactly one containing function
-range and the target is a decoded instruction. It does not merge or truncate
-the owner function; ambiguous/overlapping ranges remain unresolved. Its tests
-cover one uniquely owned target and one overlapping-target rejection.
+0001 and 0002. It adds aliases for direct conditional-branch targets when the
+branch source has one owner, the target is a decoded instruction, and all target
+owner ranges agree on the same body end. It does not merge or truncate the
+owner function. Branches already inside the source body, same-tail-family
+targets, and ambiguous target end ranges remain unresolved. Synthetic tests
+cover unique ownership, common-end overlapping ownership, ambiguous ends,
+and source-internal branches.

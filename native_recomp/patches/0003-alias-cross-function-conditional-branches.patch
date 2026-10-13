@@ -7,15 +7,18 @@ index e997bbd..0000000 100644
 +            added = self._pass_tail_jump_targets(sections)
 +            added = self._pass_cond_branch_interior_aliases() or added
 +            if not added:
-@@ -180,0 +183,49 @@
+@@ -180,0 +183,55 @@
 +    def _pass_cond_branch_interior_aliases(self) -> bool:
-+        """Make direct conditional branches into uniquely owned bodies callable.
++        """Make direct conditional branches into stable body ranges callable.
 +
 +        A cross-function conditional branch can enter an instruction inside a
 +        separately detected body. It is an alternate entry, not evidence that
 +        either function boundary should be moved. Represent it as an alias so
 +        the original body remains intact and the target has translated code.
-+        Ambiguous source or target ownership is deliberately left unresolved.
++        The source must have one owner. Overlapping target entries are accepted
++        only when all containing bodies agree on the same end. Branches already
++        inside the source body and entries in the same shared-tail family are
++        not duplicated. Other ambiguous ownership stays unresolved.
 +        """
 +        bodies = sorted((f.start, f.end) for f in self.functions.values())
 +        starts = [body[0] for body in bodies]
@@ -45,13 +48,16 @@ index e997bbd..0000000 100644
 +                continue
 +            source_owners = owners_at(insn.address)
 +            target_owners = owners_at(target)
-+            if len(source_owners) != 1 or len(target_owners) != 1:
++            if len(source_owners) != 1 or not target_owners:
++                continue
++            owner_ends = {end for _start, end in target_owners}
++            if len(owner_ends) != 1:
 +                continue
 +            source = source_owners[0]
-+            owner = target_owners[0]
-+            if source[0] == owner[0] or target == owner[0]:
++            target_end = next(iter(owner_ends))
++            if source[0] <= target < source[1] or source[1] == target_end:
 +                continue
-+            self._alias_entries[target] = owner[1]
++            self._alias_entries[target] = target_end
 +            added = True
 +
 +        if added:
@@ -62,7 +68,7 @@ new file mode 100644
 index 0000000..0000000
 --- /dev/null
 +++ b/tools/disasm/test_cross_function_conditional_alias.py
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,58 @@
 +"""Only uniquely owned cross-function conditional targets become aliases."""
 +from types import SimpleNamespace
 +
@@ -99,6 +105,25 @@ index 0000000..0000000
 +    owner = Function(0x1020, 0x1050, "owner")
 +    overlap = Function(0x1028, 0x1040, "overlap")
 +    detector = make_detector([source, owner, overlap], 0x1030)
++
++    assert not detector._pass_cond_branch_interior_aliases()
++    assert detector._alias_entries == {}
++
++
++def test_overlapping_target_ranges_with_common_end_are_one_safe_body_range():
++    source = Function(0x1000, 0x1010, "source")
++    owner = Function(0x1020, 0x1060, "owner")
++    alias = Function(0x1038, 0x1060, "alias")
++    detector = make_detector([source, owner, alias], 0x1040)
++
++    assert detector._pass_cond_branch_interior_aliases()
++    assert detector._alias_entries == {0x1040: 0x1060}
++
++
++def test_branch_already_inside_source_body_does_not_create_alias():
++    source = Function(0x1000, 0x1060, "source")
++    overlap = Function(0x1020, 0x1060, "overlap")
++    detector = make_detector([source, overlap], 0x1040)
 +
 +    assert not detector._pass_cond_branch_interior_aliases()
 +    assert detector._alias_entries == {}

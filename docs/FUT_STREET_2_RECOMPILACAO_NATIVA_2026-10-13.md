@@ -287,3 +287,37 @@ e os 22 casos de ownership sobreposto, procurando evidência de entrada real e
 validando os deltas de no-op/stub por categoria. Em paralelo, avançar o kernel
 e o percurso de áudio com evidência; não iniciar o XBE sem autorização explícita
 de bring-up.
+
+## Etapa 1.37 — aliases de branch com fim de corpo compartilhado (2026-10-13)
+
+- A revisão estática da regra 1.36 encontrou dois falsos positivos potenciais:
+  branches para dentro da própria função de origem e alvos com múltiplos donos
+  que, apesar de intervalos sobrepostos, descrevem o mesmo fim de corpo. A nova
+  regra ignora branches internos e famílias já compartilhadas; permite alvo
+  sobreposto apenas quando todos os donos concordam no mesmo `end`. Fontes com
+  mais de um dono e alvos cujos donos discordam continuam sem alias.
+- O patch `0003-alias-cross-function-conditional-branches.patch` foi ajustado e
+  aplicado num checkout limpo do XboxRecomp v0.13.1 após 0001/0002. Testes
+  focais: `22 passed`; suíte upstream: `607 passed, 40 skipped`.
+- Reanálise da ISO sem escrita e sem executar o XBE: 15.690 entradas no mapa de
+  funções; geração C: `15.702/15.702`, zero falhas, 62 arquivos-fonte, 64
+  unidades compiladas. Stubs caíram de 81 para 71; permanecem 154 instruções
+  emitidas como no-op. Dos 71 stubs, o auditor classifica 52 como interiores,
+  13 com intervalos sobrepostos e 6 sem cobertura; isso descreve incerteza
+  estática, não garante que todos sejam alcançáveis nem autoriza preenchê-los
+  com retornos inventados.
+- Build nativo Release e link sem símbolos indefinidos concluíram; CTest `2/2`.
+  O self-test .NET passou `105/105`; o protótipo managed headless completou 80
+  frames e reproduziu os traces de match/input/animation/audio. Esse replay é
+  somente teste determinístico do protótipo authored, não do código recompilado
+  nem prova de equivalência ao original.
+- ISO permaneceu com tamanho `2.013.003.776` bytes, atributo `Archive`, data
+  UTC `2026-01-22T10:03:26.0859951Z` e SHA-256
+  `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+  Nenhum XBE ou host com `--launch` foi executado.
+
+`NOT_READY` permanece. O avanço removeu dez stubs de uma geração para outra,
+mas ainda não valida entradas/ABI, imports de kernel, inicialização, rendering,
+integração de assets, gameplay, deformação ou áudio. Ver também
+`FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md` para a trilha recomendada e
+o que deve sair do caminho crítico sem apagar o histórico.

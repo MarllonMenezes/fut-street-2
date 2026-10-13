@@ -9,11 +9,11 @@ com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
 O XboxRecomp v0.13.1, com três patches locais versionados, gerou C para
-15.695/15.695 funções no passe mais recente; 64 unidades C foram compiladas e
-o host linkou sem símbolos indefinidos. O smoke `--help` e CTest
-2/2 passaram; o host nunca foi inicializado com o XBE. Restam 81 stubs e 154
-instruções no-op nesta geração. Isso ainda não prova boot nem fidelidade. O
-protótipo authored em .NET 8 é separado e não demonstra fidelidade ao original.
+15.702/15.702 funções no passe mais recente; 64 unidades C foram compiladas e
+o host linkou sem símbolos indefinidos. CTest 2/2 passou. Restam 71 stubs e
+154 instruções no-op. O host nunca foi inicializado com o XBE; build e testes
+não provam boot nem fidelidade. O protótipo authored em .NET 8 é separado e não
+demonstra fidelidade ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
@@ -45,10 +45,12 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço da recompilação: [etapa 1.36 — aliases para branches condicionais entre funções](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-O XboxRecomp agora emite corpos para alvos interiores com origem e destino
-unicamente atribuídos; o total local caiu de 87 para 81 stubs. Isso ainda não
-prova execução do jogo nem fecha os gates de fidelidade.
+Último avanço da recompilação: [etapa 1.37 — aliases conservadores para branches condicionais](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+A nova regra só aceita intervalos-alvo sobrepostos quando todos concordam no
+mesmo fim de corpo, e reduziu os stubs locais de 81 para 71 sem alterar os
+154 no-ops. Isso ainda não prova execução do jogo nem fecha os gates de
+fidelidade. A [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
+explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.
 
 ## Código-fonte no GitHub
