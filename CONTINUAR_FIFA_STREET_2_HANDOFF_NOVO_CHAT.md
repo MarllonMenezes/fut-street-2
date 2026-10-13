@@ -4465,6 +4465,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - `OUT 1` em `0x00298030`/GPIO `0x80C0` continua sem binding; `RECOMP_VBLANK` segue recusado. Nenhum XBE/host foi lançado nesta etapa; nada indica boot/menu ou gates de rendering, assets, gameplay original e áudio aprovados.
 - Readiness `NOT_READY`; preservar ISO somente leitura, não enviar XBE/assets, não inventar bindings, não declarar conclusão e não iniciar code review.
 
+## Continuação após a etapa 1.44 (2026-10-13)
+
+- Pilha versionada 0001–0005 foi aplicada a clone limpo do XboxRecomp v0.13.1 (`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`); patches 0002/0003 corrigidos para hunks aplicarem nos pontos corretos. Python focado limpo: 24/24.
+- Disassembly/func-ID/ABI reproduzidos; geração estática `15702/15702`, 62 chunks, 1.753.971 linhas, 139 instruções sem tradução/36 mnemonics e 71 call stubs. WBINVD nos 15 sites é mapeado somente a fence C11 de RAM coerente.
+- Build CMake Release explícito (`-O3 -DNDEBUG`) compilou archive e linkou host. `--help` e CTest seguro 2/2 passaram. Não usar `--launch`; não executar o XBE. Artefatos C/.exe ficam locais. O checkout original dirty foi preservado.
+- Próxima prioridade: classificar por evidência os 139 sites/71 stubs e implementar só comportamento demonstrado. Nenhum gate de rendering/assets/gameplay/áudio original aprovado; `NOT_READY`. ISO somente leitura, nunca subir ISO/XBE/assets.
+
 
 
 

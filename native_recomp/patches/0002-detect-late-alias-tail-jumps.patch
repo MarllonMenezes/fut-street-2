@@ -2,7 +2,10 @@ diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
 index 37542d8..e997bbd 100644
 --- a/tools/disasm/functions.py
 +++ b/tools/disasm/functions.py
-@@ -164,0 +165,11 @@ class FunctionDetector:
+@@ -163,4 +163,15 @@
+         self._build_alias_entries()
+-
++
 +        # Data-pointer and seed aliases are materialised after the original
 +        # tail-jump pass. Their bodies can themselves end in a tail jump into
 +        # an existing function, so run the pass again with those entries now
@@ -14,6 +17,8 @@ index 37542d8..e997bbd 100644
 +            self._build_functions(sections)
 +            self._build_alias_entries()
 +
+         # Populate call graph
+         self._build_call_graph()
 diff --git a/tools/disasm/test_late_alias_tail_jumps.py b/tools/disasm/test_late_alias_tail_jumps.py
 new file mode 100644
 index 0000000..9d6d42c

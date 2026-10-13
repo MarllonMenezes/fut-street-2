@@ -550,3 +550,30 @@ atributo `Archive`, SHA-256
   de `0x80C0` continuam sem binding.
 - Nenhum XBE ou executável recompilado foi lançado; readiness permanece
   `NOT_READY`. Os testes .NET authored não são validação do código original.
+
+## Etapa 1.44 — patches reproduzíveis e build nativo Release (2026-10-13)
+
+- O checkout temporário preexistente do XboxRecomp v0.13.1 (`193e299`) estava
+  modificado e foi preservado. A pilha versionada 0001–0005 foi corrigida e
+  aplicada, em ordem, a um clone limpo no commit upstream exato
+  `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`. Os patches 0002/0003 agora
+  ancoram a recuperação de tail jumps e aliases condicionais nos pontos reais
+  do detector; aplicação completa foi validada.
+- Na cópia limpa, os testes Python focados passaram `24/24`. A análise estática
+  foi reproduzida sem executar o XBE: 15.690 funções, 119 tail-jump targets e
+  1.306 aliases. Func-ID/ABI também produziram 15.690 linhas; o gerador produziu
+  `15702/15702` funções, 1.753.971 linhas C, 62 chunks, 71 alvos de call stubados
+  e 139 instruções sem tradução/36 mnemonics (antes 154/37). Não houve função
+  com falha. Os 15 sites de `WBINVD` usam a fence C11 limitada à memória coerente.
+- Um build CMake explicitamente configurado `Release` (`-O3 -DNDEBUG`) compilou
+  todas as unidades geradas para a biblioteca estática e vinculou o host nativo.
+  CLI `--help` passou; CTest seguro passou `2/2` (`no_emulation_runtime_support`,
+  `recompiled_host_help`). O teste que invoca `--launch` foi deliberadamente
+  excluído. Artefatos permanecem em diretório temporário local, fora do Git.
+- Houve warnings no C gerado/fontes do kernel, mas build e link terminaram e os
+  testes selecionados passaram. Não foram executados o XBE nem o host com
+  `--launch`; isso não comprova boot, menu ou fidelidade.
+- Continuam 139 instruções sem tradução e 71 alvos stubados. `IN`/`OUT` e GPIO
+  `0x80C0` seguem sem binding confirmado. Readiness `NOT_READY`; rendering,
+  assets, gameplay e áudio originais não foram aprovados. ISO somente leitura,
+  nunca copiada para Git/nuvem.

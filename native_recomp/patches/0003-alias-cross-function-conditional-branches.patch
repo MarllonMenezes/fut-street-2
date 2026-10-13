@@ -2,12 +2,20 @@ diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
 index e997bbd..0000000 100644
 --- a/tools/disasm/functions.py
 +++ b/tools/disasm/functions.py
-@@ -170 +170,3 @@
+@@ -169,6 +169,8 @@
+         for _round in range(8):
 -            if not self._pass_tail_jump_targets(sections):
 +            added = self._pass_tail_jump_targets(sections)
 +            added = self._pass_cond_branch_interior_aliases() or added
 +            if not added:
-@@ -180,0 +183,55 @@
+                 break
+             self.functions.clear()
+             self._build_functions(sections)
+             self._build_alias_entries()
+@@ -179,3 +179,59 @@
+         return len(self.functions)
+-
++
 +    def _pass_cond_branch_interior_aliases(self) -> bool:
 +        """Make direct conditional branches into stable body ranges callable.
 +
@@ -63,6 +71,8 @@ index e997bbd..0000000 100644
 +        if added:
 +            print("  cross-function conditional branch entries recovered as aliases")
 +        return added
++
+     def _pass_gap_prologues(self, sections: List[SectionInfo]) -> bool:
 diff --git a/tools/disasm/test_cross_function_conditional_alias.py b/tools/disasm/test_cross_function_conditional_alias.py
 new file mode 100644
 index 0000000..0000000

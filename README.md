@@ -47,14 +47,20 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: etapa 1.43, no
+Último avanço registrado: etapa 1.44, no
 [relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 Foi versionado um patch do lifter para o `WBINVD` alcançado em `0x002954E4`:
 barreira C11 sequencialmente consistente, limitada à ordenação de memória
-coerente no host. Não implementa flush de GPU/DMA. O patch passou validação
-isolada, mas a geração completa ainda não foi refeita; portanto 71 stubs e 154
-no-ops continuam sendo os números da geração anterior. A evidência encontrada
-para `0x80CE` em outro kernel não define o `0x80C0` do jogo; a hipótese
+coerente no host. Uma regeneração isolada das 15.702 funções reduziu os
+no-ops não traduzidos de 154 para 139 (36 mnemonics); os 71 stubs de chamadas
+continuam. As 64 unidades geradas compilaram e o host foi linkado em Release;
+nenhum XBE foi executado. O build local anterior permanece separado e os
+arquivos C gerados não são versionados. A barreira não implementa flush de
+GPU/DMA. A pilha de patches 0001–0005 agora aplica num clone limpo e fixado do
+XboxRecomp v0.13.1; a geração e o build CMake Release explícito foram
+reproduzidos, com `--help` e CTest seguro 2/2. Persistem 139 instruções sem
+tradução e 71 stubs. A evidência encontrada para `0x80CE` em outro kernel não
+define o `0x80C0` do jogo; a hipótese
 `field_pin` do xemu permanece explicitamente especulativa. Não há binding
 confirmado nem boot/menu. Isso não fecha gates de fidelidade. A
 [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)

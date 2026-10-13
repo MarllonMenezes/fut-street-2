@@ -1344,6 +1344,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Commit usa GitHub noreply para não publicar o e-mail pessoal do Git global. Nenhuma licença open-source foi escolhida automaticamente. Não foi criado pull request nem iniciado code review.
 - ISO preservada: 2013003776 bytes, Archive, LastWriteTimeUtc 2026-01-22 10:03:26, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Upload não muda gates ou readiness: `NOT_READY`; retomar a próxima investigação da etapa 1.31.
 
+## Continuação após a etapa 1.44 (2026-10-13)
+
+- Pilha versionada 0001–0005 reproduzida em clone limpo do XboxRecomp v0.13.1, commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`; os hunks 0002/0003 foram corrigidos. Python focal 24/24.
+- Análise estática/func-ID/ABI repetida; geração nativa `15702/15702`, 62 chunks, 1.753.971 linhas, 139 instruções sem tradução/36 mnemonics (antes 154/37), 71 stubs. Build CMake Release (`-O3 -DNDEBUG`), link, CLI `--help` e CTest seguro 2/2 passaram. Warnings no C gerado/kernel.
+- Sem XBE ou `--launch` executados. ISO segue somente leitura; SHA-256 deve ser reconferido ao final de cada etapa. Detalhes em [relatório](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+- Veja detalhes e limites em `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. Readiness `NOT_READY`, não há boot ou gates aprovados.
+
 
 
 

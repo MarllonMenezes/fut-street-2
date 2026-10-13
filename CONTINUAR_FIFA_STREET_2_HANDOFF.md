@@ -6435,6 +6435,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - ISO somente leitura: 2013003776 bytes, atributo `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Atualização publicada no GitHub: commit `7764b32` (`Document LPC GPIO evidence limits`), branch `main`. Continuar sem emulação, sem inventar bindings, sem declarar conclusão e sem code review.
 
+## Continuação após a etapa 1.44 (2026-10-13)
+
+- Pilha de patches 0001–0005 aplicada com sucesso a clone limpo do XboxRecomp v0.13.1 no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`; correções 0002/0003 foram necessárias porque os hunks anteriores encaixavam em local errado. Testes focados limpos: 24/24.
+- Análise estática reproduzida: 15.690 funções-base; geração `15702/15702`, 62 chunks, 1.753.971 linhas, 139 instruções sem tradução/36 mnemonics e 71 alvos de call stubados. Build CMake Release explícito (`-O3 -DNDEBUG`) compilou o archive e linkou o host; `--help` e CTest seguro 2/2 passaram. Nada foi lançado com `--launch` nem o XBE foi executado.
+- O checkout temporário originalmente alterado foi preservado. XBE/análises e builds ficam locais; não enviar ISO/XBE/assets à nuvem/Git e não versionar C gerado. Próxima prioridade: classificar os 139 sites e 71 stubs com evidência estática e avançar por comportamento alcançado, sem presumir equivalência ou aprovação de gates.
+- Rendering, assets, gameplay e áudio originais seguem sem gates aprovados; prontidão `NOT_READY`. Ver relatório [nativo](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md). ISO somente leitura.
+
 ## Continuação após a etapa 1.43 (2026-10-13)
 
 - Progresso: patch versionado `native_recomp/patches/0005-lift-wbinvd-coherent-host-memory.patch` traduz o `WBINVD` alcançado em `0x002954E4` para fence C11 sequencialmente consistente em memória coerente do host. Isso não é flush de cache físico nem implementação para GPU/DMA.

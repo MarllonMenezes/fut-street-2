@@ -77,8 +77,12 @@ C11 sequencialmente consistente sobre memória coerente do host. Isso preserva
 ordenação das operações de memória traduzidas; não simula invalidação de caches
 nem implementa flush para GPU/DMA. Testes isolados do lifter passaram `2/2` e o
 chunk que contém o endereço compilou em uma biblioteca estática de validação.
-A geração completa ainda não foi refeita: continuam vigentes, por enquanto, os
-71 stubs e 154 instruções não traduzidas da geração anterior.
+Uma geração completa isolada produziu novamente as 15.702 funções em 62
+arquivos, com 71 stubs e 139 instruções não traduzidas (36 mnemonics), contra
+154 antes. O archive com as 64 unidades C compilou em Release e o host foi
+linkado; nenhum XBE foi iniciado. Os arquivos gerados e o build permanecem em
+`%TEMP%`, fora do Git; a saída gerada pelo host local anterior não foi
+substituída.
 
 A etapa 1.42 consultou evidência pública sobre a faixa LPC PM. Um kernel público
 usa `0x80CE` para seleção de encoder, mas isso não define o `0x80C0` lido/escrito
@@ -90,6 +94,19 @@ controlado já foram realizados, mas não validam menu nem gates do jogo. Manter
 Release, self-tests, smokes relevantes, headless, replay determinístico quando
 aplicável e SHA-256 da ISO em cada marco, sempre distinguindo testes do protótipo
 .NET de validações do núcleo recompilado. Não há prazo de conclusão.
+
+## Continuação após a etapa 1.44 (2026-10-13)
+
+A pilha versionada 0001–0005 foi aplicada em ordem a um clone limpo do
+XboxRecomp v0.13.1, fixado no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`;
+os hunks dos patches 0002/0003 foram corrigidos e os testes Python passaram
+24/24. Análise estática, func-ID/ABI e geração foram reproduzidos: 15.690
+funções-base, 15.702 funções C, 62 chunks, 139 instruções sem tradução e 71
+stubs. Build CMake Release, link nativo, `--help` e CTest seguro 2/2 passaram.
+Isso valida a reprodutibilidade do pipeline, não o boot ou fidelidade do jogo.
+Não executar XBE/`--launch`; manter ISO somente leitura. Próxima tarefa:
+classificar stubs e instruções por alcançabilidade/evidência e resolver somente
+comportamentos demonstrados. Readiness continua `NOT_READY`.
 
 ## Validação desta atualização documental — 2026-10-13
 
