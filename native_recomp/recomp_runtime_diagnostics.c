@@ -1,0 +1,65 @@
+#include "recomp_types.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+
+void recomp_icall_fail_log(uint32_t va)
+{
+    fprintf(stderr, "[ICALL] unresolved guest target 0x%08X (calls=%llu)\n",
+            va, (unsigned long long)g_icall_count);
+
+    for (uint32_t i = 0; i < ICALL_TRACE_SIZE; ++i) {
+        const uint32_t slot =
+            (g_icall_trace_idx - ICALL_TRACE_SIZE + i) & (ICALL_TRACE_SIZE - 1);
+        const uint32_t target = g_icall_trace[slot];
+        if (target != 0)
+            fprintf(stderr, "  recent[%u]=0x%08X\n", i, target);
+    }
+}
+
+void recomp_icall_not_code_log(uint32_t va)
+{
+    enum { SLOT_COUNT = 16 };
+    static uint32_t addresses[SLOT_COUNT];
+    static uint64_t hits[SLOT_COUNT];
+    static uint32_t used;
+
+    uint32_t slot = 0;
+    while (slot < used && addresses[slot] != va)
+        ++slot;
+    if (slot == used) {
+        if (used == SLOT_COUNT)
+            return;
+        addresses[slot] = va;
+        ++used;
+    }
+
+    const uint64_t hit_count = ++hits[slot];
+    uint64_t milestone = hit_count;
+    while (milestone >= 10 && milestone % 10 == 0)
+        milestone /= 10;
+    if (milestone != 1)
+        return;
+
+    fprintf(stderr,
+            "[ICALL] target 0x%08X is not code (hits=%llu, calls=%llu)\n",
+            va, (unsigned long long)hit_count,
+            (unsigned long long)g_icall_count);
+}
+
+void recomp_unimpl(const char *text, uint32_t va)
+{
+    static uint32_t reported;
+    const char *trap = getenv("RECOMP_UNIMPL_TRAP");
+    const int stop = trap != NULL && trap[0] != '\0' && trap[0] != '0';
+
+    if (reported < 50 || stop) {
+        ++reported;
+        fprintf(stderr,
+                "[UNIMPL] reached untranslated instruction at 0x%08X: %s\n",
+                va, text != NULL ? text : "(no instruction text)");
+    }
+
+    if (stop)
+        abort();
+}

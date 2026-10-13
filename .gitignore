@@ -48,6 +48,16 @@
 !/native_recomp/README.md
 !/native_recomp/zig-ar.cmd
 !/native_recomp/ZigArchiverOverride.cmake
+!/native_recomp/recomp_manual_lookup.c
+!/native_recomp/no_emulation_optional_hooks.c
+!/native_recomp/recomp_runtime_diagnostics.c
+!/native_recomp/host_bootstrap.c
+!/native_recomp/tests/
+/native_recomp/tests/*
+!/native_recomp/tests/*.c
+!/native_recomp/imports/
+/native_recomp/imports/*
+!/native_recomp/imports/*.def
 !/native_recomp/patches/
 /native_recomp/patches/*
 !/native_recomp/patches/*.patch

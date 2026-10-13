@@ -9,20 +9,21 @@ com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
 O XboxRecomp v0.13.1 traduziu 15.605 funções do XBE para C; as 65 unidades
-geradas foram compiladas e arquivadas localmente numa biblioteca estática
-intermediária. Isso demonstra tradução e compilação dos objetos, não boot,
-link final ou fidelidade de jogo. Permanecem 86 destinos de chamada substituídos
-por stubs e 155 instruções emitidas como no-op pelo gerador. O XBE não foi
-executado. O protótipo authored em .NET 8 é separado e não demonstra fidelidade
-ao original.
+geradas foram compiladas e arquivadas localmente. Em 2026-10-13 o primeiro
+`.exe` host também linkou sem símbolos indefinidos usando um runtime selecionado
+sem os componentes NV2A/APU; o binário temporário só passou no smoke `--help` e
+nunca foi inicializado com o XBE. Isso ainda não prova boot nem fidelidade.
+Permanecem 86 destinos de chamada substituídos por stubs e 155 instruções
+emitidas como no-op pelo gerador. O protótipo authored em .NET 8 é separado e
+não demonstra fidelidade ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
 A stack autorizada para o núcleo recompilado é C/C++, com .NET em ferramentas
-auxiliares. Ainda faltam runtime do Xbox, resolução auditada dos stubs/opcodes,
-link de executável e validação de gameplay, rendering, assets e áudio. Nenhum
-runtime de GPU/APU foi integrado; qualquer componente de emulação exige decisão
-explícita e não foi incluído neste avanço. Veja a
+auxiliares. Ainda faltam completar/auditar o runtime do Xbox, resolver
+stubs/opcodes e validar gameplay, rendering, assets e áudio. A camada D3D8→D3D11,
+vídeo e input foi ligada no primeiro host `.exe`; não incluímos os emuladores
+NV2A/APU. Veja a
 [direção vigente](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md) e o
 [relatório da primeira tradução/build](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 
@@ -63,6 +64,8 @@ Instruções de build/testes e limites de reprodução:
 Para usar o Codex Cloud sem enviar insumos locais, siga
 [continuação segura no Cloud](docs/CODEX_CLOUD_CONTINUACAO.md); tarefas Cloud
 podem trabalhar no código versionado, mas não fechar os gates dependentes do XBE.
+O estado e as ressalvas do primeiro link nativo estão em
+[recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 
 ```powershell
 dotnet build fifa_pc/FifaStreetPc.csproj -c Release

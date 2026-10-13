@@ -284,6 +284,16 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Commit usa GitHub noreply para não publicar o e-mail pessoal do Git global. Nenhuma licença open-source foi escolhida automaticamente. Não foi criado pull request nem iniciado code review.
 - ISO preservada: 2013003776 bytes, Archive, LastWriteTimeUtc 2026-01-22 10:03:26, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Upload não muda gates ou readiness: `NOT_READY`; retomar a próxima investigação da etapa 1.31.
 
+## Etapa 1.32 — primeiro executável host linkado sem NV2A/APU (2026-10-13)
+
+- Evidência do entrypoint: loader estático já registra retail VA `0x0024D8BE`; a tabela de dispatch gerada associa a mesma VA a `xbe_entry_point`.
+- CMake adicionou um target kernel explícito com 18 fontes upstream, omitindo `nv2a_pb_scan.c`, `nv2a_pb_exec.c`, `nv2a_vsh_interp.c` e `nv2a_combiner.c`; os hooks de scan ficam inertes. Também adicionou fallback manual-lookup sem overrides, diagnósticos ICALL/UNIMPL, bootstrap e teste CTest.
+- Foram ligadas bibliotecas selecionadas D3D8→D3D11, vídeo, XInput, imports de sistema e dispatcher gerado. Não usar o target guarda-chuva `xboxrecomp` (inclui `xbox_apu`/`xbox_nv2a`).
+- `.exe` local `fut_street_2_recompiled_app.exe`, 165,368,832 bytes, link Release com `--no-undefined`. CTest 2/2: `no_emulation_runtime_support` e `recompiled_host_help`. O único smoke do app foi `--help`; nenhum XBE nem código recompilado foi executado.
+- Warnings da compilação nativa vieram dos fontes upstream do kernel e continuam visíveis. A DLL XInput/D3DCompiler e o C/XBE gerado permanecem locais; nada disso é commitado.
+- Isso prova link e parsing do CLI somente. Não prova boot, correctness do kernel/API, rendering, gameplay, animação ou áudio; DirectSound não está linkado. ISO inalterada. Readiness continua `NOT_READY`.
+- Referência detalhada: `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`; scaffold/comandos: `native_recomp/README.md`. Próximo avanço: fechar os imports/stubs de kernel usados no startup e o backend de áudio com evidência antes de qualquer bring-up.
+
 
 
 

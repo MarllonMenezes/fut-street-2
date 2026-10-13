@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(FutStreet2RecompiledCode LANGUAGES C)
 
+include(CTest)
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
@@ -9,6 +11,13 @@ set(RECOMP_GENERATED_DIR "" CACHE PATH
     "Directory containing XboxRecomp-generated C and headers")
 set(RECOMP_ARCHIVER "" CACHE FILEPATH
     "Optional archiver executable or wrapper, e.g. zig-ar.cmd for Zig")
+set(RECOMP_HOST_LIBRARIES "" CACHE STRING
+    "Semicolon-separated native compatibility archives and system libraries")
+set(RECOMP_XBOXRECOMP_SOURCE_DIR "" CACHE PATH
+    "Pinned XboxRecomp source root used to compile the local host bootstrap")
+option(FUT_STREET2_BUILD_HOST_APP
+    "Build the statically recompiled host executable when runtime inputs are supplied"
+    OFF)
 
 if(RECOMP_ARCHIVER)
     # Some compiler distributions (including Zig's Windows Clang driver) do
@@ -42,6 +51,91 @@ message(STATUS "Compiling ${RECOMP_SOURCE_COUNT} XboxRecomp C translation units"
 add_library(fut_street_2_recompiled_code STATIC ${RECOMP_GENERATED_SOURCES})
 target_include_directories(fut_street_2_recompiled_code PUBLIC
     "${RECOMP_GENERATED_DIR}")
+
+add_library(fut_street_2_no_emulation_runtime_support STATIC
+    no_emulation_optional_hooks.c
+    recomp_manual_lookup.c
+    recomp_runtime_diagnostics.c)
+target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
+    "${RECOMP_GENERATED_DIR}")
+
+if(BUILD_TESTING)
+    add_executable(no_emulation_runtime_support_test
+        tests/no_emulation_runtime_support_test.c)
+    target_link_libraries(no_emulation_runtime_support_test PRIVATE
+        fut_street_2_no_emulation_runtime_support)
+    add_test(NAME no_emulation_runtime_support
+        COMMAND no_emulation_runtime_support_test)
+endif()
+
+if(FUT_STREET2_BUILD_HOST_APP)
+    if(NOT WIN32)
+        message(FATAL_ERROR "The current XboxRecomp native runtime integration is Windows-only")
+    endif()
+    if(NOT RECOMP_HOST_LIBRARIES OR
+       NOT RECOMP_XBOXRECOMP_SOURCE_DIR)
+        message(FATAL_ERROR
+            "Set RECOMP_HOST_LIBRARIES and RECOMP_XBOXRECOMP_SOURCE_DIR from the audited no-emulation runtime build")
+    endif()
+
+    set(RECOMP_NO_EMULATION_KERNEL_SOURCES
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_path.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_pool.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_rtl.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_memory.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_file.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_thread.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_sync.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_hal.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_xbox.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_ob.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_io.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_crypto.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_thunks.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_bridge.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/xbox_memory_layout.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/guest_vmem.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/icall_feedback.c"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/recomp_trace.c")
+
+    foreach(runtime_source IN LISTS RECOMP_NO_EMULATION_KERNEL_SOURCES)
+        if(NOT EXISTS "${runtime_source}")
+            message(FATAL_ERROR "Missing no-emulation runtime source: ${runtime_source}")
+        endif()
+    endforeach()
+
+    add_library(fut_street_2_no_emulation_kernel STATIC
+        ${RECOMP_NO_EMULATION_KERNEL_SOURCES})
+    target_include_directories(fut_street_2_no_emulation_kernel PUBLIC
+        "${RECOMP_GENERATED_DIR}"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+    target_compile_definitions(fut_street_2_no_emulation_kernel PRIVATE
+        WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(fut_street_2_no_emulation_kernel PUBLIC
+        kernel32 bcrypt
+        fut_street_2_no_emulation_runtime_support)
+
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c)
+    target_include_directories(fut_street_2_recompiled_app PRIVATE
+        "${RECOMP_GENERATED_DIR}"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+    target_compile_definitions(fut_street_2_recompiled_app PRIVATE
+        WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(fut_street_2_recompiled_app PRIVATE
+        fut_street_2_recompiled_code
+        fut_street_2_no_emulation_kernel
+        ${RECOMP_HOST_LIBRARIES})
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+        target_link_options(fut_street_2_recompiled_app PRIVATE
+            "-Wl,--no-undefined")
+    endif()
+    if(BUILD_TESTING)
+        add_test(NAME recompiled_host_help
+            COMMAND fut_street_2_recompiled_app --help)
+    endif()
+endif()
 
 if(MSVC)
     target_compile_options(fut_street_2_recompiled_code PRIVATE /bigobj)

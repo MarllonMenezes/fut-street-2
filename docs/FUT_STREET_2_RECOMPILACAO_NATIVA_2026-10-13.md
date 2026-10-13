@@ -118,3 +118,38 @@ relatórios que revelem dados do jogo ou credenciais.
 Estado global continua `NOT_READY`. Próximo marco: auditoria detalhada dos
 stubs/opcodes no-op, imports e dependências de runtime, seguida de plano para
 link; não executar o XBE sem uma etapa explícita de bring-up.
+
+## Etapa 1.32 — primeiro executável host linkado sem NV2A/APU (2026-10-13)
+
+- Evidência de startup: o contrato do loader aponta entrypoint retail
+  `0x0024D8BE`; `recomp_dispatch.c` contém a mesma VA apontando para
+  `xbe_entry_point`. O novo bootstrap chama `recomp_lookup` com essa VA após
+  mapear o XBE, inicializar kernel/thunks e definir `g_esp = XBOX_STACK_TOP`.
+- O CMake agora oferece `fut_street_2_no_emulation_kernel`, compilando 18 fontes
+  do kernel de XboxRecomp v0.13.1. A lista exclui `nv2a_pb_scan.c`,
+  `nv2a_pb_exec.c`, `nv2a_vsh_interp.c` e `nv2a_combiner.c`; os hooks opcionais
+  são satisfeitos pela implementação disabled versionada. Os alvos APU/NV2A e
+  o guarda-chuva upstream `xboxrecomp` não são linkados.
+- Foram adicionados `recomp_manual_lookup.c` (fallback sem overrides de título)
+  e diagnósticos para indirect calls/untranslated instructions, incluindo o
+  trap opt-in `RECOMP_UNIMPL_TRAP`. O alvo de suporte tem teste CTest.
+- As bibliotecas nativas selecionadas D3D8→D3D11, vídeo e XInput, mais import
+  libraries para `d3dcompiler_47.dll`/`xinput1_4.dll`, fecharam o link. Os nomes
+  exportados nas duas `.def` foram confirmados contra as DLLs do host.
+- `fut_street_2_recompiled_app.exe` linkou com `--no-undefined`, tamanho
+  `165,368,832` bytes. CTest: `2/2` (suporte no-emulação e `--help`). O smoke
+  `--help` não carrega o XBE; nenhuma outra execução do `.exe` foi feita.
+- O bootstrap exige `--launch <default.xbe> <game-data-directory>` e recusa
+  `RECOMP_AC97_READY`/`RECOMP_PB_EXEC`; isso não garante semântica dos demais
+  imports. A etapa demonstra link e CLI, não boot do jogo, equilíbrio de ABI,
+  funcionamento de stubs, rendering, gameplay, animação ou áudio. O runtime
+  DirectSound não está incluído neste link.
+- Compilação Release nativa passou, mas registrou warnings oriundos dos fontes
+  upstream do kernel (incluindo formatos `printf` e comentários); não foram
+  silenciados nem corrigidos localmente. O arquivo gerado permanece temporário,
+  fora do GitHub. ISO continua read-only.
+
+Estado ainda `NOT_READY`; não executar o XBE nem este host `.exe` com `--launch`
+sem autorização explícita de bring-up. Próxima ação: revisar com evidência os
+stubs de kernel chamados pelo XBE e a semântica de `RECOMP_UNIMPL`/indirect
+dispatch, depois fechar o caminho de áudio e validar startup controlado.
