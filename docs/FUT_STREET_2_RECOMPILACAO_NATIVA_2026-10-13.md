@@ -66,6 +66,24 @@ continuam sem prova. O feedback iterativo de chamadas indiretas do XboxRecomp
 depende de observações de execução; não foi usado porque o XBE e o executável
 recompilado não foram executados.
 
+## Fronteira do runtime e requisito sem emulação
+
+Também auditei o `CMakeLists.txt` da release fixada e o template de novo jogo.
+O alvo guarda-chuva `xboxrecomp` vincula `xbox_apu` (emulação do MCPX APU) e
+`xbox_nv2a` (emulação da GPU NV2A), além de camadas de kernel, D3D8→D3D11,
+DirectSound, USB, input e vídeo. O template de jogo usa esse alvo guarda-chuva
+por padrão. A biblioteca estática compilada neste projeto **não** inclui nem
+compila esses runtimes.
+
+Para respeitar o requisito atual de não usar emulação, não integrar o alvo
+guarda-chuva nem os componentes APU/NV2A. O caminho restante é mapear as APIs
+originais para APIs nativas do host e traduzir chamadas/command streams do
+gráfico para D3D11; áudio precisa de uma ponte nativa equivalente. Isso é
+trabalho de compatibilidade por título, não um runtime já disponível nem
+bindings que possamos presumir. É necessário confirmar se essa tradução direta
+de APIs e comandos é permitida dentro de "sem emulação"; sem esse limite claro,
+o link final e os gates de rendering/áudio não podem ser definidos corretamente.
+
 ## Scaffold versionado
 
 `native_recomp/CMakeLists.txt` espera que `RECOMP_GENERATED_DIR` aponte para
