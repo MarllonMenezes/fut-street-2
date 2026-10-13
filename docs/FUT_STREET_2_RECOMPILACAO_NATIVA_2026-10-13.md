@@ -434,3 +434,29 @@ e [fonte do controlador GPIO no commit do PR](https://github.com/xemu-project/xe
 Próximo passo: procurar confirmação independente do registrador/encoder e do
 efeito da escrita `1`; só então decidir se há uma tradução nativa de sincronismo
 de apresentação compatível, sem simular a GPU ou inventar estado.
+
+## Etapa 1.41 — bloquear o opt-in de vblank sintético no host (2026-10-13)
+
+- A auditoria do bridge do kernel no checkout temporário XboxRecomp v0.13.1
+  encontrou `kernel_vblank_tick()`: se `RECOMP_VBLANK` estiver presente, ele
+  agenda um tick fixo de aproximadamente 60 Hz, grava bits de interrupção em
+  endereços guest NV2A e chama o ISR do vetor 3. Isso é uma fonte sintética de
+  evento GPU, não sincronização obtida do backend nativo de apresentação.
+- O bootstrap do projeto já bloqueava `RECOMP_AC97_READY` e `RECOMP_PB_EXEC`,
+  mas aceitava `RECOMP_VBLANK`. Ele agora também recusa essa variável antes de
+  abrir o XBE ou os diretórios de dados. Foi adicionado um teste que passa
+  caminhos fictícios e verifica código de saída `2` e a mensagem de recusa;
+  portanto não executa o bring-up nesse teste.
+- Build nativo Release passou; CTest `3/3`, incluindo
+  `recompiled_host_rejects_synthetic_vblank`. Regressão .NET passou: build
+  Release `0/0`, self-test `105/105`, runtime authored headless `80 frames`,
+  replay match/input/animação/áudio byte-idêntico, smoke windowed `960x540` e
+  runner `10/10`. Esses smokes authored não são evidência de fidelidade do XBE.
+- O bring-up nativo não foi reexecutado nesta etapa; a mudança só reforça o
+  guard e o teste CTest comprova o caminho de rejeição antes de qualquer acesso
+  à ISO/XBE. A ISO permaneceu somente leitura; SHA-256:
+  `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B`.
+
+`NOT_READY` permanece. O próximo avanço real do jogo depende de uma fonte nativa
+de sincronização de apresentação e de uma semântica confirmada para o GPIO
+`0x80C0`; não ligar o vblank sintético para produzir progresso aparente.

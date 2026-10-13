@@ -55,8 +55,13 @@ requires an explicit `--launch <default.xbe> <game-data-directory>
 `RECOMP_PB_EXEC` opt-ins. Requiring a separate save directory avoids the
 upstream per-user default; for bring-up, point both data and saves at disposable
 directories outside the repository and keep the ISO as read-only input.
-`--help` is safe and is the only application invocation covered by CTest. A
-separate controlled `--launch` bring-up has reached the translated entry and
+The bootstrap rejects `RECOMP_AC97_READY`, `RECOMP_PB_EXEC`, and
+`RECOMP_VBLANK`; the last option synthesizes a fixed-rate vblank and writes
+NV2A interrupt bits, so it is incompatible with this project's no-emulation
+policy. CTest verifies this rejection before any XBE/data path is opened.
+`--help` is the safe CLI smoke; the additional CTest launch uses dummy paths and
+asserts that the guard exits before opening any input. A separate controlled
+`--launch` bring-up has reached the translated entry and
 worker/timer activity; it did not validate boot/menu or gameplay, and is
 documented in `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. A successful
 link or CLI smoke alone is not game-execution evidence.

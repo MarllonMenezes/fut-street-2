@@ -76,9 +76,10 @@ int main(int argc, char **argv)
         return 2;
     }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
-        environment_variable_is_set("RECOMP_PB_EXEC")) {
+        environment_variable_is_set("RECOMP_PB_EXEC") ||
+        environment_variable_is_set("RECOMP_VBLANK")) {
         fprintf(stderr,
-                "Refusing emulator opt-in environment variables in the "
+                "Refusing emulator or synthetic-hardware opt-in variables in the "
                 "no-emulation build.\n");
         return 2;
     }

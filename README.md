@@ -46,13 +46,11 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: [etapa 1.40 — GPIO LPC PM e hipótese de campo de
-vídeo](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md). A evidência local
-confirma que o código traduzido acessa `0x80C0`; a documentação pública situa a
-porta no GPIO LPC PM, e uma implementação de referência sugere leitura de
-paridade de campo, mas marca essa semântica como hipótese. Ainda não há binding
-validado nem boot/menu. Os 71 stubs e 154 no-ops permanecem por auditar. Isso
-não fecha gates de fidelidade. A
+Último avanço registrado: [etapa 1.41 — bloqueio do vblank sintético](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+O host agora recusa `RECOMP_VBLANK`, que ativaria uma interrupção GPU fixa
+simulada. O GPIO LPC PM em `0x80C0` ainda aguarda validação independente; não há
+binding confirmado nem boot/menu. Os 71 stubs e 154 no-ops permanecem por
+auditar. Isso não fecha gates de fidelidade. A
 [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
 explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.
