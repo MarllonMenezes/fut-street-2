@@ -656,3 +656,12 @@ atributo `Archive`, SHA-256
 - Geração: `15702/15702` funções traduzidas, zero falhas, 71 stubs, 1.761.271 linhas C; 96 instruções/29 mnemonics sem lowering. A contagem inclui casos de DAA/DAS sem CF seguro; esses permanecem TODOs por projeto.
 - CMake Release compilou e linkou as 64 unidades C geradas; CTest `4/4`; host `--help` passou. É verificação de tradução/compilação e inicialização da CLI, não prova de boot ou comportamento do jogo. Nenhum XBE foi iniciado; sem headless/replay do jogo.
 - Sem alteração de estado dos gates de rendering/assets/gameplay/áudio: todos `NOT_READY`; projeto não concluído. ISO somente leitura, 2.013.003.776 bytes, `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+## Etapa 1.49 — AAA/AAS com proveniência conservadora de AF (2026-10-13)
+
+- Patch `0011-lift-aaa-aas-with-af-guard.patch` implementa AAA/AAS: ajusta AX por `+/- 0x0106` quando `AL[3:0] > 9` ou AF está setado, depois mantém somente o nibble baixo de AL. Atualiza AF/CF conforme a condição e preserva o restante de EAX. As outras flags aritméticas são indefinidas; só condições de CF depois dessas instruções são baixadas.
+- Operação e flags conferidas no [Intel SDM, volume 2A, referência AAA/AAS](https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2a-manual.pdf).
+- AAA/AAS só são traduzidas com produtor de AF rastreado antes no mesmo basic block. O guard invalida AF em writers sem semântica AF conhecida e não atravessa branch, call ou ret. Um DAA/DAS só alimenta AF se o próprio site passou pelo guard de CF. Assim, o AAA de `0x000C37FD` e o AAS de `0x00296468` ficam `RECOMP_UNIMPL`; dois dos três sites AAS foram baixados. Isso evita inicializar AF arbitrariamente para instruções sem proveniência.
+- Base limpa XboxRecomp v0.13.1 (`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`), patches 0001–0011: `537 passed, 38 skipped`; `py_compile` passou. Geração `15702/15702`, zero falhas, 71 stubs, 1.761.326 linhas C; TODOs `96/29 → 94/29`.
+- CMake Release compilou/linkou as 64 unidades C; CTest `4/4`; host `--help` passou. Nenhum XBE foi iniciado: não houve runtime headless/replay do jogo. Build/teste não aprovam boot, rendering, assets, gameplay, animação ou áudio; todos os gates seguem `NOT_READY`.
+- ISO somente leitura: 2.013.003.776 bytes, atributo `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.

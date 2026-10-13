@@ -364,6 +364,16 @@ nenhum boot/headless/replay do jogo alegado. Gates permanecem `NOT_READY`,
 projeto não concluído. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.49, 2026-10-13): patch 0011 traduz AAA/AAS
+somente após AF rastreado no mesmo basic block; somente CF é considerado
+definido depois. Dois sites AAS foram traduzidos. `AAA 0x000C37FD` e
+`AAS 0x00296468` ficam TODO por falta de proveniência de AF. Pilha 0001–0011:
+537 passed/38 skipped; geração 15702/15702, zero falhas, 71 stubs, 94 TODOs/29
+mnemonics; Release/link, CTest 4/4 e `--help` passaram. Nenhum XBE iniciado,
+sem runtime headless/replay do jogo. Gates `NOT_READY`; projeto incompleto. ISO
+somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 

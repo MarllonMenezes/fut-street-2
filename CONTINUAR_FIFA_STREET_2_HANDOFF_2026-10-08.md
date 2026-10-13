@@ -1377,6 +1377,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - CLI `--help` passou; nenhum XBE executado, sem boot/headless/replay original. Rendering/assets/gameplay/áudio seguem `NOT_READY`, e o projeto não está finalizado.
 - ISO preservada somente leitura; SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+## Atualização mais recente: etapa 1.49 (2026-10-13)
+
+- Patch 0011 baixa AAA/AAS quando AF tem produtor rastreado no mesmo bloco; dois AAS passaram. Um AAA e um AAS sem AF demonstrável continuam `RECOMP_UNIMPL`.
+- Pilha 0001–0011: 537 testes aprovados/38 ignorados; geração 15702/15702, 0 falhas, 71 stubs, 94 instruções/29 mnemonics sem lowering. Release/link e CTest 4/4 aprovados.
+- Nenhum XBE iniciado ou replay original executado. Gates de rendering/assets/gameplay/áudio `NOT_READY`; ISO permanece somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 

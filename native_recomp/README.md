@@ -184,3 +184,23 @@ generation translated 15,702/15,702 functions with zero generation failures,
 The 64 generated C translation units built and linked in Release, and CTest
 passed 4/4. These are translator/build checks only: no XBE boot, rendering,
 assets, gameplay, animation, or audio gate is claimed as validated.
+
+Patch `0011-lift-aaa-aas-with-af-guard.patch` follows patches 0001–0010. It
+lowers AAA/AAS only when a tracked AF definition precedes the site in the same
+basic block. The instructions update AX and define AF/CF; all other arithmetic
+flags remain unknown, so only carry conditions are lowered afterward. Sites
+without AF provenance remain `RECOMP_UNIMPL`. This patch does not infer flag
+state across blocks or calls and does not claim site reachability.
+
+On the pinned v0.13.1 source, patches 0001–0011 pass 537 tests (38 skipped).
+Generation remains 15,702/15,702 functions with zero failures and 71 unresolved
+call stubs; unsupported instructions decreased from 96 to 94 across 29
+mnemonics. Two AAS sites lowered; one AAA and one AAS site remain unsupported
+because their incoming AF is not established by the conservative analysis.
+Release compilation/link, CTest 4/4, and host `--help` pass. No XBE boot or
+gameplay/render/audio gate is validated.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0011-lift-aaa-aas-with-af-guard.patch'
+```

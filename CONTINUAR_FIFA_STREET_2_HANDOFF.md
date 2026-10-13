@@ -6477,6 +6477,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - CMake Release/link das 64 unidades C e CTest 4/4 passaram; `--help` passou. Nenhum XBE iniciado; sem runtime headless/replay do jogo. Gates `NOT_READY`, projeto incompleto.
 - ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Próxima prioridade: investigar famílias restantes por evidência arquitetural, começando AAA/AAS e cobertura de exceções/flags; manter TODO nos casos sem semântica segura.
 
+## Continuação após a etapa 1.49 (2026-10-13)
+
+- Patch 0011 baixa AAA/AAS apenas com AF rastreado no mesmo basic block; só CF permanece definido após a instrução. Dois AAS sites passaram; o AAA `0x000C37FD` e o AAS `0x00296468` seguem TODO sem proveniência de AF.
+- Suíte XboxRecomp limpa: 537 passed/38 skipped. Geração 15702/15702, zero falhas, 71 stubs, 94 instruções/29 mnemonics sem lowering. Release/link e CTest 4/4 aprovados; `--help` passou.
+- Sem XBE/boot/headless/replay do jogo. Gates continuam `NOT_READY`; projeto incompleto. ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Próximo passo: estudar proveniência de flags em CFG sem afrouxar segurança; em paralelo, priorizar os restantes pelo caminho de inicialização demonstrável.
+
 
 
 

@@ -1,0 +1,205 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+index 0c2a530..ff988f3 100644
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -342 +342 @@ FLAG_SETTERS = frozenset({
+-    "daa", "das",
++    "daa", "das", "aaa", "aas",
+@@ -370 +370 @@ CF_TRACKED = frozenset({
+-    "daa", "das",
++    "daa", "das", "aaa", "aas",
+@@ -551,0 +552,9 @@ def _make_condition(jcc, flag_setter, flag_ops):
++    # AAA/AAS define only AF and CF. Their other arithmetic flags are
++    # undefined, so only simple carry conditions can be reconstructed.
++    if flag_setter in ("aaa", "aas"):
++        if jcc in ("jb", "jnae", "jc"):
++            return "_cf", desc
++        if jcc in ("jae", "jnb", "jnc"):
++            return "!_cf", desc
++        return None
++
+@@ -1336 +1345 @@ class Lifter:
+-        self.needs_af = False  # Set per-function when DAA/DAS or LAHF reads AF
++        self.needs_af = False  # Set per-function when decimal adjust / LAHF reads AF
+@@ -1337,0 +1347 @@ class Lifter:
++        self.supported_ascii_adjust_sites = set()
+@@ -1710,0 +1721,17 @@ class Lifter:
++        if m in ("aaa", "aas"):
++            if (not self.needs_af
++                    or insn.address not in self.supported_ascii_adjust_sites):
++                return self._unimplemented(insn, m)
++            delta = "+" if m == "aaa" else "-"
++            out = [
++                "{ uint32_t _old_al = LO8(eax), _ax = LO16(eax);",
++                "  int _adjust = ((_old_al & 0x0Fu) > 9u) || _af;",
++                f"  if (_adjust) _ax {delta}= 0x0106u;",
++                "  _ax = (_ax & 0xFF00u) | (_ax & 0x000Fu);",
++                "  SET_LO16(eax, _ax); _af = _adjust;",
++            ]
++            if self.needs_cf:
++                out.append("  _cf = _adjust;")
++            out.append(f"}} /* {m}: ASCII adjust AX */")
++            return out
++
+
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+index 4c673ec..21f7ba1 100644
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1406,2 +1406,2 @@ class FunctionTranslator:
+-        """True when a function reads AF or exports it through LAHF."""
+-        return any(insn.mnemonic in ("daa", "das", "lahf")
++        """True when decimal adjust reads AF or LAHF exports it."""
++        return any(insn.mnemonic in ("daa", "das", "aaa", "aas", "lahf")
+@@ -1411 +1411 @@ class FunctionTranslator:
+-    def _supported_decimal_adjust_sites(instructions):
++    def _supported_decimal_adjust_sites(instructions, supported_ascii_sites=None):
+@@ -1421,0 +1422 @@ class FunctionTranslator:
++        supported_ascii_sites = supported_ascii_sites or set()
+@@ -1442,0 +1444,47 @@ class FunctionTranslator:
++            elif (insn.mnemonic in ("aaa", "aas")
++                  and insn.address in supported_ascii_sites):
++                seen_cf_definition = True
++        return supported
++
++    @staticmethod
++    def _supported_ascii_adjust_sites(instructions, supported_decimal_sites):
++        """Require a same-block tracked AF definition before AAA/AAS."""
++        from .lifter import FLAG_SETTERS, _EFLAGS_SETTERS, _FLAGS_UNDEFINED
++
++        af_writers = {
++            "add", "adc", "sub", "sbb", "cmp", "inc", "dec", "neg",
++        }
++        addresses = {insn.address for insn in instructions}
++        leaders = set()
++        if instructions:
++            leaders.add(instructions[0].address)
++        for index, insn in enumerate(instructions):
++            if insn.is_branch and insn.jump_target in addresses:
++                leaders.add(insn.jump_target)
++            if ((insn.is_branch or insn.is_call or insn.is_ret)
++                    and index + 1 < len(instructions)):
++                leaders.add(instructions[index + 1].address)
++
++        seen_af_definition = False
++        supported = set()
++        for insn in instructions:
++            m = insn.mnemonic
++            if insn.address in leaders:
++                seen_af_definition = False
++            if m in ("aaa", "aas"):
++                if seen_af_definition:
++                    supported.add(insn.address)
++                    seen_af_definition = True  # AAA/AAS define AF.
++                else:
++                    # An untranslated adjust cannot be trusted as a flag writer.
++                    seen_af_definition = False
++            elif m in ("daa", "das"):
++                seen_af_definition = insn.address in supported_decimal_sites
++            elif m in af_writers:
++                seen_af_definition = True
++            elif (m in FLAG_SETTERS or m in _EFLAGS_SETTERS
++                  or m in _FLAGS_UNDEFINED
++                  or m in {"sahf", "fcomi", "fcomip", "fucomi",
++                           "fucomip", "fcompi", "fucompi"}):
++                # These write AF as undefined or untracked.
++                seen_af_definition = False
+@@ -2399,0 +2448,15 @@ class FunctionTranslator:
++        self.lifter.supported_ascii_adjust_sites = set()
++        # DAA/DAS and AAA/AAS can each produce the flag consumed by the other.
++        # Grow supported sites monotonically to a fixed point, while never
++        # treating an untranslated instruction as a flag definition.
++        for _ in range(len(instructions) + 1):
++            ascii_sites = self._supported_ascii_adjust_sites(
++                instructions, self.lifter.supported_decimal_adjust_sites)
++            decimal_sites = self._supported_decimal_adjust_sites(
++                instructions, ascii_sites)
++            if (ascii_sites == self.lifter.supported_ascii_adjust_sites
++                    and decimal_sites
++                    == self.lifter.supported_decimal_adjust_sites):
++                break
++            self.lifter.supported_ascii_adjust_sites = ascii_sites
++            self.lifter.supported_decimal_adjust_sites = decimal_sites
+
+diff --git a/tools/recomp/test_lifter_aaa_aas.py b/tools/recomp/test_lifter_aaa_aas.py
+new file mode 100644
+--- /dev/null
++++ b/tools/recomp/test_lifter_aaa_aas.py
+@@ -0,0 +1,77 @@
++import unittest
++
++from .disasm import Instruction
++from .lifter import Lifter, _make_condition
++from .translator import FunctionTranslator
++
++
++class AaaAasLifterTest(unittest.TestCase):
++    @staticmethod
++    def _insn(mnemonic, address=0x3000):
++        insn = Instruction(address, 1, mnemonic, "", "90")
++        insn.operands = []
++        return insn
++
++    def test_aaa_and_aas_adjust_ax_and_write_defined_flags(self):
++        for mnemonic, delta in (("aaa", "+"), ("aas", "-")):
++            lifter = Lifter()
++            lifter.needs_af = True
++            lifter.needs_cf = True
++            lifter.supported_ascii_adjust_sites = {0x3000}
++            generated = "\n".join(lifter.lift_instruction(
++                self._insn(mnemonic)))
++            self.assertIn("(_old_al & 0x0Fu) > 9u", generated)
++            self.assertIn("_ax " + delta + "= 0x0106u", generated)
++            self.assertIn("(_ax & 0xFF00u) | (_ax & 0x000Fu)", generated)
++            self.assertIn("SET_LO16(eax, _ax)", generated)
++            self.assertIn("_af = _adjust", generated)
++            self.assertIn("_cf = _adjust", generated)
++
++    def test_ascii_adjust_omits_cf_storage_when_no_consumer_exists(self):
++        lifter = Lifter()
++        lifter.needs_af = True
++        lifter.supported_ascii_adjust_sites = {0x3000}
++        generated = "\n".join(lifter.lift_instruction(self._insn("aaa")))
++        self.assertIn("_af = _adjust", generated)
++        self.assertNotIn("_cf", generated)
++
++    def test_only_cf_conditions_are_defined_after_ascii_adjust(self):
++        for mnemonic in ("aaa", "aas"):
++            self.assertEqual(_make_condition("jb", mnemonic, [])[0], "_cf")
++            self.assertEqual(_make_condition("jae", mnemonic, [])[0], "!_cf")
++            for undefined in ("je", "jo", "js", "jp", "jbe", "ja"):
++                self.assertIsNone(_make_condition(undefined, mnemonic, []))
++
++    def test_site_requires_tracked_af_producer_in_same_basic_block(self):
++        add = self._insn("add", 0x3000)
++        aaa = self._insn("aaa", 0x3001)
++        self.assertEqual(FunctionTranslator._supported_ascii_adjust_sites(
++            [add, aaa], set()), {aaa.address})
++        self.assertEqual(FunctionTranslator._supported_ascii_adjust_sites(
++            [aaa], set()), set())
++
++        branch = self._insn("jmp", 0x3100)
++        branch.jump_target = 0x3103
++        bypassed_add = self._insn("add", 0x3101)
++        target_aas = self._insn("aas", 0x3103)
++        self.assertEqual(FunctionTranslator._supported_ascii_adjust_sites(
++            [branch, bypassed_add, target_aas], set()), set())
++
++    def test_undefined_af_writer_invalidates_provenance(self):
++        for invalidator in ("xor", "sahf", "fcomi"):
++            add = self._insn("add", 0x3200)
++            flags = self._insn(invalidator, 0x3201)
++            aaa = self._insn("aaa", 0x3202)
++            self.assertEqual(FunctionTranslator._supported_ascii_adjust_sites(
++                [add, flags, aaa], set()), set(), invalidator)
++
++    def test_translator_tracks_carry_consumer_after_aaa(self):
++        aaa = self._insn("aaa", 0x3300)
++        carry_branch = self._insn("jb", 0x3301)
++        self.assertTrue(FunctionTranslator._function_needs_cf(
++            [aaa, carry_branch]))
++        self.assertTrue(FunctionTranslator._function_needs_af([aaa]))
++
++
++if __name__ == "__main__":
++    unittest.main()

@@ -4498,6 +4498,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Testes limpos XboxRecomp v0.13.1: 531 passed, 38 skipped. Geração: 15702/15702 funções, zero falhas, 71 stubs, 96 TODOs em 29 mnemonics. Release compilou/linkou 64 unidades; CTest 4/4 e `--help` passaram.
 - Nenhum XBE executado; não alegar boot/headless/replay do jogo. Gates rendering/assets/gameplay/áudio `NOT_READY`; projeto não concluído. ISO SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`, somente leitura.
 
+## Continuação após a etapa 1.49 (2026-10-13)
+
+- Patch 0011 acrescenta AAA/AAS com guard de AF no mesmo bloco; dois sites AAS foram traduzidos. AAA `0x000C37FD` e AAS `0x00296468` ficam TODO porque AF não tem definição comprovada na entrada.
+- Testes limpos: 537 passed/38 skipped; geração 15702/15702, zero falhas, 71 stubs, 94 TODOs/29 mnemonics. Release/link, CTest 4/4 e host `--help` passaram.
+- XBE não iniciado; sem headless/replay original. Gates rendering/assets/gameplay/áudio `NOT_READY`; ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 
