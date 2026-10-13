@@ -1,0 +1,30 @@
+Continue o projeto FIFA Street 2 no workspace `D:\projeto zeta`.
+
+Primeiro leia completamente, sem pular linhas:
+`D:\projeto zeta\CONTINUAR_FIFA_STREET_2_HANDOFF.md`
+
+Depois leia o resumo operacional:
+`D:\projeto zeta\CONTINUAR_FIFA_STREET_2_HANDOFF_NOVO_CHAT.md`
+
+Confira o estado real dos arquivos antes de alterar qualquer coisa. Preserve
+todas as alterações existentes. Mantenha a ISO abaixo sem escrita e use acesso
+somente leitura:
+`D:\projeto zeta\FIFA Street 2 (USA) (En,Es).iso`
+
+Continue pela próxima etapa recomendada no handoff. O objetivo é uma
+reimplementação clean-room em .NET, sem emulação. Não diga que o XBE foi
+recompilado. Não invente bindings para materiais, UVs, skinning, rigging,
+animação, morphs ou comandos GPU.
+
+Implemente, teste e documente cada avanço. Preserve explicitamente a distinção
+entre evidência comprovada, caminho candidato e semântica ainda não decodificada.
+O estado atual já inclui gameplay authored, `--juggle-demo`, materiais
+same-trunk candidatos, áudio parcial e auditorias estruturais; leia os arquivos
+para confirmar os detalhes e não trate esses caminhos candidatos como prova
+final.
+
+Ao finalizar a etapa atual, execute build Release, self-test, smokes relevantes,
+runtime headless, replay determinístico quando aplicável e verifique o SHA-256
+da ISO. Atualize a documentação com os resultados exatos. Não marque o projeto
+como concluído e não inicie code review: continue trabalhando até renderização,
+gameplay, assets e áudio estarem integrados e verificados.
