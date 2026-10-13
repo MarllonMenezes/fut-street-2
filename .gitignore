@@ -15,6 +15,7 @@
 !/fifa_pc/
 /fifa_pc/*
 !/fifa_pc/*.csproj
+!/fifa_pc/*.cs
 !/fifa_pc/README.md
 !/fifa_pc/Runtime/
 /fifa_pc/Runtime/**
@@ -24,6 +25,7 @@
 !/pc_compat/
 /pc_compat/*
 !/pc_compat/*.csproj
+!/pc_compat/*.cs
 !/pc_compat/README.md
 !/pc_compat/Runtime/
 /pc_compat/Runtime/**
