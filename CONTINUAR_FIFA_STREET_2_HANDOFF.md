@@ -6450,6 +6450,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - `OUT 1` em `0x00298030`/GPIO `0x80C0` continua sem binding; `RECOMP_VBLANK` segue recusado. Nenhum XBE/host foi lançado nesta etapa; nada indica boot/menu ou gates de rendering, assets, gameplay original e áudio aprovados.
 - Readiness `NOT_READY`; preservar ISO somente leitura, não enviar XBE/assets, não inventar bindings, não declarar conclusão e não iniciar code review.
 
+## Continuação após a etapa 1.45 (2026-10-13)
+
+- Patch 0006 traduz seis sites XMM/MMX packed-word; instruções sem lowering diminuíram `139/36 → 133/32`. Permanecem 71 stubs e 15.702 funções geradas; nenhum site foi declarado alcançável com base nessa redução.
+- Testes: clone limpo XboxRecomp com patches 0001–0006; pytest focado `517 passed, 38 skipped`; build CMake Release completo e relink; CTest `3/3`, incluindo teste de lanes/shift/MMX `pmulhuw`; host `--help` passou. Coleta global exige `pefile`, ausente no teste fusion.
+- XBE/`--launch` não executados; sem boot/headless/replay do original. Gates abertos, `NOT_READY`. ISO somente leitura, SHA-256 verificado.
+- Próxima prioridade: reduzir opcodes/stubs por evidência do código original; não inventar bindings nem inferir alcance.
+
 
 
 

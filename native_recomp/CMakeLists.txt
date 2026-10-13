@@ -66,6 +66,13 @@ if(BUILD_TESTING)
         fut_street_2_no_emulation_runtime_support)
     add_test(NAME no_emulation_runtime_support
         COMMAND no_emulation_runtime_support_test)
+
+    add_executable(recomp_packed_word_ops_test
+        tests/recomp_packed_word_ops_test.c)
+    target_include_directories(recomp_packed_word_ops_test PRIVATE
+        "${RECOMP_GENERATED_DIR}")
+    add_test(NAME recomp_packed_word_ops
+        COMMAND recomp_packed_word_ops_test)
 endif()
 
 if(FUT_STREET2_BUILD_HOST_APP)

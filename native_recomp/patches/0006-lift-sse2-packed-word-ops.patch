@@ -1,0 +1,128 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1632,3 +1632,4 @@ class Lifter:
+                  "xorps", "xorpd", "andps", "orps", "andnps",
+                  "movd", "movq",
++                 "paddw", "psubw", "pmulhuw", "psraw",
+                  "shufps", "unpcklps", "unpckhps",
+@@ -2941,3 +2942,4 @@ class Lifter:
+         "paddusw": "MMX_PADDUSW", "psubusw": "MMX_PSUBUSW",
+         "pmullw": "MMX_PMULLW", "pmulhw": "MMX_PMULHW",
++        "pmulhuw": "MMX_PMULHUW",
+         "pmaddwd": "MMX_PMADDWD",
+@@ -3290,5 +3291,31 @@
+             if lifted is not None:
+                 return lifted
+             return [f"/* {m} {insn.op_str} */"]
+-
++
++        # ── Packed 16-bit integer SSE2 ──
++        # The MMX path is selected above when operands use mm registers.
++        if m in ("paddw", "psubw", "pmulhuw"):
++            helper = {"paddw": "XMM_PADDW", "psubw": "XMM_PSUBW",
++                      "pmulhuw": "XMM_PMULHUW"}[m]
++            lifted = _packed_binary(helper)
++            if lifted is not None:
++                return lifted
++            return self._unimplemented(insn, m)
++        if m == "psraw" and nops >= 2 and _is_xmm(ops[0]):
++            src = _packed_read(ops[0])
++            count_op = ops[1]
++            if count_op.type == "imm":
++                count = f"{_fmt_imm(count_op.imm)}u"
++            elif _is_xmm(count_op):
++                count = f"{count_op.reg}.q[0]"
++            elif count_op.type == "mem":
++                addr = _fmt_mem(count_op)
++                count = (f"((uint64_t)MEM32({addr}) | "
++                         f"((uint64_t)MEM32(({addr}) + 4) << 32))")
++            else:
++                return self._unimplemented(insn, m)
++            if src is not None:
++                return [f"{ops[0].reg} = XMM_PSRAW({src}, {count}); /* psraw */"]
++            return self._unimplemented(insn, m)
++
+         # ── Conversions ──
+diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -462,2 +462,4 @@ typedef union RecompXmm {
+     int32_t  i[4];
++    uint16_t uw[8];
++    int16_t  w[8];
+     uint64_t q[2];
+@@ -569,4 +569,31 @@
+ /* ANDNPS is ~dst & src, not dst & ~src. */
+ RECOMP_XMM_BITWISE(XMM_ANDN, (~a.u[i]) & b.u[i])
+-
++
++/* Packed 16-bit integer operations use all eight XMM word lanes. */
++#define RECOMP_XMM_WORD_BINOP(NAME, EXPR)                               \
++    static inline RecompXmm NAME(RecompXmm a, RecompXmm b) {            \
++        RecompXmm r; int i;                                             \
++        for (i = 0; i < 8; i++) r.w[i] = (EXPR);                       \
++        return r;                                                       \
++    }
++RECOMP_XMM_WORD_BINOP(XMM_PADDW,
++    (int16_t)((uint16_t)a.w[i] + (uint16_t)b.w[i]))
++RECOMP_XMM_WORD_BINOP(XMM_PSUBW,
++    (int16_t)((uint16_t)a.w[i] - (uint16_t)b.w[i]))
++RECOMP_XMM_WORD_BINOP(XMM_PMULHUW,
++    (uint16_t)(((uint32_t)a.uw[i] * (uint32_t)b.uw[i]) >> 16))
++static inline RecompXmm XMM_PSRAW(RecompXmm a, uint64_t count) {
++    RecompXmm r;
++    int i;
++    int32_t shift = (count >= 16) ? 15 : (int32_t)count;
++    int32_t mask = (1 << shift) - 1;
++    for (i = 0; i < 8; i++) {
++        int32_t value = a.w[i];
++        r.w[i] = (int16_t)(value >= 0
++            ? (value >> shift)
++            : -(((-value) + mask) >> shift));
++    }
++    return r;
++}
++
+ /* Compares produce an all-ones or all-zero mask per lane. EQ/LT/LE are
+@@ -1298,2 +1325,4 @@
+ RECOMP_MMX_BINOP(MMX_PMULHW, 4, w, (int16_t)(((int32_t)a.w[i] * b.w[i]) >> 16))
++RECOMP_MMX_BINOP(MMX_PMULHUW, 4, uw,
++                 (uint16_t)(((uint32_t)a.uw[i] * b.uw[i]) >> 16))
+ RECOMP_MMX_BINOP(MMX_PAVGB, 8, ub, (uint8_t)(((int32_t)a.ub[i] + b.ub[i] + 1) >> 1))
+diff --git a/tools/recomp/test_lifter_sse.py b/tools/recomp/test_lifter_sse.py
+--- a/tools/recomp/test_lifter_sse.py
++++ b/tools/recomp/test_lifter_sse.py
+@@ -204,1 +204,32 @@
++
++    def test_packed_word_arithmetic_uses_all_eight_lanes(self):
++        cases = (
++            ("paddw", "xmm0, xmm1", [_xmm("xmm0"), _xmm("xmm1")],
++             "xmm0 = XMM_PADDW(xmm0, xmm1); /* paddw */"),
++            ("psubw", "xmm2, xmmword ptr [eax]",
++             [_xmm("xmm2"), _mem("eax")],
++             "xmm2 = XMM_PSUBW(xmm2, XMM_MEM(eax)); /* psubw */"),
++            ("pmulhuw", "xmm3, xmm4", [_xmm("xmm3"), _xmm("xmm4")],
++             "xmm3 = XMM_PMULHUW(xmm3, xmm4); /* pmulhuw */"),
++        )
++        for mnemonic, op_str, operands, expected in cases:
++            with self.subTest(mnemonic=mnemonic):
++                self.assertEqual(
++                    Lifter().lift_instruction(_insn(mnemonic, op_str, operands)),
++                    [expected],
++                )
++    def test_packed_arithmetic_shift_handles_immediate_and_vector_counts(self):
++        immediate = Lifter().lift_instruction(
++            _insn("psraw", "xmm0, 0xf",
++                  [_xmm("xmm0"), Operand(type="imm", imm=15)]))
++        self.assertEqual(immediate,
++                         ["xmm0 = XMM_PSRAW(xmm0, 0xFu); /* psraw */"])
++        vector_count = Lifter().lift_instruction(
++            _insn("psraw", "xmm0, xmm1", [_xmm("xmm0"), _xmm("xmm1")]))
++        self.assertEqual(vector_count,
++                         ["xmm0 = XMM_PSRAW(xmm0, xmm1.q[0]); /* psraw */"])
++    def test_packed_unsigned_high_multiply_has_mmx_lift_too(self):
++        lifted = Lifter().lift_instruction(
++            _insn("pmulhuw", "mm0, mm1", [_xmm("mm0"), _xmm("mm1")]))
++        self.assertEqual(lifted, ["mm0 = MMX_PMULHUW(mm0, mm1); /* pmulhuw */"])
+ class CvtPi2PsTest(unittest.TestCase):

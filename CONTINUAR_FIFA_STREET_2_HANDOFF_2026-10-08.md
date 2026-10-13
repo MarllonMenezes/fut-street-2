@@ -1351,6 +1351,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Sem XBE ou `--launch` executados. ISO segue somente leitura; SHA-256 deve ser reconferido ao final de cada etapa. Detalhes em [relatório](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 - Veja detalhes e limites em `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. Readiness `NOT_READY`, não há boot ou gates aprovados.
 
+## Continuação após a etapa 1.45 (2026-10-13)
+
+- Patch 0006 implementa seis operações packed-word XMM/MMX sustentadas pelos operands originais; a geração caiu de 139/36 para 133 no-ops/32 mnemonics. Stubs: 71.
+- Suíte upstream focada: 517 passed, 38 skipped; CMake Release completo, link nativo, `--help` e CTest 3/3 passaram. Teste C cobre wrapping, oito lanes XMM, shift negativo/count saturado e high multiply MMX. Coleta global requer o pacote externo `pefile`.
+- XBE não executado; nenhuma alegação de boot/gates. ISO somente leitura, SHA-256 verificado. Readiness `NOT_READY`; seguir sem inventar bindings.
+
 
 
 

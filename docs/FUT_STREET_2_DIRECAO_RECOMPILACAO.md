@@ -95,18 +95,20 @@ Release, self-tests, smokes relevantes, headless, replay determinístico quando
 aplicável e SHA-256 da ISO em cada marco, sempre distinguindo testes do protótipo
 .NET de validações do núcleo recompilado. Não há prazo de conclusão.
 
-## Continuação após a etapa 1.44 (2026-10-13)
+## Continuação após a etapa 1.45 (2026-10-13)
 
-A pilha versionada 0001–0005 foi aplicada em ordem a um clone limpo do
+A pilha versionada 0001–0006 foi aplicada em ordem a um clone limpo do
 XboxRecomp v0.13.1, fixado no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`;
-os hunks dos patches 0002/0003 foram corrigidos e os testes Python passaram
-24/24. Análise estática, func-ID/ABI e geração foram reproduzidos: 15.690
-funções-base, 15.702 funções C, 62 chunks, 139 instruções sem tradução e 71
-stubs. Build CMake Release, link nativo, `--help` e CTest seguro 2/2 passaram.
-Isso valida a reprodutibilidade do pipeline, não o boot ou fidelidade do jogo.
-Não executar XBE/`--launch`; manter ISO somente leitura. Próxima tarefa:
-classificar stubs e instruções por alcançabilidade/evidência e resolver somente
-comportamentos demonstrados. Readiness continua `NOT_READY`.
+os hunks dos patches 0002/0003 foram corrigidos. O patch 0006 implementa seis
+sites packed-word XMM/MMX, reduzindo as instruções sem lowering de 139/36
+mnemonics para 133/32; 71 stubs permanecem. A geração completa e o CMake Release
+foram refeitos, o host linkou e `--help` + CTest 3/3 passaram. A suíte focada
+Python `tools/disasm` + `tools/recomp`: 517 passou, 38 skipped. A coleta global
+de pytest ainda depende do pacote ausente `pefile` para `tools/fusion`.
+Build/tradução não provam boot ou fidelidade. Nenhum XBE/`--launch` foi executado;
+headless/replay não exercitam os opcodes nativos alterados. ISO somente leitura;
+readiness `NOT_READY`. Próxima tarefa: resolver o próximo grupo de opcodes/stubs
+por evidência estática, sem assumir binding ou alcançabilidade.
 
 ## Validação desta atualização documental — 2026-10-13
 

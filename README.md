@@ -47,19 +47,19 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: etapa 1.44, no
+Último avanço registrado: etapa 1.45, no
 [relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 Foi versionado um patch do lifter para o `WBINVD` alcançado em `0x002954E4`:
 barreira C11 sequencialmente consistente, limitada à ordenação de memória
-coerente no host. Uma regeneração isolada das 15.702 funções reduziu os
-no-ops não traduzidos de 154 para 139 (36 mnemonics); os 71 stubs de chamadas
-continuam. As 64 unidades geradas compilaram e o host foi linkado em Release;
-nenhum XBE foi executado. O build local anterior permanece separado e os
-arquivos C gerados não são versionados. A barreira não implementa flush de
-GPU/DMA. A pilha de patches 0001–0005 agora aplica num clone limpo e fixado do
-XboxRecomp v0.13.1; a geração e o build CMake Release explícito foram
-reproduzidos, com `--help` e CTest seguro 2/2. Persistem 139 instruções sem
-tradução e 71 stubs. A evidência encontrada para `0x80CE` em outro kernel não
+coerente no host. O patch 0006 traduz os sites XMM/MMX de `psraw`, `psubw`,
+`paddw` e `pmulhuw`; os no-ops sem tradução caíram de 154 para 133 (32
+mnemonics), enquanto 71 stubs permanecem. A biblioteca completa foi
+recompilada e o host relinkado em CMake Release; nenhum XBE foi executado.
+Os arquivos C gerados e builds não são versionados. A barreira WBINVD não
+implementa flush de GPU/DMA. A pilha de patches 0001–0006 aplica num clone
+limpo e fixado do XboxRecomp v0.13.1; a suíte focada `tools/disasm` +
+`tools/recomp` passou 517 testes (38 skips), e CTest seguro passou 3/3.
+Persistem 133 instruções sem tradução e 71 stubs. A evidência encontrada para `0x80CE` em outro kernel não
 define o `0x80C0` do jogo; a hipótese
 `field_pin` do xemu permanece explicitamente especulativa. Não há binding
 confirmado nem boot/menu. Isso não fecha gates de fidelidade. A

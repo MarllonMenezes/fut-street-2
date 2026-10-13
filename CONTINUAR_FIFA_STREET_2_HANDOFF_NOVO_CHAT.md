@@ -4472,6 +4472,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Build CMake Release explícito (`-O3 -DNDEBUG`) compilou archive e linkou host. `--help` e CTest seguro 2/2 passaram. Não usar `--launch`; não executar o XBE. Artefatos C/.exe ficam locais. O checkout original dirty foi preservado.
 - Próxima prioridade: classificar por evidência os 139 sites/71 stubs e implementar só comportamento demonstrado. Nenhum gate de rendering/assets/gameplay/áudio original aprovado; `NOT_READY`. ISO somente leitura, nunca subir ISO/XBE/assets.
 
+## Continuação após a etapa 1.45 (2026-10-13)
+
+- Patch versionado 0006 cobre seis sites XMM/MMX packed-word; no-ops caíram de 139 (36 mnemonics) para 133 (32). 71 stubs e 15.702 funções permanecem.
+- Clone limpo XboxRecomp v0.13.1 + patches 0001–0006 reproduzido; pytest focado `517 passed, 38 skipped`; CMake Release compilou 64 unidades e relinkou o host; `--help`, CTest `3/3` e teste semântico C das operações passaram.
+- `pefile` ausente impede a coleta global da suíte `tools/fusion`; `tools/disasm` + `tools/recomp` passaram. Nenhum XBE/`--launch` ou runtime original iniciado; gates continuam `NOT_READY`.
+- ISO somente leitura. Próximo: analisar os 133 sites/71 stubs por evidência e implementar incrementalmente sem suposições.
+
 
 
 

@@ -577,3 +577,40 @@ atributo `Archive`, SHA-256
   `0x80C0` seguem sem binding confirmado. Readiness `NOT_READY`; rendering,
   assets, gameplay e áudio originais não foram aprovados. ISO somente leitura,
   nunca copiada para Git/nuvem.
+
+## Etapa 1.45 — packed-word SSE2/MMX (2026-10-13)
+
+- Evidência no C gerado anterior: cinco sites XMM adjacentes em
+  `0x001CE54D–0x001CE566` (`psraw`, `psubw`, `paddw`, `pmulhuw`, `psubw`) e um
+  `pmulhuw` MMX em `0x001CE6B9` eram `RECOMP_UNIMPL`. São instruções de 16-bit
+  lane-wise, não uma semântica presumida para API de hardware. O caminho MMX já
+  reconhecia parte dos mnemonics; a família XMM não tinha lowering e o helper
+  MMX também não tinha `pmulhuw` unsigned.
+- Patch versionado
+  `native_recomp/patches/0006-lift-sse2-packed-word-ops.patch` adiciona lanes
+  signed/unsigned de 16 bits ao tipo XMM e implementa wrapping `paddw`/`psubw`,
+  high-half unsigned `pmulhuw` e `psraw` aritmético com count limitado conforme
+  x86. MMX `pmulhuw` também foi ligado ao helper de high-half. O lowering XMM
+  cobre count immediate, registro XMM e memória baixa de 64 bits.
+- Em clone limpo do XboxRecomp v0.13.1
+  (`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`), a pilha 0001–0006 aplicou em
+  ordem. Testes Python `tools/disasm` + `tools/recomp`: `517 passed, 38 skipped`.
+  Os skips não são aprovados. A coleta global para em
+  `tools/fusion/test_lifter_diff.py` porque falta o pacote `pefile`; isso não
+  afeta as duas suítes focadas executadas.
+- Regeneração estática: `15702/15702` funções, zero falhas, 1.753.971 linhas,
+  62 chunks. Instruções sem lowering: `139/36 mnemonics → 133/32`; os seis
+  sites citados agora emitem helpers tipados. Stubs inalterados: 71. Essa queda
+  não prova que os sites são alcançáveis nem que há fidelidade em runtime.
+- Build CMake explicitamente `Release` (`-O3 -DNDEBUG`) recompilou as 64 unidades
+  geradas e relinkou o host. `--help` passou; CTest `3/3` passou, incluindo
+  `recomp_packed_word_ops`, que valida wrapping signed, os oito lanes XMM,
+  shift aritmético negativo/count saturado e `pmulhuw` MMX. Houve warnings
+  preexistentes no C gerado/kernel.
+- Nenhum XBE ou host com `--launch` foi executado. Headless/replay determinístico
+  não foram rodados: não exercitam o lifter alterado sem iniciar o XBE. Nenhum
+  gate de boot, rendering, assets, gameplay ou áudio original muda; readiness
+  `NOT_READY`. ISO permanece somente leitura.
+- Verificação final da ISO: 2.013.003.776 bytes, `Archive`, LastWriteTimeUtc
+  `2026-01-22 10:03:26`, SHA-256
+  `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
