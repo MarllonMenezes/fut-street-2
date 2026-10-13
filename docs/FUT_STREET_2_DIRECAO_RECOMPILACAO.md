@@ -20,27 +20,21 @@ serviços do console e integração gráfica/áudio a validar.
 
 ## Estado real preservado — atualização 2026-10-13
 
-- C/C++ está autorizado para o núcleo traduzido; .NET permanece para ferramentas
-  auxiliares e o protótipo existente. O objetivo continua sendo executar a
-  lógica original via tradução estática, sem intérprete/JIT de CPU.
-- XboxRecomp v0.13.1 foi fixado no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`.
-  A análise classificou 15.605 funções; a geração de C concluiu 15.605/15.605.
-- As 65 unidades C foram compiladas como objetos COFF x86_64 Windows e os 65
-  objetos foram arquivados numa biblioteca estática local. Isso é uma etapa
-  intermediária de tradução/compilação, **não** um executável do jogo, não um
-  link completo do runtime, não prova de execução ou de equivalência.
-- O gerador ainda substituiu 86 destinos de chamada por stubs e emitiu 155
-  instruções como no-op (37 mnemonics, após corrigir dois movimentos SSE
-  inteiros usados no XBE). Esses casos precisam de auditoria/correção; não se
-  presume que sejam irrelevantes; o classificador marca 35 em funções CRT/
-  render/game-vtable e 120 em funções desconhecidas. Dos 86 stubs, 79 não têm
-  metadado `ret N` recuperado. O ABI contém inferências e ainda não está
-  validado semanticamente.
-- O arquivo XBE não foi executado como um XBE. Um host nativo experimental
-  carregou suas seções e chamou o código traduzido, mas não validou boot/menu;
-  os detalhes e limites estão na etapa 1.38 do relatório nativo. A ISO
-  permaneceu somente leitura e com o SHA-256 esperado. XBE, C gerado, objetos e
-  biblioteca ficam fora do GitHub.
+- C/C++ é o núcleo da tradução estática; .NET fica restrito a ferramentas
+  auxiliares e ao protótipo authored. O objetivo é executar a lógica original
+  traduzida, sem intérprete/JIT de CPU.
+- XboxRecomp v0.13.1 está fixado no commit
+  `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`, com patches locais 0001–0011.
+  A geração mais recente concluiu 15.702/15.702 funções, zero falhas, em 62
+  fontes C, com 71 destinos de chamada stubados e 94 instruções sem lowering
+  (29 mnemônicos).
+- As 64 unidades C foram compiladas em CMake Release e o host linkou; CTest
+  passou 4/4 e `--help` passou. São evidências de tradução/compilação/CLI,
+  **não** de boot, execução correta ou equivalência do jogo.
+- Um bring-up controlado anterior alcançou a entrada traduzida e atividade de
+  worker/timer, mas não validou boot/menu e não elimina os stubs nem os no-ops.
+  Nenhum XBE foi executado no marco 1.49; XBE, C gerado, objetos e biblioteca
+  permanecem fora do GitHub.
 - Rendering original, assets, áudio e animação/deformação continuam sem gates
   aprovados. Testes/headless/replay do protótipo .NET não validam o original.
   Readiness permanece `NOT_READY`.

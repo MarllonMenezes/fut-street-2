@@ -20,15 +20,14 @@ implementa o runtime específico.
 
 ## Estado verificável
 
-Na geração mais recente registrada em 2026-10-13, o XboxRecomp produziu C para
-15.702/15.702 funções; 64 unidades foram compiladas e o host Release linkou.
-Restam 71 destinos stub e 154 instruções no-op. Um bring-up controlado carregou
-11/11 seções, resolveu 128/128 thunks e chamou a entrada traduzida; após a
-correção do evento de stack, o worker avançou ao ciclo de timers/DPCs. Um run
-diagnóstico posterior repetiu a entrada, mas parou em operações D3D não
-traduzidas. Não existe boot/menu validado nem executável jogável. Portanto,
-isso é avanço de tradução e bring-up — não prova de fidelidade ou conclusão de
-gates. Estado global: `NOT_READY`.
+Na geração mais recente registrada em 2026-10-13, o XboxRecomp v0.13.1
+produziu C para 15.702/15.702 funções; 64 unidades foram compiladas em Release
+e o host linkou. Restam 71 destinos stub e 94 instruções sem lowering (29
+mnemônicos). CTest passou 4/4 e o smoke `--help` passou. Um bring-up controlado
+anterior alcançou a entrada traduzida e atividade de worker/timer, mas não
+validou boot/menu; nenhum XBE foi executado no marco 1.49. Não existe
+executável jogável validado. Portanto, isso é avanço de tradução/compilação —
+não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
 
 ## Caminho crítico recomendado
 

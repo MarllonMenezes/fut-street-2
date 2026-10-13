@@ -8,14 +8,15 @@ A referência de abordagem é o
 com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
-O XboxRecomp v0.13.1, com quatro patches locais versionados, gerou C para
-15.702/15.702 funções no passe mais recente; 64 unidades C foram compiladas e
-o host linkou sem símbolos indefinidos. CTest 3/3 passou, incluindo a recusa de
-vblank sintético. Restam 71 stubs e
-154 instruções no-op. Um bring-up controlado carregou as seções do XBE e chamou
-a entrada traduzida, mas parou em serviços/operações ainda sem implementação;
-isso não é um boot validado nem prova de fidelidade. O protótipo authored em
-.NET 8 é separado e não demonstra fidelidade ao original.
+No avanço registrado mais recente, XboxRecomp v0.13.1, fixado no commit
+`193e2995ffaec871bb3be43a43bd66aa5fccfeb1` e com patches locais 0001–0011,
+gerou C para 15.702/15.702 funções. As 64 unidades C foram compiladas em
+Release e o host linkou; CTest passou 4/4 e o smoke `--help` passou. A geração
+ainda registra 71 destinos de chamada stubados e 94 instruções sem lowering,
+em 29 mnemônicos. Esses resultados provam tradução/compilação, não boot ou
+fidelidade. O XBE não foi executado nesse marco; headless/replay do jogo não
+foram alegados. O protótipo authored em .NET 8 é separado e não demonstra
+fidelidade ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
@@ -47,22 +48,18 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: etapa 1.45, no
+Último avanço registrado: etapa 1.49, no
 [relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-Foi versionado um patch do lifter para o `WBINVD` alcançado em `0x002954E4`:
-barreira C11 sequencialmente consistente, limitada à ordenação de memória
-coerente no host. O patch 0006 traduz os sites XMM/MMX de `psraw`, `psubw`,
-`paddw` e `pmulhuw`; os no-ops sem tradução caíram de 154 para 133 (32
-mnemonics), enquanto 71 stubs permanecem. A biblioteca completa foi
-recompilada e o host relinkado em CMake Release; nenhum XBE foi executado.
-Os arquivos C gerados e builds não são versionados. A barreira WBINVD não
-implementa flush de GPU/DMA. A pilha de patches 0001–0006 aplica num clone
-limpo e fixado do XboxRecomp v0.13.1; a suíte focada `tools/disasm` +
-`tools/recomp` passou 517 testes (38 skips), e CTest seguro passou 3/3.
-Persistem 133 instruções sem tradução e 71 stubs. A evidência encontrada para `0x80CE` em outro kernel não
-define o `0x80C0` do jogo; a hipótese
-`field_pin` do xemu permanece explicitamente especulativa. Não há binding
-confirmado nem boot/menu. Isso não fecha gates de fidelidade. A
+A pilha versionada 0001–0011 foi reaplicada ao XboxRecomp v0.13.1 fixado; a
+suíte `tools/disasm` + `tools/recomp` passou 537 testes (38 skips), e o build
+CMake Release/CTest 4/4 passou. A geração mais recente registrou 94
+instruções sem lowering (29 mnemônicos) e 71 stubs. O patch 0011 traduz
+AAA/AAS somente quando há proveniência demonstrável de AF; dois sites ficam
+sem lowering por falta dessa prova. Nenhum XBE foi executado no marco, e os
+gates de boot, rendering, assets, gameplay original e áudio continuam
+`NOT_READY`. Os arquivos C gerados e builds não são versionados. A evidência
+para `0x80CE` em outro kernel não define o `0x80C0` do jogo; a hipótese
+`field_pin` do xemu continua especulativa. A
 [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
 explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.

@@ -2,7 +2,8 @@
 
 Objetivo público vigente: **recompilação estática de FIFA Street 2 do Xbox
 original para PC**, não uma recriação do gameplay. Estado: `NOT_READY`;
-a recompilação do código original ainda não foi implementada nem validada.
+a tradução do XBE para C e a compilação das unidades geradas já avançaram, mas
+isso ainda não produziu nem validou um jogo recompilado jogável.
 Veja [direção vigente](FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
 
 Conteúdo atual do repositório: protótipo authored .NET, ferramentas próprias
