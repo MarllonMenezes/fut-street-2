@@ -56,7 +56,10 @@ requires an explicit `--launch <default.xbe> <game-data-directory>
 upstream per-user default; for bring-up, point both data and saves at disposable
 directories outside the repository and keep the ISO as read-only input.
 `--help` is safe and is the only application invocation covered by CTest. A
-successful link or CLI smoke is not game-execution evidence.
+separate controlled `--launch` bring-up has reached the translated entry and
+worker/timer activity; it did not validate boot/menu or gameplay, and is
+documented in `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. A successful
+link or CLI smoke alone is not game-execution evidence.
 
 The caller supplies the pinned XboxRecomp source root and a semicolon-separated
 `RECOMP_HOST_LIBRARIES` list. On Windows, `xbox_d3d8`, `xbox_video`, and

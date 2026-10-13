@@ -20,12 +20,15 @@ implementa o runtime específico.
 
 ## Estado verificável
 
-Em 2026-10-13, o checkout produziu C para 15.702/15.702 funções na geração mais
-recente e compilou/linkou o host em Release. Ainda restam 71 destinos stub e
-154 instruções no-op. O host nunca foi inicializado com o XBE e não existe
-executável jogável validado. Portanto, isso é avanço de tradução/build — não
-metade concluída, prova de boot, nem gate de fidelidade. Estado global:
-`NOT_READY`.
+Na geração mais recente registrada em 2026-10-13, o XboxRecomp produziu C para
+15.702/15.702 funções; 64 unidades foram compiladas e o host Release linkou.
+Restam 71 destinos stub e 154 instruções no-op. Um bring-up controlado carregou
+11/11 seções, resolveu 128/128 thunks e chamou a entrada traduzida; após a
+correção do evento de stack, o worker avançou ao ciclo de timers/DPCs. Um run
+diagnóstico posterior repetiu a entrada, mas parou em operações D3D não
+traduzidas. Não existe boot/menu validado nem executável jogável. Portanto,
+isso é avanço de tradução e bring-up — não prova de fidelidade ou conclusão de
+gates. Estado global: `NOT_READY`.
 
 ## Caminho crítico recomendado
 

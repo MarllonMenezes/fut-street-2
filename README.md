@@ -8,12 +8,13 @@ A referência de abordagem é o
 com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
-O XboxRecomp v0.13.1, com três patches locais versionados, gerou C para
+O XboxRecomp v0.13.1, com quatro patches locais versionados, gerou C para
 15.702/15.702 funções no passe mais recente; 64 unidades C foram compiladas e
 o host linkou sem símbolos indefinidos. CTest 2/2 passou. Restam 71 stubs e
-154 instruções no-op. O host nunca foi inicializado com o XBE; build e testes
-não provam boot nem fidelidade. O protótipo authored em .NET 8 é separado e não
-demonstra fidelidade ao original.
+154 instruções no-op. Um bring-up controlado carregou as seções do XBE e chamou
+a entrada traduzida, mas parou em serviços/operações ainda sem implementação;
+isso não é um boot validado nem prova de fidelidade. O protótipo authored em
+.NET 8 é separado e não demonstra fidelidade ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
@@ -45,11 +46,12 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço da recompilação: [etapa 1.37 — aliases conservadores para branches condicionais](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-A nova regra só aceita intervalos-alvo sobrepostos quando todos concordam no
-mesmo fim de corpo, e reduziu os stubs locais de 81 para 71 sem alterar os
-154 no-ops. Isso ainda não prova execução do jogo nem fecha os gates de
-fidelidade. A [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
+Último avanço da recompilação: [etapa 1.38 — espera de objetos dispatcher no
+bring-up](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md). O adaptador
+eliminou o loop rápido de falha em `KeWaitForMultipleObjects`; o host avançou
+para o ciclo de timers/DPCs, mas ainda não validou boot/menu. Os 71 stubs e 154
+no-ops permanecem por auditar. Isso não fecha gates de fidelidade. A
+[direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
 explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.
 

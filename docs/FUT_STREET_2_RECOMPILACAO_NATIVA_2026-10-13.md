@@ -363,3 +363,49 @@ o que deve sair do caminho crítico sem apagar o histórico.
 não se passe por emulação. Em paralelo, manter a matriz de instruções no-op e
 stubs sendo reduzida por caso comprovado. Não declarar rendering, gameplay ou
 áudio funcional a partir do bring-up do kernel.
+
+## Etapa 1.39 — auditoria estática dos acessos D3D à porta 0x80C0 (2026-10-13)
+
+- A leitura de `0x00296F1C` está em `sub_00296EA0`, registrada como rotina de
+  interrupção no bring-up. Depois de verificar flags do contexto D3D, transforma
+  o bit 5 do byte lido e grava estado em `[esi + 0x1D0]`; em seguida atualiza
+  estado de fila e chama `KeInsertQueueDpc`. A transformação condicional do bit
+  depende dos bits altos do campo `[esi + 8]`.
+- A leitura em `0x0029711D`, dentro de `sub_002970A0`, combina o bit derivado do
+  `IN` com estado local, grava novamente `[esi + 0x1D0]` e depois sinaliza um
+  evento kernel. O mesmo fluxo consulta estado de dispositivo enquanto espera.
+  Isso mostra dependência observável de estado, mas não revela qual evento de
+  hardware o bit representa.
+- A escrita observada em `0x00298030` envia `BL` para a mesma porta. A revisão
+  integral de `sub_00297F04` corrigiu a hipótese anterior: `EBX` é zerado e
+  incrementado no prólogo, permanece preservado pelas chamadas segundo o ABI
+  x86 e não é novamente escrito antes do `OUT`; portanto, o valor enviado é
+  `1`. O fluxo inicializa buffers e chama duas vezes uma função obtida por
+  ponteiro antes de continuar a configuração. O valor conhecido ainda não
+  identifica a semântica do registrador/porta.
+- `wbinvd` em `0x002954E4` segue uma escrita guest em `[0x80000000]` e precede
+  `sub_00293320`. A proximidade sugere relação com o caminho de hardware/cache,
+  mas não prova uma equivalência com fence de CPU ou com comando gráfico nativo.
+- A consulta da tabela pública de portas do XboxDevWiki coloca `0x8000–0x80FF`
+  na faixa rotulada `LPC PM`; portanto `0x80C0` está nessa faixa, não na faixa
+  de memória mapeada de registradores NV2A (`0xFD000000–0xFDFFFFFF`). A própria
+  tabela marca o mapa I/O como incompleto (`FIXME`) e não documenta o offset
+  `0xC0`; isso localiza a classe do barramento, mas não define o significado do
+  registrador nem do bit 5. Fonte: [XboxDevWiki — Memory / I/O port map](https://xboxdevwiki.net/Memory).
+- O bring-up existente observou `OUT` e `wbinvd`, mas não registrou execução das
+  duas leituras em `sub_00296EA0`/`sub_002970A0`. Busca em fontes primárias
+  públicas pelo endereço/porta não estabeleceu a semântica. Nenhum adapter ou
+  valor substituto foi implementado nesta etapa.
+- Repetição diagnóstica isolada: carregou 11/11 seções e resolveu 128/128
+  thunks, chamou `0x0024D8BE` e observou novamente apenas `OUT`/`wbinvd`; as
+  leituras `IN` não apareceram no log em 8 s. O host foi encerrado no limite
+  diagnóstico, sem menu/boot validado. Save e logs ficaram em `%TEMP%`; não
+  houve processo remanescente. SHA-256 da ISO após o run:
+  `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B`.
+
+Conclusão operacional: manter essas instruções como não resolvidas e investigar
+o estado de dispositivo/estrutura, a origem de `BL`, o ponteiro de callback e
+uma referência técnica primária para a porta. Um retorno constante, no-op,
+barreira genérica ou evento vblank presumido poderia alterar sincronização e
+corromper o rendering. O README foi sincronizado com a etapa 1.38; nenhum arquivo
+do XBE/ISO foi alterado ou publicado.

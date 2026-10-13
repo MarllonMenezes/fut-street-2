@@ -36,8 +36,11 @@ serviços do console e integração gráfica/áudio a validar.
   render/game-vtable e 120 em funções desconhecidas. Dos 86 stubs, 79 não têm
   metadado `ret N` recuperado. O ABI contém inferências e ainda não está
   validado semanticamente.
-- O XBE não foi executado. A ISO permaneceu somente leitura e com o SHA-256
-  esperado. XBE, C gerado, objetos e biblioteca ficam fora do GitHub.
+- O arquivo XBE não foi executado como um XBE. Um host nativo experimental
+  carregou suas seções e chamou o código traduzido, mas não validou boot/menu;
+  os detalhes e limites estão na etapa 1.38 do relatório nativo. A ISO
+  permaneceu somente leitura e com o SHA-256 esperado. XBE, C gerado, objetos e
+  biblioteca ficam fora do GitHub.
 - Rendering original, assets, áudio e animação/deformação continuam sem gates
   aprovados. Testes/headless/replay do protótipo .NET não validam o original.
   Readiness permanece `NOT_READY`.
@@ -66,12 +69,13 @@ entrada somente leitura, com SHA-256 esperado
 Não publicar ISO, XBE, assets originais ou dumps neste repositório.
 Não inventar bindings, declarar conclusão ou iniciar code review.
 
-A próxima etapa é auditar os stubs e opcodes no-op, identificar imports/ABI e
-dependências do runtime sem inventar bindings, e então construir um link de
-executável sem executar o XBE. Depois disso vêm boot controlado e gates do jogo.
-Manter Release, self-tests, smokes relevantes, headless, replay determinístico
-quando aplicável e SHA-256 da ISO em cada marco, sempre distinguindo testes do
-protótipo .NET de validações do núcleo recompilado. Não há prazo de conclusão.
+A próxima etapa é resolver por evidência os acessos D3D `IN/OUT` à porta
+`0x80C0`, auditar stubs/opcodes no-op alcançáveis e completar serviços de kernel
+necessários para o bring-up. O link e o primeiro bring-up controlado já foram
+realizados, mas não validam menu nem gates do jogo. Manter Release, self-tests,
+smokes relevantes, headless, replay determinístico quando aplicável e SHA-256
+da ISO em cada marco, sempre distinguindo testes do protótipo .NET de validações
+do núcleo recompilado. Não há prazo de conclusão.
 
 ## Validação desta atualização documental — 2026-10-13
 
