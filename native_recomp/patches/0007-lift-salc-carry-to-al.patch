@@ -1,0 +1,54 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1667,0 +1668,2 @@
++        if m == "salc":
++            return ["SET_LO8(eax, _cf ? 0xFFu : 0u); /* salc: AL = CF ? 0xFF : 0 */"]
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1378 +1378 @@
+-            if m in ("adc", "sbb", "stc", "clc", "cmc", "rcl", "rcr"):
++            if m in ("adc", "sbb", "stc", "clc", "cmc", "rcl", "rcr", "salc"):
+diff --git a/tools/recomp/test_lifter_carry.py b/tools/recomp/test_lifter_carry.py
+--- a/tools/recomp/test_lifter_carry.py
++++ b/tools/recomp/test_lifter_carry.py
+@@ -8,0 +9,34 @@
++    def test_salc_maps_carry_to_low_accumulator_byte(self):
++        stc = Instruction(0, 1, "stc", "", "f9")
++        stc.operands = []
++        salc = Instruction(1, 1, "salc", "", "d6")
++        salc.operands = []
++        lifter = Lifter()
++        lifter.needs_cf = True
++
++        lifted, _ = lift_basic_block(
++            lifter, BasicBlock(start=0, instructions=[stc, salc]))
++        generated = "\n".join(lifted)
++
++        self.assertIn("_cf = 1; /* stc */", generated)
++        self.assertIn(
++            "SET_LO8(eax, _cf ? 0xFFu : 0u); /* salc: AL = CF ? 0xFF : 0 */",
++            generated,
++        )
++    def test_salc_clears_low_accumulator_byte_when_carry_clear(self):
++        clc = Instruction(0, 1, "clc", "", "f8")
++        clc.operands = []
++        salc = Instruction(1, 1, "salc", "", "d6")
++        salc.operands = []
++        lifter = Lifter()
++        lifter.needs_cf = True
++
++        lifted, _ = lift_basic_block(
++            lifter, BasicBlock(start=0, instructions=[clc, salc]))
++        generated = "\n".join(lifted)
++
++        self.assertIn("_cf = 0; /* clc */", generated)
++        self.assertIn(
++            "SET_LO8(eax, _cf ? 0xFFu : 0u); /* salc: AL = CF ? 0xFF : 0 */",
++            generated,
++        )
+@@ -263,0 +297,3 @@
++    def test_salc_alone_declares_carry(self):
++        self.assertTrue(FunctionTranslator._function_needs_cf(
++            [self._insn("salc")]))

@@ -132,3 +132,17 @@ times in seconds with unsuccessful waits. With the title event adapter enabled,
 the same call site returned `STATUS_WAIT_0` and advanced into its timer/DPC
 cycle; rendering and the complete game boot remain unverified. The `.xbe`, ISO,
 and extracted data used for bring-up stay local and outside Git.
+
+Patch `0007-lift-salc-carry-to-al.patch` follows patches 0001–0006. For the
+pinned XboxRecomp v0.13.1 source, apply it with `--unidiff-zero` after the prior
+stack. It lowers SALC (`D6`) to `AL = CF ? 0xFF : 0`, and ensures a function
+containing SALC declares the carry temporary. Intel's IA-32 architecture
+compatibility section specifies this behavior for non-64-bit mode:
+[Intel SDM, Vol. 3B, §25.18](https://cdrdv2-public.intel.com/874250/253669-090-sdm-vol-3b.pdf).
+Focused lifter tests exercise carry-to-AL and the declaration path. This does
+not establish that any of the three translated sites is reached at runtime.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0007-lift-salc-carry-to-al.patch'
+```

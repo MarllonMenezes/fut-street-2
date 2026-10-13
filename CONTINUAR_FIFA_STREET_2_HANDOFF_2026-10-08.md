@@ -1357,6 +1357,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Suíte upstream focada: 517 passed, 38 skipped; CMake Release completo, link nativo, `--help` e CTest 3/3 passaram. Teste C cobre wrapping, oito lanes XMM, shift negativo/count saturado e high multiply MMX. Coleta global requer o pacote externo `pefile`.
 - XBE não executado; nenhuma alegação de boot/gates. ISO somente leitura, SHA-256 verificado. Readiness `NOT_READY`; seguir sem inventar bindings.
 
+## Atualização mais recente: etapa 1.46 (2026-10-13)
+
+- Patch 0007 implementa SALC conforme Intel SDM IA-32. Regeneração: 15.702/15.702 funções, 71 stubs e 130 instruções/31 mnemonics sem tradução, sem alegar alcance.
+- Testes focados `520 passed, 38 skipped`; CMake Release, link e CTest seguro `4/4` passaram; `--help` passou.
+- Não iniciar o XBE para headless/replay sem autorização de bring-up. ISO somente leitura; SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Projeto não concluído; readiness `NOT_READY`.
+
 
 
 

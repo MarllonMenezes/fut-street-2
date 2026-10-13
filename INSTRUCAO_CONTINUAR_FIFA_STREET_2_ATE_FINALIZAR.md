@@ -337,5 +337,14 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
   XBE nem `--launch` sem autorização de bring-up.
 
 
+Atualização de continuidade (etapa 1.46, 2026-10-13): patch XboxRecomp 0007
+traduz SALC conforme Intel SDM IA-32. A regeneração confirma 15702/15702
+funções, 71 call stubs e 130/31 instruções/mnemonics sem lowering. Testes
+focados `520 passed, 38 skipped`; build CMake Release/link, CTest `4/4` e
+`--help` passaram. Não houve execução do XBE, headless ou replay original;
+gates `NOT_READY`. ISO somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+
 
 

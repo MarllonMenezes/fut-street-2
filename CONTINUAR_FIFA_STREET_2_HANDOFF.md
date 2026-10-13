@@ -6457,6 +6457,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - XBE/`--launch` não executados; sem boot/headless/replay do original. Gates abertos, `NOT_READY`. ISO somente leitura, SHA-256 verificado.
 - Próxima prioridade: reduzir opcodes/stubs por evidência do código original; não inventar bindings nem inferir alcance.
 
+## Continuação após a etapa 1.46 (2026-10-13)
+
+- Patch 0007 traduz SALC (`AL = CF ? 0xFF : 0`) conforme Intel SDM IA-32. A análise por função agora declara `_cf` para SALC.
+- XboxRecomp v0.13.1 + patches 0001–0007: pytest focal `520 passed, 38 skipped`; geração `15702/15702`, zero falhas, 62 chunks, 71 stubs e instruções sem lowering `133/32 → 130/31`. Os três sites não foram alegados alcançáveis.
+- Build CMake Release e link completos; CTest seguro `4/4`; host `--help` passou. Sem `--launch`/XBE, portanto sem runtime headless/replay original.
+- ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Readiness `NOT_READY`; gates de rendering/assets/gameplay/áudio seguem abertos.
+
 
 
 

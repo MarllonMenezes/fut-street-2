@@ -614,3 +614,28 @@ atributo `Archive`, SHA-256
 - Verificação final da ISO: 2.013.003.776 bytes, `Archive`, LastWriteTimeUtc
   `2026-01-22 10:03:26`, SHA-256
   `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+## Etapa 1.46 — SALC (2026-10-13)
+
+- `native_recomp/patches/0007-lift-salc-carry-to-al.patch` implementa SALC
+  (`D6`) como `AL = CF ? 0xFF : 0`, preservando os outros bits de EAX. A seção
+  de compatibilidade IA-32 do Intel SDM define essa operação em modo não-64-bit
+  ([vol. 3B, §25.18](https://cdrdv2-public.intel.com/874250/253669-090-sdm-vol-3b.pdf)).
+- O patch também marca SALC como consumidor do carry na análise por função, para
+  que `_cf` seja declarado mesmo quando SALC é seu único leitor. Teste focado
+  verifica `STC → SALC` e a reserva do carry. Aplicado ao XboxRecomp v0.13.1
+  (`193e2995ffaec871bb3be43a43bd66aa5fccfeb1`) após 0001–0006; `pytest` em
+  `tools/disasm` + `tools/recomp`: `520 passed, 38 skipped`.
+- Regeneração com os artefatos atuais: `15702/15702` funções, zero falhas,
+  1.754.051 linhas C, 62 chunks, 71 call stubs. Os TODOs caíram de
+  `133/32 mnemonics` para `130/31`; os 3 sites SALC agora são statements C. A
+  queda estática não prova que esses sites sejam alcançados.
+- CMake Release (`-O3 -DNDEBUG`) compilou as 64 unidades, archive/runtime e host;
+  houve warnings upstream de parênteses redundantes no código C gerado e no
+  kernel. CTest seguro `4/4` passou (`no_emulation_runtime_support`, packed
+  words, `--help`, rejeição de VBlank sintético); `--help` direto passou.
+- Não houve `--launch`, execução do XBE, runtime headless ou replay original:
+  esses testes requerem iniciar o XBE e não validam isoladamente o lowering.
+  Nenhum gate principal muda; readiness `NOT_READY`. A ISO continuou somente
+  leitura; SHA-256 final
+  `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.

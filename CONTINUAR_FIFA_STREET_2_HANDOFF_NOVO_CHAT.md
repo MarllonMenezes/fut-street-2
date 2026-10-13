@@ -4479,6 +4479,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - `pefile` ausente impede a coleta global da suíte `tools/fusion`; `tools/disasm` + `tools/recomp` passaram. Nenhum XBE/`--launch` ou runtime original iniciado; gates continuam `NOT_READY`.
 - ISO somente leitura. Próximo: analisar os 133 sites/71 stubs por evidência e implementar incrementalmente sem suposições.
 
+## Continuação após a etapa 1.46 (2026-10-13)
+
+- Patch XboxRecomp 0007 traduz SALC conforme o Intel SDM IA-32 (`D6`: `AL = CF ? 0xFF : 0`) e declara o carry local quando necessário.
+- Aplicado sobre v0.13.1 após 0001–0006; `tools/disasm` + `tools/recomp`: `520 passed, 38 skipped`; geração `15702/15702`, 62 chunks, zero falhas, 71 stubs; no-ops `133/32 → 130/31`.
+- Build Release completo, link e CTest `4/4`; `--help` passou. Nenhum XBE/`--launch`, headless ou replay original executado; alcance dos três sites não provado.
+- ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; gates principais `NOT_READY`.
+
 
 
 
