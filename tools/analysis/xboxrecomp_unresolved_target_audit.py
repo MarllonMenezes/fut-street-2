@@ -142,7 +142,7 @@ def classify_targets(
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    return {
+    summary = {
         "unresolved_targets": len(rows),
         "by_section": dict(sorted(Counter(row["section"] or "unmapped" for row in rows).items())),
         "by_function_relation": dict(
@@ -161,13 +161,101 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             )
         ),
     }
+    if rows and "xref_types" in rows[0]:
+        summary["direct_xrefs_by_type"] = dict(
+            sorted(
+                Counter(
+                    xref_type
+                    for row in rows
+                    for xref_type, count in row["xref_types"].items()
+                    for _ in range(count)
+                ).items()
+            )
+        )
+        summary["targets_with_direct_xrefs"] = sum(
+            bool(row["xref_types"]) for row in rows
+        )
+        summary["targets_with_branch_xrefs_only"] = sum(
+            bool(row["xref_types"])
+            and set(row["xref_types"]).issubset({"jump", "cond_jump"})
+            for row in rows
+        )
+        summary["branch_xrefs_to_target_inside_unique_source_function"] = sum(
+            row["branch_xrefs_to_target_inside_unique_source_function"]
+            for row in rows
+        )
+        summary["branch_xrefs_from_overlapping_source_ranges"] = sum(
+            row["branch_xrefs_from_overlapping_source_ranges"] for row in rows
+        )
+    return summary
 
 
-def audit(stubs_path: Path, functions_path: Path, analysis_path: Path) -> dict[str, Any]:
+def join_direct_xrefs(
+    rows: list[dict[str, Any]],
+    functions: list[dict[str, Any]],
+    xrefs: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Attach direct xref counts without inferring function or binding semantics.
+
+    A branch whose destination lies inside the unique function interval of its
+    source is a useful coalescence candidate, not proof that the detected
+    function boundary is wrong (shared tails and alternate entries are possible).
+    """
+    function_rows = [
+        (_address(row["start"]), _address(row["end"])) for row in functions
+    ]
+    refs_by_target: dict[int, list[dict[str, Any]]] = {}
+    for xref in xrefs:
+        refs_by_target.setdefault(_address(xref["to"]), []).append(xref)
+
+    joined = []
+    for row in rows:
+        refs = refs_by_target.get(row["address"], [])
+        types = Counter(str(ref.get("type", "unknown")) for ref in refs)
+        local_branch_count = 0
+        ambiguous_branch_count = 0
+        for ref in refs:
+            if ref.get("type") not in {"jump", "cond_jump"}:
+                continue
+            source = _address(ref["from"])
+            source_owners = [
+                (start, end) for start, end in function_rows if start <= source < end
+            ]
+            if (
+                len(source_owners) == 1
+                and source_owners[0][0] <= row["address"] < source_owners[0][1]
+            ):
+                local_branch_count += 1
+            elif (
+                len(source_owners) > 1
+                and any(start <= row["address"] < end for start, end in source_owners)
+            ):
+                ambiguous_branch_count += 1
+        joined.append(
+            {
+                **row,
+                "xref_types": dict(sorted(types.items())),
+                "direct_xref_count": len(refs),
+                "branch_xrefs_to_target_inside_unique_source_function": local_branch_count,
+                "branch_xrefs_from_overlapping_source_ranges": ambiguous_branch_count,
+            }
+        )
+    return joined
+
+
+def audit(
+    stubs_path: Path,
+    functions_path: Path,
+    analysis_path: Path,
+    xrefs_path: Path | None = None,
+) -> dict[str, Any]:
     stubs = parse_stub_targets(stubs_path.read_text(encoding="utf-8"))
     functions = json.loads(functions_path.read_text(encoding="utf-8"))
     analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
     rows = classify_targets(stubs, functions, analysis["sections"])
+    if xrefs_path:
+        xrefs = json.loads(xrefs_path.read_text(encoding="utf-8"))
+        rows = join_direct_xrefs(rows, functions, xrefs)
     return {"summary": summarize(rows), "targets": rows}
 
 
@@ -176,11 +264,15 @@ def main() -> int:
     parser.add_argument("--stubs-c", type=Path, required=True)
     parser.add_argument("--functions-json", type=Path, required=True)
     parser.add_argument("--xbe-analysis-json", type=Path, required=True)
+    parser.add_argument(
+        "--xrefs-json", type=Path,
+        help="optional static xrefs JSON; branch matches are candidates, not proofs",
+    )
     parser.add_argument("--details", action="store_true", help="include target VAs and parent ranges")
     parser.add_argument("--output-json", type=Path, help="write a local report (may contain game-derived addresses)")
     args = parser.parse_args()
 
-    result = audit(args.stubs_c, args.functions_json, args.xbe_analysis_json)
+    result = audit(args.stubs_c, args.functions_json, args.xbe_analysis_json, args.xrefs_json)
     payload = result if args.details else {"summary": result["summary"]}
     serialized = json.dumps(payload, indent=2, sort_keys=True)
     if args.output_json:

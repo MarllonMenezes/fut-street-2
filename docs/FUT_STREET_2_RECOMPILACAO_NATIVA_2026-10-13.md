@@ -185,3 +185,32 @@ nenhum código do título foi executado. Próximo passo: correlacionar cada alvo
 interior/intervalo ambíguo com suas instruções chamadoras e limites reais antes
 de alterar a descoberta de funções; não usar seeds inferidas como observação de
 runtime. Audio/graphics e boot permanecem gates pendentes.
+
+## Etapa 1.34 — xrefs dos stubs e teste conservador de coalescência (2026-10-13)
+
+- A auditoria aceita agora `--xrefs-json` opcional e relaciona cada endereço
+  stub a referências estáticas diretas, mantendo `call`, `jump` e `cond_jump`
+  separados e distinguindo fontes com intervalo único de fontes com funções
+  sobrepostas. Um desvio não é promovido a binding nem prova automática de
+  limite incorreto.
+- Na geração fixada: 86 destinos stub; 93 xrefs diretos para 63 destinos, sendo
+  58 condicionais e 35 incondicionais, sem nenhum xref `call`. Vinte e três
+  desses desvios chegam ao alvo dentro de um único intervalo-fonte; outros 56
+  partem de intervalos sobrepostos. Os demais não estabelecem ownership local.
+- Caso focal `0x0017A0CA`: cinco saltos diretos, quatro de blocos com ownership
+  de intervalo único e um de origem sobreposta. O C gerado tem um tail-jump em
+  `0x0017AAAE` emitido como chamada ao stub. O alvo está no intervalo do corpo
+  `0x00179F60–0x0017AC02`, mas há aliases de tail jump sobrepostos.
+- Testei a recuperação com as entradas de alias `0x0017A4EB` e `0x0017AB20`.
+  O XboxRecomp recusou a coalescência porque `0x0017A4EB` tem evidência
+  independente de entrada. O resultado é preservado: não contornei a proteção,
+  não alterei o tradutor e não promovi esse alvo como falso split comprovado.
+  A geração de teste terminou na validação, antes de traduzir o XBE.
+- Um novo teste cobre a separação de xrefs por intervalos únicos/sobrepostos
+  e agregação; suíte de análise: 62/62. Bounds e saída do probe ficaram
+  em Temp; nenhum XBE foi executado.
+
+O próximo passo é auditar, para candidatos de alias, todas as referências de
+código e dados e a origem do `tail_jump_alias`; só fornecer bounds ao coalescer
+quando a entrada independente estiver explicada. Em paralelo, seguir os stubs
+sem xref direto e as instruções no-op. Os gates principais continuam `NOT_READY`.

@@ -6,9 +6,12 @@ O objetivo do **Fut Street 2** é recompilação estática do código original d
 FIFA Street 2 do Xbox original para PC, não uma recriação do gameplay.
 Leia primeiro [direção e limites](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
 Esta atualização substitui a definição histórica de reimplementação .NET
-como produto final, sem fingir que a recompilação já ocorreu. Stack do núcleo
-e política de GPU/áudio pendem de confirmação; não adotar runtime de terceiros
-nem executar o XBE enquanto esse escopo não estiver definido. `NOT_READY`.
+como produto final. O usuário autorizou continuar a tradução e compilação
+estática até existir recompilação comprovada. C/C++ é o núcleo traduzido; .NET
+fica como ferramenta/harness auxiliar. Isso substitui registros históricos
+que proibiam recompilar o XBE, mas não autoriza executar o XBE nem iniciar o
+host com `--launch` sem autorização específica de bring-up. Não integrar
+emulação de GPU/APU sem autorização explícita. `NOT_READY`.
 
 Continue o projeto FIFA Street 2 no workspace `D:\projeto zeta` até que os
 gates de renderização, assets, gameplay e áudio estejam integrados e
@@ -29,10 +32,12 @@ as alterações existentes e não use comandos destrutivos.
 
 ## Restrições
 
-- Trabalhe em direção à recompilação estática do código original, preservando
-  o protótipo .NET como base auxiliar, não como substituto do jogo original.
-- Confirme a stack do núcleo e o alcance de "sem emulação" antes da integração
-  de runtime; até lá, não execute o XBE nem adote emulação de hardware.
+- Trabalhe na recompilação estática do código original; preserve o protótipo
+  .NET somente como ferramenta/harness, nunca como substituto do jogo original.
+- Gere/traduza e compile estaticamente o XBE usando o pipeline fixado. Não
+  execute o XBE nem o host com `--launch` sem autorização específica. Não
+  integre emulação de GPU/APU sem autorização explícita; reporte dependências
+  sem solução sem inventar bindings.
 - Não diga que o XBE foi recompilado sem geração, build e validação comprovados.
 - Mantenha esta ISO somente para leitura:
   `D:\projeto zeta\FIFA Street 2 (USA) (En,Es).iso`.

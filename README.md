@@ -47,10 +47,11 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço do protótipo/análise: [etapa 1.31 — referências de modelo/material](docs/FUT_STREET_2_MODELOS_MATERIAIS_2026-10-13.md),
-2.364 primitivas reconciliadas independentemente com três programas nomeados.
-Matriz completa aprovada e validação final de identidade do produto aprovada.
-Repetir a checagem de nome: `pwsh -NoProfile -File tools/test-fut-street-product-identity.ps1`.
+Último avanço da recompilação: [etapa 1.34 — xrefs de stubs e coalescência
+conservadora](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md). A tentativa
+de recuperar um alvo de desvio interno foi corretamente rejeitada pela
+validação de entrada independente do XboxRecomp; não se forçou a fusão.
+Readiness: `NOT_READY`.
 
 ## Código-fonte no GitHub
 

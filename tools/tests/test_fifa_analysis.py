@@ -16,6 +16,7 @@ from list_xdvdfs import XdvdfsReader  # noqa: E402
 from parse_xbe import analyze_xbe  # noqa: E402
 from xboxrecomp_unresolved_target_audit import (  # noqa: E402
     classify_targets,
+    join_direct_xrefs,
     parse_stub_targets,
     summarize,
 )
@@ -2105,6 +2106,32 @@ class FifaAnalysisSmokeTests(unittest.TestCase):
         self.assertEqual(summary["unresolved_targets"], 3)
         self.assertEqual(summary["by_section"], {".text": 2, "unmapped": 1})
         self.assertEqual(summary["return_metadata"], {"not-detected": 2, "recognized-ret-n": 1})
+
+    def test_xboxrecomp_stub_xrefs_separate_unique_and_overlapping_source_ranges(self) -> None:
+        functions = [
+            {"start": "0x1000", "end": "0x1100", "name": "owner"},
+            {"start": "0x1080", "end": "0x10F0", "name": "alias"},
+        ]
+        rows = classify_targets(
+            [{"address": 0x1090, "stack_delta": 4, "return_evidence": "not detected"}],
+            functions,
+            [{"name": ".text", "virtual_addr": "0x1000", "virtual_size": 0x100, "executable": True}],
+        )
+        rows = join_direct_xrefs(
+            rows,
+            functions,
+            [
+                {"from": "0x1020", "to": "0x1090", "type": "cond_jump"},
+                {"from": "0x10A0", "to": "0x1090", "type": "jump"},
+                {"from": "0x10B0", "to": "0x1090", "type": "call"},
+            ],
+        )
+        self.assertEqual(rows[0]["xref_types"], {"call": 1, "cond_jump": 1, "jump": 1})
+        self.assertEqual(rows[0]["branch_xrefs_to_target_inside_unique_source_function"], 1)
+        self.assertEqual(rows[0]["branch_xrefs_from_overlapping_source_ranges"], 1)
+        summary = summarize(rows)
+        self.assertEqual(summary["direct_xrefs_by_type"], {"call": 1, "cond_jump": 1, "jump": 1})
+        self.assertEqual(summary["branch_xrefs_from_overlapping_source_ranges"], 1)
 
 
 if __name__ == "__main__":
