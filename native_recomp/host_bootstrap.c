@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
 
 #define FUT_STREET_2_ENTRY_POINT 0x0024D8BEu
 
@@ -81,6 +82,12 @@ int main(int argc, char **argv)
                 "no-emulation build.\n");
         return 2;
     }
+    /* This title constructs dispatcher events directly in guest memory. */
+    if (_putenv_s("RECOMP_TITLE_KEVENTS", "1") != 0 ||
+        !SetEnvironmentVariableA("RECOMP_TITLE_KEVENTS", "1")) {
+        fprintf(stderr, "Cannot enable title-built event compatibility.\n");
+        return 1;
+    }
     if (!read_xbe(argv[2], &xbe_data, &xbe_size))
         return 1;
 
@@ -109,8 +116,8 @@ int main(int argc, char **argv)
     }
 
     fprintf(stderr,
-            "Ready to call translated entry 0x%08X. This path has not been "
-            "executed or validated.\n",
+            "Calling translated entry 0x%08X in experimental bring-up; "
+            "this is not a validated game runtime.\n",
             FUT_STREET_2_ENTRY_POINT);
     entry();
     result = 0;

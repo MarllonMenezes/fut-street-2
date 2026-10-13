@@ -107,3 +107,20 @@ owner function. Branches already inside the source body, same-tail-family
 targets, and ambiguous target end ranges remain unresolved. Synthetic tests
 cover unique ownership, common-end overlapping ownership, ambiguous ends,
 and source-internal branches.
+
+Patch `0004-resolve-dispatcher-object-shadows-in-multiwait.patch` follows
+0001–0003. It resolves guest dispatcher-object addresses through XboxRecomp's
+existing shadow table in `KeWaitForMultipleObjects`, then reuses the existing
+opt-in adapter for events a title built directly in guest memory. The native
+host enables `RECOMP_TITLE_KEVENTS` for this title because static disassembly
+and the controlled translated-entry run showed a stack event header with
+`Type=1`, `Size=4` at the observed multi-wait call site. Synchronization-event
+`SignalState` is cleared only after the corresponding wait succeeds. This does
+not implement arbitrary kernel objects or claim complete wait semantics.
+
+The controlled host bring-up reached the translated entry and worker threads.
+Before this patch, ordinal 158 (`KeWaitForMultipleObjects`) spun millions of
+times in seconds with unsuccessful waits. With the title event adapter enabled,
+the same call site returned `STATUS_WAIT_0` and advanced into its timer/DPC
+cycle; rendering and the complete game boot remain unverified. The `.xbe`, ISO,
+and extracted data used for bring-up stay local and outside Git.

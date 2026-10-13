@@ -321,3 +321,45 @@ mas ainda não valida entradas/ABI, imports de kernel, inicialização, renderin
 integração de assets, gameplay, deformação ou áudio. Ver também
 `FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md` para a trilha recomendada e
 o que deve sair do caminho crítico sem apagar o histórico.
+
+## Etapa 1.38 — espera de objetos dispatcher no bring-up (2026-10-13)
+
+- O primeiro bring-up controlado do host recompilado chegou à entrada traduzida
+  `0x0024D8BE`, carregou as 11 seções do XBE e resolveu os 128/128 thunks. O
+  primeiro worker (`0x0024EAA2`) ficou repetindo `KeWaitForMultipleObjects`
+  (ordinal 158) milhões de vezes em poucos segundos, com status de falha.
+- A inspeção do call site `0x0024EC53` em `D3D.asm` mostrou `WaitAny` sobre um
+  objeto local na stack. O header guest é montado diretamente (`Type=1`,
+  `Size=4`), sem `KeInitializeEvent`; portanto, interpretar o endereço como um
+  HANDLE nativo era incorreto. O patch `0004` faz a ponte consultar primeiro
+  shadows existentes e, para eventos que o título constrói diretamente, usa o
+  adaptador já existente e opt-in `ke_guest_event`. O estado de sincronização
+  guest só é consumido depois de retorno bem-sucedido.
+- A build Release e CTest `2/2` passaram. No host, `_putenv_s` e a variável de
+  processo habilitam o adaptador antes da inicialização do kernel. Com o
+  processo iniciado sem variável externa, o evento em `0x01181E00` foi
+  reconhecido como evento de sincronização, a espera retornou `STATUS_WAIT_0`
+  e o worker avançou para o ciclo de timers/DPCs. O volume caiu de milhões de
+  falhas em segundos para aproximadamente 1.170 esperas em 20 s. Isso elimina
+  o loop de falha observado, mas não demonstra que o ciclo periódico seja o
+  único comportamento esperado nem que o jogo tenha concluído o boot.
+- O processo nativo foi encerrado pelo limite diagnóstico de 20 s; não fechou
+  espontaneamente e não exibiu um menu validado. Ainda foram atingidos
+  `RECOMP_UNIMPL` em `D3D` para `out dx, al` em `0x00298030` (porta `0x80C0`) e
+  `wbinvd` em `0x002954E4`. Os caminhos de I/O de hardware permanecem sem
+  semântica; nenhum valor foi inventado. Esses pontos bloqueiam afirmações de
+  rendering correto.
+- Verificação de regressão .NET: Release com 0 avisos/erros, self-test `105`,
+  headless `80 frames`, replay de match/input/animação/áudio byte-idêntico e
+  smoke windowed `960x540`. São testes do runtime authored, não do XBE
+  recompilado. CTest do host nativo: `2/2`; execução nativa: entrada traduzida
+  e wait/timer observados, sem aprovação de rendering, assets, gameplay ou
+  áudio.
+- A ISO continuou fora das entradas de escrita; SHA-256 antes/depois dos
+  smokes: `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B`.
+
+`NOT_READY` continua. Próximo passo: modelar com evidência os acessos de I/O
+`IN/OUT` à porta `0x80C0` no caminho D3D e determinar uma tradução nativa que
+não se passe por emulação. Em paralelo, manter a matriz de instruções no-op e
+stubs sendo reduzida por caso comprovado. Não declarar rendering, gameplay ou
+áudio funcional a partir do bring-up do kernel.
