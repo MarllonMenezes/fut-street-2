@@ -323,6 +323,19 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
   rendering, assets, gameplay e áudio como gates separados. Estado permanece
   `NOT_READY`. Não iniciar o XBE ou `--launch` sem autorização de bring-up.
 
+## Continuação após a etapa 1.36 (2026-10-13)
+
+- Consulte a etapa 1.36 em `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`
+  e aplique os patches XboxRecomp na ordem 0001, 0002, 0003.
+- A auditoria mais recente tem 81 stubs e 154 instruções no-op; dezessete
+  stubs prévios desapareceram e onze destinos foram expostos. Classifique os
+  deltas usando os relatórios locais, sem publicar VAs em massa, inferir ABI
+  ou tratar ownership sobreposto como entrada provada.
+- Continue o runtime/kernel e integração de áudio por contratos e evidência.
+  Rendering, assets, gameplay, animação e áudio permanecem gates separados;
+  nenhuma build host/link smoke substitui execução fiel do XBE. Não iniciar o
+  XBE nem `--launch` sem autorização de bring-up.
+
 
 
 

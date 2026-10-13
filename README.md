@@ -8,14 +8,12 @@ A referência de abordagem é o
 com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
-O XboxRecomp v0.13.1, com dois patches locais versionados, gerou C para
-15.679/15.679 funções classificadas no passe mais recente; 64 unidades C foram
-compiladas e o host linkou sem símbolos indefinidos. O smoke `--help` e CTest
-2/2 passaram; o host nunca foi inicializado com o XBE. Esta geração revela 87
-stubs e 154 instruções no-op, contagens que mudaram com a cobertura maior e não
-significam piora/ganho sem classificação por causa. Isso ainda não prova boot
-nem fidelidade. O protótipo authored em .NET 8 é separado e não demonstra
-fidelidade ao original.
+O XboxRecomp v0.13.1, com três patches locais versionados, gerou C para
+15.695/15.695 funções no passe mais recente; 64 unidades C foram compiladas e
+o host linkou sem símbolos indefinidos. O smoke `--help` e CTest
+2/2 passaram; o host nunca foi inicializado com o XBE. Restam 81 stubs e 154
+instruções no-op nesta geração. Isso ainda não prova boot nem fidelidade. O
+protótipo authored em .NET 8 é separado e não demonstra fidelidade ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
@@ -47,11 +45,10 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço da recompilação: [etapa 1.35 — descoberta de tail-jumps em aliases tardios](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-Uma lacuna de ordem de descoberta foi corrigida em patch versionado para o
-XboxRecomp; uma recompilação estática local passou a traduzir um alvo antes
-stub, e o host nativo linkou com CTest 2/2. Isso ainda não prova execução do
-jogo nem fecha os gates de fidelidade.
+Último avanço da recompilação: [etapa 1.36 — aliases para branches condicionais entre funções](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+O XboxRecomp agora emite corpos para alvos interiores com origem e destino
+unicamente atribuídos; o total local caiu de 87 para 81 stubs. Isso ainda não
+prova execução do jogo nem fecha os gates de fidelidade.
 Readiness: `NOT_READY`.
 
 ## Código-fonte no GitHub

@@ -1,0 +1,104 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+index e997bbd..0000000 100644
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -170 +170,3 @@
+-            if not self._pass_tail_jump_targets(sections):
++            added = self._pass_tail_jump_targets(sections)
++            added = self._pass_cond_branch_interior_aliases() or added
++            if not added:
+@@ -180,0 +183,49 @@
++    def _pass_cond_branch_interior_aliases(self) -> bool:
++        """Make direct conditional branches into uniquely owned bodies callable.
++
++        A cross-function conditional branch can enter an instruction inside a
++        separately detected body. It is an alternate entry, not evidence that
++        either function boundary should be moved. Represent it as an alias so
++        the original body remains intact and the target has translated code.
++        Ambiguous source or target ownership is deliberately left unresolved.
++        """
++        bodies = sorted((f.start, f.end) for f in self.functions.values())
++        starts = [body[0] for body in bodies]
++        prefix_max_end = []
++        max_end = 0
++        for _start, end in bodies:
++            max_end = max(max_end, end)
++            prefix_max_end.append(max_end)
++
++        def owners_at(address):
++            index = bisect.bisect_right(starts, address) - 1
++            owners = []
++            while index >= 0 and prefix_max_end[index] > address:
++                start, end = bodies[index]
++                if start <= address < end:
++                    owners.append((start, end))
++                index -= 1
++            return owners
++
++        added = False
++        for insn in self.engine.instructions.values():
++            if not insn.is_cond_jump:
++                continue
++            target = insn.jump_target
++            if (target is None or target not in self.engine.instructions
++                    or target in self.functions or target in self._alias_entries):
++                continue
++            source_owners = owners_at(insn.address)
++            target_owners = owners_at(target)
++            if len(source_owners) != 1 or len(target_owners) != 1:
++                continue
++            source = source_owners[0]
++            owner = target_owners[0]
++            if source[0] == owner[0] or target == owner[0]:
++                continue
++            self._alias_entries[target] = owner[1]
++            added = True
++
++        if added:
++            print("  cross-function conditional branch entries recovered as aliases")
++        return added
+diff --git a/tools/disasm/test_cross_function_conditional_alias.py b/tools/disasm/test_cross_function_conditional_alias.py
+new file mode 100644
+index 0000000..0000000
+--- /dev/null
++++ b/tools/disasm/test_cross_function_conditional_alias.py
+@@ -0,0 +1,39 @@
++"""Only uniquely owned cross-function conditional targets become aliases."""
++from types import SimpleNamespace
++
++from tools.disasm.functions import Function, FunctionDetector
++
++
++def make_detector(functions, branch_target):
++    branch = SimpleNamespace(
++        address=0x1004, is_cond_jump=True, jump_target=branch_target,
++    )
++    target = SimpleNamespace(
++        address=branch_target, is_cond_jump=False, jump_target=None,
++    )
++    detector = FunctionDetector.__new__(FunctionDetector)
++    detector.engine = SimpleNamespace(
++        instructions={branch.address: branch, target.address: target}
++    )
++    detector.functions = {function.start: function for function in functions}
++    detector._alias_entries = {}
++    return detector
++
++
++def test_cross_function_branch_to_unique_interior_is_alias():
++    source = Function(0x1000, 0x1010, "source")
++    owner = Function(0x1020, 0x1060, "owner")
++    detector = make_detector([source, owner], 0x1030)
++
++    assert detector._pass_cond_branch_interior_aliases()
++    assert detector._alias_entries == {0x1030: 0x1060}
++
++
++def test_ambiguous_target_ownership_is_not_guessed():
++    source = Function(0x1000, 0x1010, "source")
++    owner = Function(0x1020, 0x1050, "owner")
++    overlap = Function(0x1028, 0x1040, "overlap")
++    detector = make_detector([source, owner, overlap], 0x1030)
++
++    assert not detector._pass_cond_branch_interior_aliases()
++    assert detector._alias_entries == {}

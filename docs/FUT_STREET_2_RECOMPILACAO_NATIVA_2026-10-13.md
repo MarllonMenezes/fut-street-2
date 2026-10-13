@@ -249,3 +249,41 @@ tradutor, mas não prova ABI, boot, rendering, assets, gameplay, animação ou
 áudio. Próximo passo: repetir a auditoria de stubs na nova geração, separar os
 novos alvos por causa e continuar o caminho de inicialização/áudio com evidência;
 não executar o XBE sem autorização explícita de bring-up.
+
+## Etapa 1.36 — aliases de branches condicionais entre funções (2026-10-13)
+
+- A nova auditoria da etapa 1.35 revelou blocos atingidos por `jcc` de uma
+  função para uma instrução interior de outra função. O C gerado encaminhava
+  esses destinos a stubs que apenas retornavam. Caso focal: seis destinos no
+  corpo iniciado em `0x00201595`, todos com xref condicional direto de uma
+  função distinta e ownership único no mapa estático.
+- Foi versionado
+  `native_recomp/patches/0003-alias-cross-function-conditional-branches.patch`.
+  O passe acrescenta uma entrada alias ao destino sem coalescer nem truncar o
+  corpo proprietário; exige origem e destino dentro de exatamente um intervalo
+  de função e destino em boundary de instrução decodificada. Entradas com
+  ownership ambíguo/sobreposto são deliberadamente mantidas sem resolução.
+- Aplicação limpa na release XboxRecomp v0.13.1 após patches 0001/0002; testes
+  focais dos patches 0002/0003: 3/3. Suíte completa com dependências presentes:
+  605 aprovados, 40 ignorados.
+- Reanálise estática: 15.683 funções, 1.298 `tail_jump_alias` e 120
+  `tail_jump_target`. Geração terminou 15.695/15.695 sem falhas, em 62 unidades
+  C divididas e 64 unidades C compiladas pelo CMake (incluindo dispatch e
+  stubs). Os seis alvos focais aparecem como funções e deixaram a lista de
+  stubs.
+- Auditoria agregada de stubs: 81 (eram 87 após a etapa 1.35), 154 instruções
+  no-op (sem alteração). Dezessete stubs da lista anterior desapareceram e
+  onze novos alvos apareceram por cobertura/ownership reclassificados; não se
+  atribui semântica aos novos destinos sem análise individual. Distribuição
+  atual: 53 interiores, 22 com intervalos sobrepostos, 6 descobertos; por
+  seção: `.text` 73, `DSOUND` 2, `.rdata` 2 e 4 não mapeados.
+- Build Release nativo do host concluiu com warnings do tradutor/código gerado;
+  CTest 2/2. Apenas o smoke `--help` foi invocado. Nenhum XBE ou host com
+  `--launch` foi iniciado. Isso verifica geração, compilação e link — não boot,
+  ABI ou fidelidade.
+
+`NOT_READY` permanece. Próximo passo: classificar os onze alvos recém-expostos
+e os 22 casos de ownership sobreposto, procurando evidência de entrada real e
+validando os deltas de no-op/stub por categoria. Em paralelo, avançar o kernel
+e o percurso de áudio com evidência; não iniciar o XBE sem autorização explícita
+de bring-up.
