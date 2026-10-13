@@ -12,7 +12,7 @@ O XboxRecomp v0.13.1 traduziu 15.605 funções do XBE para C; as 65 unidades
 geradas foram compiladas e arquivadas localmente numa biblioteca estática
 intermediária. Isso demonstra tradução e compilação dos objetos, não boot,
 link final ou fidelidade de jogo. Permanecem 86 destinos de chamada substituídos
-por stubs e 161 instruções emitidas como no-op pelo gerador. O XBE não foi
+por stubs e 155 instruções emitidas como no-op pelo gerador. O XBE não foi
 executado. O protótipo authored em .NET 8 é separado e não demonstra fidelidade
 ao original.
 

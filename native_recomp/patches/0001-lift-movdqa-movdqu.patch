@@ -1,0 +1,48 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+index e7ab880..cb7a788 100644
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1620,7 +1620,8 @@ class Lifter:
+                    "emms", "femms", "cvtpi2ps"):
+             return self._lift_mmx(insn, m, ops)
+ 
+-        if m in ("movss", "movsd", "movaps", "movups", "movlps", "movhps",
++        if m in ("movss", "movsd", "movaps", "movups", "movdqa", "movdqu",
++                 "movlps", "movhps",
+                  "movlhps", "movhlps", "movapd", "movupd",
+                  "addss", "subss", "mulss", "divss", "sqrtss",
+                  "addsd", "subsd", "mulsd", "divsd", "sqrtsd",
+@@ -3186,7 +3187,7 @@ class Lifter:
+         # ── Moves ──
+         # movaps/movups move all 16 bytes. Treating them like movss was the
+         # defect that left every packed value 4 bytes wide.
+-        if m in ("movaps", "movups", "movapd", "movupd"):
++        if m in ("movaps", "movups", "movapd", "movupd", "movdqa", "movdqu"):
+             if nops >= 2:
+                 src = _packed_read(ops[1])
+                 if src is not None:
+diff --git a/tools/recomp/test_lifter_sse.py b/tools/recomp/test_lifter_sse.py
+index eafa32d..01c0f7d 100644
+--- a/tools/recomp/test_lifter_sse.py
++++ b/tools/recomp/test_lifter_sse.py
+@@ -47,6 +47,20 @@ class SsePackedLifterTest(unittest.TestCase):
+             ["XMM_STORE(ecx + 0x10, xmm1); /* movups */"],
+         )
+ 
++    def test_integer_packed_moves_preserve_all_128_bits(self):
++        self.assertEqual(
++            Lifter().lift_instruction(
++                _insn("movdqa", "xmm0, xmmword ptr [eax]",
++                      [_xmm("xmm0"), _mem("eax")])),
++            ["xmm0 = XMM_MEM(eax); /* movdqa */"],
++        )
++        self.assertEqual(
++            Lifter().lift_instruction(
++                _insn("movdqu", "xmmword ptr [ecx], xmm1",
++                      [_mem("ecx"), _xmm("xmm1")])),
++            ["XMM_STORE(ecx, xmm1); /* movdqu */"],
++        )
++
+     def test_scalar_move_stays_on_lane_zero(self):
+         self.assertEqual(
+             Lifter().lift_instruction(

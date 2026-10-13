@@ -29,8 +29,9 @@ serviços do console e integração gráfica/áudio a validar.
   objetos foram arquivados numa biblioteca estática local. Isso é uma etapa
   intermediária de tradução/compilação, **não** um executável do jogo, não um
   link completo do runtime, não prova de execução ou de equivalência.
-- O gerador ainda substituiu 86 destinos de chamada por stubs e emitiu 161
-  instruções como no-op. Esses casos precisam de auditoria/correção; não se
+- O gerador ainda substituiu 86 destinos de chamada por stubs e emitiu 155
+  instruções como no-op (37 mnemonics, após corrigir dois movimentos SSE
+  inteiros usados no XBE). Esses casos precisam de auditoria/correção; não se
   presume que sejam irrelevantes. O ABI contém inferências e ainda não está
   validado semanticamente.
 - O XBE não foi executado. A ISO permaneceu somente leitura e com o SHA-256

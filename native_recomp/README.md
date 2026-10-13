@@ -22,3 +22,16 @@ Use a C compiler supported by XboxRecomp and retain all build diagnostics.
 The full runtime target remains separate because XboxRecomp's GPU and APU
 libraries include emulation components; that runtime has not been integrated
 or run here.
+
+For the pinned XboxRecomp v0.13.1, the optional local patch in `patches/`
+adds lifting of `movdqa` and `movdqu` through the existing 128-bit XMM move
+path. Apply it from PowerShell with:
+
+```powershell
+git -C C:/path/to/xboxrecomp apply `
+  'D:/projeto zeta/native_recomp/patches/0001-lift-movdqa-movdqu.patch'
+```
+
+This preserves the 128-bit data transfer but does not model the architectural
+alignment fault of `movdqa`; it is an incremental translation improvement,
+not a claim of complete instruction semantics.

@@ -36,6 +36,20 @@ Os smoke, runtime headless de 80 frames e replay determinístico executados
 foram do protótipo .NET existente; eles não exercitam o XBE nem o código C
 gerado.
 
+## Correção incremental do lifter
+
+O primeiro passe mostrou seis `movdqa`/`movdqu` emitidos como no-op. O patch
+reproduzível `native_recomp/patches/0001-lift-movdqa-movdqu.patch` os encaminha
+para a infraestrutura existente de movimento XMM de 128 bits e inclui teste
+para carga e armazenamento. A geração foi repetida: 15.605/15.605 funções,
+86 stubs, 155 instruções no-op em 37 mnemonics (antes: 161 em 39). As 65
+unidades foram recompiladas e o archive local atualizado com 65 membros.
+
+O patch preserva os dados transferidos, mas não reproduz a exceção de
+alinhamento arquitetural de `movdqa`; portanto é avanço limitado, não semântica
+completa. A suíte upstream agora marca `602 passed, 40 skipped`. Não foi
+executado o XBE nem um executável do jogo.
+
 ## Scaffold versionado
 
 `native_recomp/CMakeLists.txt` espera que `RECOMP_GENERATED_DIR` aponte para
@@ -56,8 +70,9 @@ relatórios que revelem dados do jogo ou credenciais.
 
 ## Verificações deste marco
 
-- XboxRecomp: `601 passed, 40 skipped`; os skips são opcionais da suíte e não
-  foram tratados como aprovados.
+- XboxRecomp: `601 passed, 40 skipped` na validação inicial. Após o patch do
+  lifter: `602 passed, 40 skipped`; os skips continuam sem serem tratados como
+  aprovados.
 - Projeto .NET: build Release, 0 avisos/erros; self-test `105 passed`.
 - Smokes do protótipo: identidade/metadados, headless `80 frames`, janela
   `960x540`, replay byte-idêntico de match/input/animation/audio e runner
@@ -66,6 +81,6 @@ relatórios que revelem dados do jogo ou credenciais.
   tamanho `2,013,003,776` bytes, atributo e horário de modificação preservados.
 - `git diff --check`: executado antes da publicação.
 
-Estado global continua `NOT_READY`. Próximo marco: relatório auditável dos
-stubs/opcodes no-op, imports e símbolos indefinidos, seguido de plano para
-runtime/link; não executar o XBE sem nova etapa explícita de bring-up.
+Estado global continua `NOT_READY`. Próximo marco: auditoria detalhada dos
+stubs/opcodes no-op, imports e dependências de runtime, seguida de plano para
+link; não executar o XBE sem uma etapa explícita de bring-up.
