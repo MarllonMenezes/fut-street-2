@@ -42,6 +42,11 @@
 /tools/tests/*
 !/tools/tests/*.py
 
+!/native_recomp/
+/native_recomp/*
+!/native_recomp/CMakeLists.txt
+!/native_recomp/README.md
+
 # Defense in depth: never publish original game media, extracted payloads,
 # generated reports, credentials, build output or unrelated projects.
 **/bin/

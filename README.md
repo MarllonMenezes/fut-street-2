@@ -7,18 +7,24 @@ A referência de abordagem é o
 [re:Blue](https://github.com/zolaware/reblue), não uma recriação do gameplay
 com código novo. O nome público do projeto é **Fut Street 2**.
 
-**Estado atual: `NOT_READY` — a recompilação do jogo original ainda não foi
-implementada nem validada.** O código existente contém ferramentas de análise,
-leitores de assets, testes e um protótipo authored em .NET 8. Esse protótipo
-não é o jogo original recompilado e seus testes não demonstram fidelidade ao
-original. Até este registro, o XBE não foi executado nem recompilado.
+**Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
+O XboxRecomp v0.13.1 traduziu 15.605 funções do XBE para C; as 65 unidades
+geradas foram compiladas e arquivadas localmente numa biblioteca estática
+intermediária. Isso demonstra tradução e compilação dos objetos, não boot,
+link final ou fidelidade de jogo. Permanecem 86 destinos de chamada substituídos
+por stubs e 161 instruções emitidas como no-op pelo gerador. O XBE não foi
+executado. O protótipo authored em .NET 8 é separado e não demonstra fidelidade
+ao original.
 
 O [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) é um candidato para
 a tradução x86 → C do Xbox original, não um port de FIFA Street 2 já integrado.
-A stack do núcleo e a política para componentes de GPU/áudio ainda precisam
-ser confirmadas: ausência de emulação de CPU não significa ausência de toda
-emulação de hardware. A mudança de objetivo não adotou esse runtime.
-Veja [direção vigente e limites](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+A stack autorizada para o núcleo recompilado é C/C++, com .NET em ferramentas
+auxiliares. Ainda faltam runtime do Xbox, resolução auditada dos stubs/opcodes,
+link de executável e validação de gameplay, rendering, assets e áudio. Nenhum
+runtime de GPU/APU foi integrado; qualquer componente de emulação exige decisão
+explícita e não foi incluído neste avanço. Veja a
+[direção vigente](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md) e o
+[relatório da primeira tradução/build](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 
 Workspace: `D:\projeto zeta`. Código e comandos: [fifa_pc/README.md](fifa_pc/README.md).
 `fifa_pc/FifaStreetPc.csproj` e `FifaStreetPc.dll` continuam com identificadores
@@ -40,7 +46,7 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço técnico do protótipo/análise: [etapa 1.31 — referências de modelo/material](docs/FUT_STREET_2_MODELOS_MATERIAIS_2026-10-13.md),
+Último avanço do protótipo/análise: [etapa 1.31 — referências de modelo/material](docs/FUT_STREET_2_MODELOS_MATERIAIS_2026-10-13.md),
 2.364 primitivas reconciliadas independentemente com três programas nomeados.
 Matriz completa aprovada e validação final de identidade do produto aprovada.
 Repetir a checagem de nome: `pwsh -NoProfile -File tools/test-fut-street-product-identity.ps1`.

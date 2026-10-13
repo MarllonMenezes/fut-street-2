@@ -18,32 +18,36 @@ de x86 do Xbox original para C, compilado em executável nativo para PC.
 neste workspace. Gerar C não basta: ainda há runtime, chamadas indiretas,
 serviços do console e integração gráfica/áudio a validar.
 
-## Estado real preservado
+## Estado real preservado — atualização 2026-10-13
 
-- O XBE deste projeto ainda não foi executado nem recompilado.
-- A base atual é um protótipo authored .NET 8, leitores de assets, análises
-  estáticas e testes. Gameplay authored não é lógica original recompilada.
-- XboxRecomp foi usado anteriormente apenas como auxiliar de análise estática;
-  seu runtime e seu pipeline de geração/build não foram integrados ao jogo.
-- Rendering original, assets, áudio e animação/deformação ainda têm lacunas.
-  Readiness permanece `NOT_READY`; nenhum gate foi promovido por esta decisão.
-- Testes e replays da base .NET comprovam regressão/determinismo dessa base,
-  não equivalência com FIFA Street 2 nem avanço percentual da recompilação.
+- C/C++ está autorizado para o núcleo traduzido; .NET permanece para ferramentas
+  auxiliares e o protótipo existente. O objetivo continua sendo executar a
+  lógica original via tradução estática, sem intérprete/JIT de CPU.
+- XboxRecomp v0.13.1 foi fixado no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`.
+  A análise classificou 15.605 funções; a geração de C concluiu 15.605/15.605.
+- As 65 unidades C foram compiladas como objetos COFF x86_64 Windows e os 65
+  objetos foram arquivados numa biblioteca estática local. Isso é uma etapa
+  intermediária de tradução/compilação, **não** um executável do jogo, não um
+  link completo do runtime, não prova de execução ou de equivalência.
+- O gerador ainda substituiu 86 destinos de chamada por stubs e emitiu 161
+  instruções como no-op. Esses casos precisam de auditoria/correção; não se
+  presume que sejam irrelevantes. O ABI contém inferências e ainda não está
+  validado semanticamente.
+- O XBE não foi executado. A ISO permaneceu somente leitura e com o SHA-256
+  esperado. XBE, C gerado, objetos e biblioteca ficam fora do GitHub.
+- Rendering original, assets, áudio e animação/deformação continuam sem gates
+  aprovados. Testes/headless/replay do protótipo .NET não validam o original.
+  Readiness permanece `NOT_READY`.
 
-## Decisões técnicas ainda pendentes
+## Política de runtime e hardware
 
-O usuário confirmou o objetivo e pediu que ele ficasse claro. Esta atualização
-documental não presume aprovação de todos os detalhes de implementação:
-
-1. Confirmar C/C++ para o núcleo traduzido, mantendo .NET nas ferramentas e
-   testes, em vez de exigir um produto exclusivamente .NET.
-2. Definir se "sem emulação" proíbe toda emulação de hardware ou especificamente
-   emulação de CPU. O XboxRecomp inclui componentes de emulação de GPU/APU;
-   isso deve ser declarado, não escondido sob o termo "nativo".
-
-Até confirmar esse escopo, não integrar automaticamente o runtime upstream,
-não executar o XBE e não apresentar o protótipo como port recompilado.
-A tradução estática desejada não usa intérprete nem JIT de CPU em execução.
+A recompilação estática do CPU foi iniciada. Isso não autoriza esconder emulação
+de hardware sob o termo "nativo": runtime de GPU/APU do XboxRecomp não foi
+integrado nem executado. Primeiro é preciso avaliar mapeamento de chamadas,
+dependências, alternativas nativas e quais componentes realmente exigem
+emulação; qualquer decisão que mude o requisito "sem emulação" deve ser
+explicitada antes da integração. Não inventar bindings nem tratar stubs como
+implementações.
 
 ## Continuidade e proteção dos dados
 
@@ -59,17 +63,19 @@ entrada somente leitura, com SHA-256 esperado
 Não publicar ISO, XBE, assets originais ou dumps neste repositório.
 Não inventar bindings, declarar conclusão ou iniciar code review.
 
-A próxima etapa de implementação depende das decisões de stack e hardware.
-Quando autorizada, deve demonstrar tradução/build de um recorte rastreável
-antes de afirmar execução de código original; depois, boot e gates funcionais.
+A próxima etapa é auditar os stubs e opcodes no-op, identificar imports/ABI e
+dependências do runtime sem inventar bindings, e então construir um link de
+executável sem executar o XBE. Depois disso vêm boot controlado e gates do jogo.
 Manter Release, self-tests, smokes relevantes, headless, replay determinístico
-quando aplicável e SHA-256 da ISO a cada etapa, separando a base .NET dos
-futuros testes do núcleo recompilado. Não há prazo de conclusão validado.
+quando aplicável e SHA-256 da ISO em cada marco, sempre distinguindo testes do
+protótipo .NET de validações do núcleo recompilado. Não há prazo de conclusão.
 
 ## Validação desta atualização documental — 2026-10-13
 
-Mudança limitada a 11 arquivos Markdown e à descrição pública do GitHub;
-nenhum fonte funcional, runtime, binding ou gate foi alterado.
+Registro histórico da primeira atualização documental, antes do trabalho de
+tradução/build nativo descrito em
+[FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md](FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+Naquela rodada, nenhum fonte funcional, runtime, binding ou gate foi alterado.
 
 - Release: 0 avisos e 0 erros.
 - Self-tests .NET: 105/105; testes do runner Release: 10/10.
