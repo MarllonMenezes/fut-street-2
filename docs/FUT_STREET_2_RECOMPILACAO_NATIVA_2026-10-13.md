@@ -214,3 +214,38 @@ O próximo passo é auditar, para candidatos de alias, todas as referências de
 código e dados e a origem do `tail_jump_alias`; só fornecer bounds ao coalescer
 quando a entrada independente estiver explicada. Em paralelo, seguir os stubs
 sem xref direto e as instruções no-op. Os gates principais continuam `NOT_READY`.
+
+## Etapa 1.35 — tail-jumps de aliases descobertos tardiamente (2026-10-13)
+
+- A inspeção estática de `0x0026E9E7` mostrou um caso concreto: uma entrada
+  `tail_jump_alias` descoberta depois do passe inicial terminava em tail-jump
+  para o interior de outra função. Como os aliases tardios não voltavam ao
+  passe de tail-jumps, a tradução deixava o destino como stub e perdia o
+  comportamento de retorno `ret 16` daquele bloco.
+- Foi versionado o patch
+  `native_recomp/patches/0002-detect-late-alias-tail-jumps.patch`, que repete a
+  descoberta de tail-jumps após materializar aliases, com limite de oito
+  rodadas, e inclui teste sintético. Aplicação em checkout limpo do XboxRecomp
+  v0.13.1 (após patch 0001) e teste focal: 1/1. Na suíte upstream da árvore
+  com ambos patches: 603 passaram, 40 foram ignorados.
+- Nova análise estática: 15.667 funções detectadas, 1.284 classificadas como
+  `tail_jump_alias`, 118 como `tail_jump_target`; 15.679/15.679 funções
+  traduzidas sem falhas em 64 unidades C. O C de `0x0026E9E7` agora preserva o
+  corpo, chamada interna e limpeza de 16 bytes, é chamado pelo branch e pelo
+  alias, e deixou a lista de stubs não resolvidos.
+- A cobertura também revelou outros destinos: total atual 87 stubs (era 86) e
+  154 instruções no-op (eram 155). Portanto a contagem agregada de stubs subiu
+  por um nesta geração; o ganho comprovado é apenas a tradução do bloco focal,
+  não uma redução global nem correção semântica dos demais stubs.
+- Build nativo Release do host recompilado concluiu; link sem símbolos
+  indefinidos e CTest 2/2. O build produziu warnings do C upstream; eles foram
+  mantidos visíveis. Nenhum XBE nem executável com `--launch` foi iniciado.
+  O teste `--help` não carrega dados do jogo.
+- A ISO manteve-se fora das entradas de escrita; sua verificação SHA-256 de
+  fechamento será repetida com os demais gates antes da publicação desta etapa.
+
+`NOT_READY` permanece. Este avanço corrige uma lacuna de descoberta no
+tradutor, mas não prova ABI, boot, rendering, assets, gameplay, animação ou
+áudio. Próximo passo: repetir a auditoria de stubs na nova geração, separar os
+novos alvos por causa e continuar o caminho de inicialização/áudio com evidência;
+não executar o XBE sem autorização explícita de bring-up.

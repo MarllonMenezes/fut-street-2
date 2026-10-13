@@ -62,7 +62,7 @@ The caller supplies the pinned XboxRecomp source root and a semicolon-separated
 export-name lists under `imports/` with Zig `dlltool`. No proprietary game input
 or generated C belongs in this build configuration.
 
-The local 15,605-function generation linked into a host `.exe` of about 165 MB;
+The initial local 15,605-function generation linked into a host `.exe` of about 165 MB;
 it was not run. The pinned kernel sources emit compiler warnings. This milestone
 proves zero unresolved link symbols and safe CLI startup only—not XBE boot,
 correct ABI/stub behavior, rendering, gameplay, animation, or audio. The `.exe`,
@@ -80,3 +80,18 @@ git -C C:/path/to/xboxrecomp apply --unidiff-zero `
 This preserves the 128-bit data transfer but does not model the architectural
 alignment fault of `movdqa`; it is an incremental translation improvement,
 not a claim of complete instruction semantics.
+
+Patch `0002-detect-late-alias-tail-jumps.patch` fixes a separate discovery-order
+gap: aliases created after the first tail-jump scan are scanned in bounded
+follow-up rounds, allowing a late alias that tail-jumps into a function body to
+be emitted as a callable interior entry instead of an unresolved stub. Apply
+it after patch 0001:
+
+```powershell
+git -C C:/path/to/xboxrecomp apply `
+  'D:/projeto zeta/native_recomp/patches/0002-detect-late-alias-tail-jumps.patch'
+```
+
+The added synthetic test covers this discovery-order case. The patch improves
+static function coverage; it does not establish ABI correctness or runtime
+behavior for the title.

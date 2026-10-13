@@ -307,6 +307,22 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Nenhum destino foi tratado como função nova, nenhum código recompilado foi executado e nenhum gate mudou. Detalhes de VA permanecem fora do Git por conterem dados derivados do jogo.
 - Relatório e limites: `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. Próximo passo: estudar call sites e limites dessas regiões antes de mudar a descoberta de funções; não fornecer observações dinâmicas sem bring-up autorizado.
 
+## Continuação após a etapa 1.35 (2026-10-13)
+
+- Consulte a etapa 1.35 em `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`.
+- O patch upstream `native_recomp/patches/0002-detect-late-alias-tail-jumps.patch`
+  agora deve ser aplicado depois de `0001` ao reproduzir a nova tradução com
+  XboxRecomp v0.13.1. A geração local passou a ter 87 stubs e 154 no-ops; não
+  compare contagens brutas sem classificar o delta de cobertura.
+- No Cloud, trabalhar somente no repositório público e ambiente publicado;
+  ISO, XBE extraído, assets e C derivado ficam locais. Não fornecer credenciais
+  pois build/self-test do código versionado não requerem segredos. Consultar
+  `docs/CODEX_CLOUD_CONTINUACAO.md` e respeitar seus limites.
+- Próxima investigação: refazer a auditoria de stubs com os novos artefatos
+  locais e correlacionar destinos recém-expostos sem inventar bindings; manter
+  rendering, assets, gameplay e áudio como gates separados. Estado permanece
+  `NOT_READY`. Não iniciar o XBE ou `--launch` sem autorização de bring-up.
+
 
 
 

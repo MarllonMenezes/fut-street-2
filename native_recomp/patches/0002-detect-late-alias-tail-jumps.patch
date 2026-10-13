@@ -1,0 +1,61 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+index 37542d8..e997bbd 100644
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -164,0 +165,11 @@ class FunctionDetector:
++        # Data-pointer and seed aliases are materialised after the original
++        # tail-jump pass. Their bodies can themselves end in a tail jump into
++        # an existing function, so run the pass again with those entries now
++        # visible as owners. Rebuild until no new candidate/alias is found.
++        for _round in range(8):
++            if not self._pass_tail_jump_targets(sections):
++                break
++            self.functions.clear()
++            self._build_functions(sections)
++            self._build_alias_entries()
++
+diff --git a/tools/disasm/test_late_alias_tail_jumps.py b/tools/disasm/test_late_alias_tail_jumps.py
+new file mode 100644
+index 0000000..9d6d42c
+--- /dev/null
++++ b/tools/disasm/test_late_alias_tail_jumps.py
+@@ -0,0 +1,34 @@
++"""Tail jumps from late-discovered aliases still need callable interior entries."""
++from types import SimpleNamespace
++
++from tools.disasm.functions import Function, FunctionDetector
++
++
++def test_tail_jump_from_alias_into_existing_body_is_recorded_as_alias():
++    owner_start, owner_end = 0x1000, 0x1100
++    target, alias_start = 0x1010, 0x1020
++    section = SimpleNamespace(
++        name=".text", virtual_addr=owner_start, virtual_size=0x200,
++        raw_size=0x200, executable=True,
++    )
++    insn = SimpleNamespace(
++        address=alias_start, is_jump=True, is_cond_jump=False,
++        jump_target=target,
++    )
++    target_insn = SimpleNamespace(
++        address=target, is_jump=False, is_cond_jump=False, jump_target=None,
++    )
++    detector = FunctionDetector.__new__(FunctionDetector)
++    detector.engine = SimpleNamespace(
++        instructions={alias_start: insn, target: target_insn}
++    )
++    detector.image = SimpleNamespace(
++        get_section_at_va=lambda address: section
++        if owner_start <= address < owner_start + 0x200 else None
++    )
++    detector.functions = {
++        owner_start: Function(owner_start, owner_end, "owner"),
++        alias_start: Function(
++            alias_start, owner_end, "late_alias", detection_method="tail_jump_alias"
++        ),
++    }
++    detector._candidates = {}
++    detector._alias_entries = {}
++
++    assert detector._pass_tail_jump_targets([section])
++    assert detector._alias_entries[target] == owner_end
