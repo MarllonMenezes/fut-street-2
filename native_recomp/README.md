@@ -28,7 +28,7 @@ adds lifting of `movdqa` and `movdqu` through the existing 128-bit XMM move
 path. Apply it from PowerShell with:
 
 ```powershell
-git -C C:/path/to/xboxrecomp apply `
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0001-lift-movdqa-movdqu.patch'
 ```
 
