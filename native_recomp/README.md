@@ -50,8 +50,11 @@ The opt-in `fut_street_2_recompiled_app` target compiles a bootstrap against a
 selected list of XboxRecomp kernel sources needed for memory, thunks and
 dispatch. It deliberately excludes `nv2a_pb_scan.c`, `nv2a_pb_exec.c`,
 `nv2a_vsh_interp.c`, `nv2a_combiner.c`, `xbox_apu` and `xbox_nv2a`. The bootstrap
-requires an explicit `--launch <default.xbe> <game-data-directory>` argument
-and rejects the upstream `RECOMP_AC97_READY` and `RECOMP_PB_EXEC` opt-ins.
+requires an explicit `--launch <default.xbe> <game-data-directory>
+<save-directory>` argument and rejects the upstream `RECOMP_AC97_READY` and
+`RECOMP_PB_EXEC` opt-ins. Requiring a separate save directory avoids the
+upstream per-user default; for bring-up, point both data and saves at disposable
+directories outside the repository and keep the ISO as read-only input.
 `--help` is safe and is the only application invocation covered by CTest. A
 successful link or CLI smoke is not game-execution evidence.
 

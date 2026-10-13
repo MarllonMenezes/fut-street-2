@@ -64,14 +64,14 @@ int main(int argc, char **argv)
 
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("Fut Street 2 static recompilation host");
-        puts("Usage: fut-street-2-recompiled --launch <default.xbe> <game-data-directory>");
+        puts("Usage: fut-street-2-recompiled --launch <default.xbe> <game-data-directory> <save-directory>");
         puts("This build excludes the XboxRecomp NV2A/APU emulators.");
         return 0;
     }
-    if (argc != 4 || strcmp(argv[1], "--launch") != 0) {
+    if (argc != 5 || strcmp(argv[1], "--launch") != 0) {
         fprintf(stderr,
                 "Refusing implicit launch. Use --help or explicitly provide "
-                "--launch <default.xbe> <game-data-directory>.\n");
+                "--launch <default.xbe> <game-data-directory> <save-directory>.\n");
         return 2;
     }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
@@ -92,7 +92,9 @@ int main(int argc, char **argv)
 
     xbox_kernel_init();
     kernel_ready = 1;
-    xbox_path_init(argv[3], NULL);
+    /* Require caller-owned storage so guest writes never default into the
+     * user's XboxRecomp profile. Bring-up callers should pass an isolated dir. */
+    xbox_path_init(argv[3], argv[4]);
     xbox_kernel_bridge_init();
 
     if (!recomp_dispatch_init())
