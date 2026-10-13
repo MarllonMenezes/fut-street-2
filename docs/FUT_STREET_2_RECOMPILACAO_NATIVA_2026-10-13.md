@@ -50,6 +50,22 @@ alinhamento arquitetural de `movdqa`; portanto é avanço limitado, não semânt
 completa. A suíte upstream agora marca `602 passed, 40 skipped`. Não foi
 executado o XBE nem um executável do jogo.
 
+## Auditoria estática dos limites restantes
+
+Os 155 no-ops estão distribuídos em `.text` (137), `D3D` (7), `XGRPH` (5),
+`XPP` (4) e `DSOUND` (2). O cruzamento com o classificador local coloca 35
+deles em funções rotuladas como CRT/render/game-vtable e 120 em funções
+`unknown`. Essas etiquetas também são heurísticas, mas bastam para mostrar que
+não é seguro presumir que os no-ops são código morto.
+
+Dos 86 stubs de chamada, 79 não têm metadado `ret N` recuperado; nesses casos
+o stub gerado só consome o endereço de retorno (`g_esp += 4`). Os outros sete
+obtiveram um tamanho explícito de retorno. Isso não valida convenção de chamada
+nem limpeza de argumentos: o equilíbrio da pilha e o comportamento dos alvos
+continuam sem prova. O feedback iterativo de chamadas indiretas do XboxRecomp
+depende de observações de execução; não foi usado porque o XBE e o executável
+recompilado não foram executados.
+
 ## Scaffold versionado
 
 `native_recomp/CMakeLists.txt` espera que `RECOMP_GENERATED_DIR` aponte para

@@ -32,7 +32,9 @@ serviços do console e integração gráfica/áudio a validar.
 - O gerador ainda substituiu 86 destinos de chamada por stubs e emitiu 155
   instruções como no-op (37 mnemonics, após corrigir dois movimentos SSE
   inteiros usados no XBE). Esses casos precisam de auditoria/correção; não se
-  presume que sejam irrelevantes. O ABI contém inferências e ainda não está
+  presume que sejam irrelevantes; o classificador marca 35 em funções CRT/
+  render/game-vtable e 120 em funções desconhecidas. Dos 86 stubs, 79 não têm
+  metadado `ret N` recuperado. O ABI contém inferências e ainda não está
   validado semanticamente.
 - O XBE não foi executado. A ISO permaneceu somente leitura e com o SHA-256
   esperado. XBE, C gerado, objetos e biblioteca ficam fora do GitHub.
