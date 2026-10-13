@@ -1,0 +1,104 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -341,0 +342 @@ FLAG_SETTERS = frozenset({
++    "aam", "aad",  # SF/ZF/PF are defined; CF/AF/OF are undefined
+@@ -513,0 +515,18 @@ def _make_condition(jcc, flag_setter, flag_ops):
++    # AAM/AAD define SF, ZF and PF from the resulting AL byte. Their other
++    # arithmetic flags are undefined, so only conditions made from those
++    # three flags can be reconstructed here.
++    if flag_setter in ("aam", "aad"):
++        if jcc in ("je", "jz"):
++            return "(_fa == 0)", desc
++        if jcc in ("jne", "jnz"):
++            return "(_fa != 0)", desc
++        if jcc == "js":
++            return "(_fas < 0)", desc
++        if jcc == "jns":
++            return "(_fas >= 0)", desc
++        if jcc in ("jp", "jpe", "jnp", "jpo"):
++            odd = "((0x6996u >> ((_fa ^ (_fa >> 4)) & 0xFu)) & 1u)"
++            parity = "== 0" if jcc in ("jp", "jpe") else "!= 0"
++            return f"({odd} {parity})", desc
++        return None
++
+@@ -1670,0 +1690,23 @@ class Lifter:
++        if m in ("aam", "aad"):
++            if (len(ops) != 1 or ops[0].type != "imm"
++                    or ops[0].imm == 0):
++                return self._unimplemented(insn, m)
++            base = _fmt_imm(ops[0].imm)
++            if m == "aam":
++                body = [
++                    f"{{ uint32_t _base = {base}; uint32_t _al = LO8(eax);",
++                    "  SET_HI8(eax, _al / _base);",
++                    "  SET_LO8(eax, _al % _base); }",
++                ]
++            else:
++                body = [
++                    f"{{ uint32_t _base = {base};",
++                    "  uint32_t _al = (LO8(eax) + HI8(eax) * _base) & 0xFFu;",
++                    "  SET_HI8(eax, 0); SET_LO8(eax, _al); }",
++                ]
++            body.extend([
++                "_fa = (uint32_t)LO8(eax) & 0xFFu;",
++                "_fas = (int32_t)(int8_t)_fa;",
++                f"/* {m}: SF/ZF/PF from AL; CF/AF/OF undefined */",
++            ])
++            return body
+diff --git a/tools/recomp/test_lifter_aam_aad.py b/tools/recomp/test_lifter_aam_aad.py
+new file mode 100644
+--- /dev/null
++++ b/tools/recomp/test_lifter_aam_aad.py
+@@ -0,0 +1,51 @@
++import unittest
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter, _make_condition
++
++
++class AamAadLifterTest(unittest.TestCase):
++    @staticmethod
++    def _insn(mnemonic, base):
++        insn = Instruction(0x1000, 2, mnemonic, hex(base), "d400")
++        insn.operands = [Operand(type="imm", imm=base)]
++        return insn
++
++    def test_aam_uses_immediate_base_and_preserves_ax_input(self):
++        generated = "\n".join(Lifter().lift_instruction(self._insn("aam", 9)))
++        self.assertIn("uint32_t _base = 9", generated)
++        self.assertIn("uint32_t _al = LO8(eax)", generated)
++        self.assertIn("SET_HI8(eax, _al / _base)", generated)
++        self.assertIn("SET_LO8(eax, _al % _base)", generated)
++        self.assertIn("_fa = (uint32_t)LO8(eax) & 0xFFu", generated)
++        self.assertIn("CF/AF/OF undefined", generated)
++
++    def test_aad_uses_immediate_base_and_clears_ah(self):
++        generated = "\n".join(Lifter().lift_instruction(self._insn("aad", 12)))
++        self.assertIn("LO8(eax) + HI8(eax) * _base", generated)
++        self.assertIn("SET_HI8(eax, 0); SET_LO8(eax, _al)", generated)
++        self.assertIn("SF/ZF/PF from AL", generated)
++
++    def test_aam_zero_base_remains_unimplemented(self):
++        generated = "\n".join(Lifter().lift_instruction(self._insn("aam", 0)))
++        self.assertIn('RECOMP_UNIMPL("aam 0x0"', generated)
++        self.assertNotIn(" / _base", generated)
++
++    def test_defined_result_conditions_read_aam_aad_snapshot(self):
++        ops = [Operand(type="imm", imm=10)]
++        for setter in ("aam", "aad"):
++            self.assertEqual(_make_condition("je", setter, ops)[0], "(_fa == 0)")
++            self.assertEqual(_make_condition("js", setter, ops)[0], "(_fas < 0)")
++            self.assertEqual(_make_condition("jp", setter, ops)[0],
++                             "(((0x6996u >> ((_fa ^ (_fa >> 4)) & 0xFu)) & 1u) == 0)")
++            self.assertIsNone(_make_condition("jb", setter, ops))
++
++    def test_parity_lookup_matches_all_byte_values(self):
++        for value in range(256):
++            nibble = (value ^ (value >> 4)) & 0xF
++            odd = (0x6996 >> nibble) & 1
++            self.assertEqual(odd, value.bit_count() & 1, hex(value))
++
++
++if __name__ == "__main__":
++    unittest.main()

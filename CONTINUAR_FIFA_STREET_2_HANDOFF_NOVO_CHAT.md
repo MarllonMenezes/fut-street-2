@@ -4486,6 +4486,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Build Release completo, link e CTest `4/4`; `--help` passou. Nenhum XBE/`--launch`, headless ou replay original executado; alcance dos três sites não provado.
 - ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; gates principais `NOT_READY`.
 
+## Continuação após a etapa 1.47 (2026-10-13)
+
+- Patch 0008 traduz AAM/AAD para bases imediatas não nulas; AAM base zero permanece TODO até implementação do despacho guest `#DE`.
+- Aplicação reproduzida sobre XboxRecomp v0.13.1 fixado após patches 0001–0007. Testes: 525 passed, 38 skipped; geração: 15702/15702 funções, 71 call stubs, 116 instruções/29 mnemonics sem lowering.
+- CMake Release compilou 64 unidades e linkou; CTest 4/4 e `--help` passaram. XBE não iniciado; sem boot/headless/replay original. ISO SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; readiness `NOT_READY`.
+
 
 
 

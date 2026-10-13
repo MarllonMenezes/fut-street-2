@@ -146,3 +146,17 @@ not establish that any of the three translated sites is reached at runtime.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0007-lift-salc-carry-to-al.patch'
 ```
+
+Patch `0008-lift-aam-aad-immediate-base.patch` follows patches 0001–0007. It
+lowers `AAM imm8`/`AAD imm8` for non-zero immediate bases, including their
+defined SF/ZF/PF result conditions while leaving undefined CF/AF/OF conditions
+unclaimed. `AAM 0` remains untranslated because it raises guest `#DE` and this
+runtime stack does not yet implement that exception path. The current generated
+title has 13 AAM and one AAD site, all with non-zero bases; this is static
+coverage only, not proof of reachability. The patch is tested on pinned
+XboxRecomp v0.13.1 and does not execute the XBE.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0008-lift-aam-aad-immediate-base.patch'
+```

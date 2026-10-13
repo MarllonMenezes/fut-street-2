@@ -639,3 +639,12 @@ atributo `Archive`, SHA-256
   Nenhum gate principal muda; readiness `NOT_READY`. A ISO continuou somente
   leitura; SHA-256 final
   `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+## Etapa 1.47 — AAM/AAD com base imediata (2026-10-13)
+
+- Patch `native_recomp/patches/0008-lift-aam-aad-immediate-base.patch` implementa as transformações de registradores IA-32 para `AAM imm8` e `AAD imm8`: AAM divide o AL original pela base, colocando quociente em AH e resto em AL; AAD calcula `(AL + AH * base) mod 256` em AL e limpa AH. O código traduzido captura o resultado de AL para as condições definidas SF/ZF/PF; as condições que dependeriam de CF/AF/OF, indefinidos por estas instruções, não são sintetizadas a partir de flags anteriores.
+- A especificação de AAM/AAD no [Intel SDM Vol. 2A](https://software.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2a-manual.pdf) documenta a operação, flags e a exceção `#DE` de AAM com base zero. Por segurança, o lifter deixa essa codificação como `RECOMP_UNIMPL` até haver integração de exceções guest; os 13 AAM e o único AAD encontrados na geração atual usam bases imediatas não nulas. Isto reduz TODOs estáticos, não prova alcançabilidade.
+- O patch foi reaplicado do zero após 0001–0007 sobre XboxRecomp v0.13.1 no commit `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`. Suíte focal: `525 passed, 38 skipped`. Geração: `15702/15702` funções, zero falhas, 62 chunks, 71 call stubs, 1.754.121 linhas C; instruções sem lowering `130/31 → 116/29`. Não foram gravados no repositório XBE, C gerado ou relatórios com dados do jogo.
+- CMake Release (`-O3 -DNDEBUG`) compilou as 64 unidades C e linkou o host; warnings de parênteses redundantes no C gerado e warnings preexistentes no kernel, sem erro. CTest seguro `4/4` e host `--help` passaram. O primeiro intento de build não tinha `FUT_STREET2_ZIG` no ambiente; repetido com o caminho local do Zig, completou. CTest foi executado pelo `ctest.exe` do CMake empacotado.
+- Nenhum XBE/`--launch` foi executado; headless/replay do original não são aplicáveis sem iniciar o XBE e não foram alegados. Build/link/testes validam a compilabilidade da tradução, não boot ou fidelidade. Nenhum gate de rendering, assets, gameplay original ou áudio muda; readiness permanece `NOT_READY`.
+- A ISO permaneceu somente leitura: 2.013.003.776 bytes, `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.

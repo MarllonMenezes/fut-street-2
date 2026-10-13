@@ -345,6 +345,15 @@ focados `520 passed, 38 skipped`; build CMake Release/link, CTest `4/4` e
 gates `NOT_READY`. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.47, 2026-10-13): patch XboxRecomp 0008
+traduz AAM/AAD para bases imediatas não nulas; `AAM 0` continua sem lowering
+porque dispara `#DE`, ainda sem despacho de exceção guest. Reaplicação limpa
+de 0001–0008: testes focados 525 passed/38 skipped, geração 15702/15702,
+71 stubs e 116/29 TODOs. CMake Release/link, CTest 4/4 e `--help` passaram.
+Não executar XBE/`--launch`; headless/replay original não alegados. Gates
+`NOT_READY`. ISO somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 

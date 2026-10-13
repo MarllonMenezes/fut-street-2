@@ -1363,6 +1363,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Testes focados `520 passed, 38 skipped`; CMake Release, link e CTest seguro `4/4` passaram; `--help` passou.
 - Não iniciar o XBE para headless/replay sem autorização de bring-up. ISO somente leitura; SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Projeto não concluído; readiness `NOT_READY`.
 
+## Atualização mais recente: etapa 1.47 (2026-10-13)
+
+- Patch XboxRecomp 0008 traduz AAM/AAD com base imediata não nula; `AAM 0` permanece sem lowering porque gera `#DE`, ainda sem exceção guest implementada.
+- Pilha 0001–0008 reproduzida no commit upstream fixado. Testes Python focados: 525 passed, 38 skipped. Geração: 15702/15702 funções, 71 stubs, 116 TODOs/29 mnemonics.
+- Release CMake/link, CTest 4/4 e host `--help` passaram. XBE não lançado; sem boot/headless/replay original. Gates de rendering/assets/gameplay/áudio continuam `NOT_READY`.
+- ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`; seguir implementando apenas semântica respaldada.
+
 
 
 

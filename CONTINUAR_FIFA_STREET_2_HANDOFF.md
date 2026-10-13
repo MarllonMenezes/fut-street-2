@@ -6464,6 +6464,12 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Build CMake Release e link completos; CTest seguro `4/4`; host `--help` passou. Sem `--launch`/XBE, portanto sem runtime headless/replay original.
 - ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Readiness `NOT_READY`; gates de rendering/assets/gameplay/áudio seguem abertos.
 
+## Continuação após a etapa 1.47 (2026-10-13)
+
+- Patch 0008 traduz AAM/AAD com base imediata não nula; AAM base zero continua TODO porque o runtime ainda não despacha `#DE` guest.
+- Pilha limpa 0001–0008: `525 passed, 38 skipped`; geração 15702/15702, 71 stubs, TODOs `116/29` mnemonics; CMake Release/link, CTest 4/4 e `--help` aprovados.
+- XBE não executado; sem headless/replay original ou alegação de alcance. Gates `NOT_READY`. ISO somente leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Prosseguir por evidência e publicar cada marco validado.
+
 
 
 
