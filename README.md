@@ -30,6 +30,9 @@ Repetir a checagem de nome: `pwsh -NoProfile -File tools/test-fut-street-product
 
 ## Código-fonte no GitHub
 
+Repositório público: [MarllonMenezes/fut-street-2](https://github.com/MarllonMenezes/fut-street-2),
+branch `main`. Publicado em 2026-10-13 a pedido do usuário.
+
 Este repositório contém apenas fontes, testes e documentação. A ISO, os assets
 originais, mídia extraída, relatórios gerados e builds são locais e ignorados.
 Instruções de build/testes e limites de reprodução:

@@ -45,3 +45,30 @@ que a matriz completa funciona num clone vazio sem preparar essas entradas.
 Build e self-test independentes devem passar antes de publicar.
 
 Nenhum code review ou pull request faz parte desta publicação.
+
+## Publicação verificada — 2026-10-13
+
+Repositório **público**, conforme escolha explícita do usuário:
+[MarllonMenezes/fut-street-2](https://github.com/MarllonMenezes/fut-street-2),
+branch `main`, remote local `origin` via HTTPS. Primeiro snapshot completo
+publicado: `2d396380ea6506a569ea6ef8ea3606d185268125`. Identidade de commit
+usa o endereço GitHub noreply da conta, não o e-mail pessoal do Git global.
+
+Pacote completo: 304 arquivos de código, testes e documentação. Uma primeira
+checagem source-only detectou que a lista permitida omitira os dois arquivos
+`Program.cs` da raiz dos projetos; a lista foi corrigida antes do envio,
+sem alterar esses fontes. O snapshot completo foi extraído com `git archive`
+em pasta temporária isolada, sem ISO/assets/relatórios, e passou em:
+
+- Release: 0 warnings/0 errors.
+- Self-tests .NET: 105/105.
+- Testes do runner Release: 10/10.
+
+No workspace original, testes Python passaram 57/57. Estes incluem leituras
+da ISO local; não se alega que todos sejam independentes da ISO. Os bytes e
+metadados da ISO foram novamente conferidos e permaneceram iguais ao esperado.
+Tipos/tamanhos de arquivos e assinaturas conhecidas de credenciais foram
+checados antes do envio; não foram publicados binários ou dumps do jogo.
+
+O upload não fecha gates do jogo nem altera o estado `NOT_READY`. Os logs e
+relatórios de validação anteriores permanecem apenas no workspace original.
