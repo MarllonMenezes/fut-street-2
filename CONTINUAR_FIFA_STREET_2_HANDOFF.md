@@ -6426,6 +6426,15 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Commit usa GitHub noreply para não publicar o e-mail pessoal do Git global. Nenhuma licença open-source foi escolhida automaticamente. Não foi criado pull request nem iniciado code review.
 - ISO preservada: 2013003776 bytes, Archive, LastWriteTimeUtc 2026-01-22 10:03:26, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`. Upload não muda gates ou readiness: `NOT_READY`; retomar a próxima investigação da etapa 1.31.
 
+## Continuação após a etapa 1.42 (2026-10-13)
+
+- A direção vigente é recompilação estática nativa do código original; C/C++ é o núcleo, .NET são ferramentas/harness auxiliares. O registro histórico acima da etapa 1.31 não é o estado atual.
+- A pesquisa do PR xemu #2851 achou um uso de `0x80CE` por outro kernel para seleção Conexant/Focus; isso não define a porta `0x80C0` do jogo. A alternância `field_pin` no xemu é hipótese marcada como pergunta pelo próprio código. `IN` em `0x00296F1C` e `OUT 1` em `0x00298030` seguem sem binding e sem implementação.
+- Não há evidência de `Present` alcançado para integrar com ISR. `RECOMP_VBLANK` permanece bloqueado; não habilitar tick sintético. Próxima etapa: buscar fonte independente para `0x80C0`/efeito do `OUT 1`, e continuar auditoria de stubs/opcodes e serviços de kernel alcançáveis.
+- Validação: matriz authored completa exit 0, Release 0/0, self-test 105/105, runner 10/10, smokes/runtime authored/replays passaram; CMake Release sem alvos pendentes, CTest 3/3. Nenhum `--launch` ou execução do XBE nesta etapa. Readiness permanece `NOT_READY`.
+- ISO somente leitura: 2013003776 bytes, atributo `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+- Atualização publicada no GitHub: commit `7764b32` (`Document LPC GPIO evidence limits`), branch `main`. Continuar sem emulação, sem inventar bindings, sem declarar conclusão e sem code review.
+
 
 
 
