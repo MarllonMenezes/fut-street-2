@@ -14,6 +14,11 @@ sys.path.insert(0, str(ANALYSIS))
 
 from list_xdvdfs import XdvdfsReader  # noqa: E402
 from parse_xbe import analyze_xbe  # noqa: E402
+from xboxrecomp_unresolved_target_audit import (  # noqa: E402
+    classify_targets,
+    parse_stub_targets,
+    summarize,
+)
 from parse_big_archives import inspect as inspect_big_archives  # noqa: E402
 from xbe_string_xref_audit import (  # noqa: E402
     build_call_clusters,
@@ -2045,6 +2050,61 @@ class FifaAnalysisSmokeTests(unittest.TestCase):
         self.assertEqual(summary["distinct_nested_call_targets"], "1")
         self.assertEqual(summary["nested_call_sites_with_ret_imm_4_after_call"], "0")
         self.assertEqual(summary["original_semantics"], "not-claimed")
+
+    def test_xboxrecomp_unresolved_stub_parser_checks_address_and_duplicates(self) -> None:
+        stubs = """
+        void sub_00001010(void) { g_esp += 4; /* 0x00001010: not detected */ }
+        void sub_00001020(void) { g_esp += 8; /* 0x00001020: ret 4 */ }
+        """
+        rows = parse_stub_targets(stubs)
+        self.assertEqual([row["address"] for row in rows], [0x1010, 0x1020])
+        self.assertEqual([row["stack_delta"] for row in rows], [4, 8])
+        self.assertEqual(rows[1]["return_evidence"], "ret 4")
+        with self.assertRaisesRegex(ValueError, "mismatch"):
+            parse_stub_targets(
+                "void sub_00001010(void) { g_esp += 4; /* 0x00001011: not detected */ }"
+            )
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            parse_stub_targets(stubs + "\n" + stubs.splitlines()[1])
+
+    def test_xboxrecomp_unresolved_stub_join_uses_exact_section_boundaries(self) -> None:
+        targets = [
+            {"address": 0x1010, "stack_delta": 4, "return_evidence": "not detected"},
+            {"address": 0x1020, "stack_delta": 8, "return_evidence": "ret 4"},
+            {"address": 0x3000, "stack_delta": 4, "return_evidence": "not detected"},
+        ]
+        functions = [
+            {"start": "0x00001000", "end": "0x00001020", "name": "func_a"},
+        ]
+        sections = [
+            {"name": ".text", "virtual_addr": "0x00001000", "virtual_size": 0x100, "executable": True},
+            {"name": ".rdata", "virtual_addr": "0x00002000", "virtual_size": 0x100, "executable": True},
+        ]
+        rows = classify_targets(targets, functions, sections)
+        self.assertEqual(rows[0]["function_relation"], "function-interior")
+        self.assertEqual(rows[1]["function_relation"], "function-end")
+        self.assertEqual(rows[2]["section"], None)
+        self.assertEqual(rows[2]["function_relation"], "uncovered-address")
+
+    def test_xboxrecomp_unresolved_stub_keeps_xbe_section_flag_separate(self) -> None:
+        rows = classify_targets(
+            [{"address": 0x2010, "stack_delta": 4, "return_evidence": "not detected"}],
+            [],
+            [{"name": ".rdata", "virtual_addr": "0x00002000", "virtual_size": 0x100, "executable": True}],
+        )
+        self.assertEqual(rows[0]["section"], ".rdata")
+        self.assertIs(rows[0]["section_executable_flag"], True)
+        self.assertEqual(rows[0]["function_relation"], "uncovered-address")
+
+    def test_xboxrecomp_unresolved_stub_summary_separates_stacks_from_metadata(self) -> None:
+        summary = summarize([
+            {"section": ".text", "function_relation": "function-interior", "stack_delta": 4, "return_evidence": "not detected"},
+            {"section": ".text", "function_relation": "function-end", "stack_delta": 8, "return_evidence": "ret 4"},
+            {"section": None, "function_relation": "uncovered-address", "stack_delta": 4, "return_evidence": "not detected"},
+        ])
+        self.assertEqual(summary["unresolved_targets"], 3)
+        self.assertEqual(summary["by_section"], {".text": 2, "unmapped": 1})
+        self.assertEqual(summary["return_metadata"], {"not-detected": 2, "recognized-ret-n": 1})
 
 
 if __name__ == "__main__":

@@ -153,3 +153,35 @@ Estado ainda `NOT_READY`; não executar o XBE nem este host `.exe` com `--launch
 sem autorização explícita de bring-up. Próxima ação: revisar com evidência os
 stubs de kernel chamados pelo XBE e a semântica de `RECOMP_UNIMPL`/indirect
 dispatch, depois fechar o caminho de áudio e validar startup controlado.
+
+## Etapa 1.33 — auditoria estática dos destinos stub (2026-10-13)
+
+- Foi adicionada a ferramenta `tools/analysis/xboxrecomp_unresolved_target_audit.py`
+  para cruzar stubs gerados, intervalos do mapa de funções e limites exatos de
+  seção do `default_analysis.json`. Ela preserva separadamente a flag XBE de
+  executável e o nome da seção; não deduz que endereço em seção executável seja
+  código nem que um destino no meio de uma função seja uma nova função.
+- No conjunto local desta geração: 86 destinos, dos quais 74 caem dentro de um
+  intervalo de função, 4 coincidem com intervalos sobrepostos, 1 termina
+  exatamente no limite de uma função e 7 ficam fora dos intervalos conhecidos.
+  Por seção: `.text` 76, `DSOUND` 2, `XPP` 2, `.rdata` 2 e 4 sem seção mapeada.
+- Duas entradas apontadas para `.rdata` pertencem a offsets não alinhados em
+  relação ao endereço da tabela de thunks declarado pelo XBE. Isso é sinal de
+  destino não confiável, não autorização para criar binding ou tratar os bytes
+  como função. Os quatro destinos sem seção e os grupos de intervalos
+  sobrepostos também permanecem sem interpretação semântica.
+- 79 stubs não têm evidência gerada de `ret N`; sete têm esse metadado. Nenhum
+  desses valores valida ABI, limpeza de argumentos ou correção de chamada.
+- A primeira contagem exploratória foi invalidada porque usava limites de seção
+  fixos incompatíveis com o XBE real; esta etapa usa o mapa de seções extraído
+  do próprio XBE e a ferramenta falha em intervalos sobrepostos de seção.
+- Quatro testes cobrem parsing, duplicatas, limites de intervalos e a distinção
+  entre flag executável e classificação funcional. O relatório detalhado pode
+  conter endereços derivados do jogo e deve permanecer local; somente código e
+  estatísticas agregadas são versionados.
+
+Readiness continua `NOT_READY`; nenhum stub foi promovido a implementação nem
+nenhum código do título foi executado. Próximo passo: correlacionar cada alvo
+interior/intervalo ambíguo com suas instruções chamadoras e limites reais antes
+de alterar a descoberta de funções; não usar seeds inferidas como observação de
+runtime. Audio/graphics e boot permanecem gates pendentes.

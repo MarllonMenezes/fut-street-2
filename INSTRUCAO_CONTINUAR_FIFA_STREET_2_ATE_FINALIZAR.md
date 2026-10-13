@@ -294,6 +294,14 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Isso prova link e parsing do CLI somente. Não prova boot, correctness do kernel/API, rendering, gameplay, animação ou áudio; DirectSound não está linkado. ISO inalterada. Readiness continua `NOT_READY`.
 - Referência detalhada: `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`; scaffold/comandos: `native_recomp/README.md`. Próximo avanço: fechar os imports/stubs de kernel usados no startup e o backend de áudio com evidência antes de qualquer bring-up.
 
+## Etapa 1.33 — auditoria estática dos destinos stub (2026-10-13)
+
+- Ferramenta adicionada: `tools/analysis/xboxrecomp_unresolved_target_audit.py`; testes em `tools/tests/test_fifa_analysis.py` (4 novos casos).
+- Join do arquivo `recomp_stubs_unresolved.c` local com `functions.json` e `default_analysis.json` do XBE: 86 destinos; 74 interiores, 4 com intervalos sobrepostos, 1 no fim de função e 7 sem intervalo conhecido. Por seção: `.text` 76, `DSOUND` 2, `XPP` 2, `.rdata` 2, sem seção 4.
+- 79 sem `ret N` detectado; 7 com metadado. A primeira classificação com limites fixos foi descartada; usar sempre os limites reais do XBE. Dois destinos em `.rdata` ficam desalinhados em relação ao início da tabela kernel thunk: suspeita estática, não binding.
+- Nenhum destino foi tratado como função nova, nenhum código recompilado foi executado e nenhum gate mudou. Detalhes de VA permanecem fora do Git por conterem dados derivados do jogo.
+- Relatório e limites: `docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md`. Próximo passo: estudar call sites e limites dessas regiões antes de mudar a descoberta de funções; não fornecer observações dinâmicas sem bring-up autorizado.
+
 
 
 
