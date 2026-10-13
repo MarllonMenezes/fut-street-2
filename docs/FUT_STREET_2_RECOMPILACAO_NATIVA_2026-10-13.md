@@ -409,3 +409,28 @@ uma referência técnica primária para a porta. Um retorno constante, no-op,
 barreira genérica ou evento vblank presumido poderia alterar sincronização e
 corromper o rendering. O README foi sincronizado com a etapa 1.38; nenhum arquivo
 do XBE/ISO foi alterado ou publicado.
+
+## Etapa 1.40 — correspondência do GPIO LPC PM com o bit lido pelo D3D (2026-10-13)
+
+- A implementação de referência do xemu em seu PR público `#2851` define
+  `XBOX_PM_IO_BASE = 0x8000` e `XBOX_PM_GPIO_BASE = 0xC0`, registrando a janela
+  GPIO em `0x80C0`. Para offset zero, ela alterna um estado chamado
+  `field_pin` e retorna esse estado no bit 5. O próprio comentário da
+  implementação pergunta se seria o “field pin” do encoder de TV; o PR também
+  deixa investigação de GPIO como TODO. O PR permanece aberto.
+- Isso corresponde de forma específica à leitura guest em `0x80C0`, seguida de
+  `SHR 5`, inversão e máscara em `sub_00296EA0`/`sub_002970A0`. A hipótese mais
+  forte agora é que esse fluxo consulta sincronização/paridade de campo de
+  vídeo por GPIO LPC PM, em vez de um registrador NV2A. A escrita em offset
+  zero com valor `1` ainda não tem semântica explicada nessa referência.
+- A fonte é uma implementação de emulador, não uma especificação do hardware;
+  seu código é explicitamente heurístico/incompleto. Foi consultada somente
+  para pesquisa, não copiada nem integrada. Portanto isso orienta a busca, mas
+  ainda não autoriza binding no host nativo. O bring-up local de 8 s não chegou
+  às instruções `IN`, então não há confirmação dinâmica do ciclo de campo.
+
+Referências consultadas: [PR xemu #2851 — expor portas GPIO](https://github.com/xemu-project/xemu/pull/2851)
+e [fonte do controlador GPIO no commit do PR](https://github.com/xemu-project/xemu/blob/5938def/hw/xbox/acpi_xbox.c).
+Próximo passo: procurar confirmação independente do registrador/encoder e do
+efeito da escrita `1`; só então decidir se há uma tradução nativa de sincronismo
+de apresentação compatível, sem simular a GPU ou inventar estado.
