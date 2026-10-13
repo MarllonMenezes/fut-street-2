@@ -10,7 +10,8 @@ com código novo. O nome público do projeto é **Fut Street 2**.
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
 O XboxRecomp v0.13.1, com quatro patches locais versionados, gerou C para
 15.702/15.702 funções no passe mais recente; 64 unidades C foram compiladas e
-o host linkou sem símbolos indefinidos. CTest 2/2 passou. Restam 71 stubs e
+o host linkou sem símbolos indefinidos. CTest 3/3 passou, incluindo a recusa de
+vblank sintético. Restam 71 stubs e
 154 instruções no-op. Um bring-up controlado carregou as seções do XBE e chamou
 a entrada traduzida, mas parou em serviços/operações ainda sem implementação;
 isso não é um boot validado nem prova de fidelidade. O protótipo authored em
@@ -46,11 +47,12 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: [etapa 1.41 — bloqueio do vblank sintético](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+Último avanço registrado: [etapa 1.42 — delimitação da evidência do GPIO](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
 O host agora recusa `RECOMP_VBLANK`, que ativaria uma interrupção GPU fixa
-simulada. O GPIO LPC PM em `0x80C0` ainda aguarda validação independente; não há
-binding confirmado nem boot/menu. Os 71 stubs e 154 no-ops permanecem por
-auditar. Isso não fecha gates de fidelidade. A
+simulada. A evidência encontrada para `0x80CE` em outro kernel não define o
+`0x80C0` do jogo; a hipótese `field_pin` do xemu permanece explicitamente
+especulativa. Não há binding confirmado nem boot/menu. Os 71 stubs e 154 no-ops
+permanecem por auditar. Isso não fecha gates de fidelidade. A
 [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
 explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.

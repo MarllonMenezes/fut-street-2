@@ -460,3 +460,58 @@ de apresentação compatível, sem simular a GPU ou inventar estado.
 `NOT_READY` permanece. O próximo avanço real do jogo depende de uma fonte nativa
 de sincronização de apresentação e de uma semântica confirmada para o GPIO
 `0x80C0`; não ligar o vblank sintético para produzir progresso aparente.
+
+## Etapa 1.42 — delimitar evidência pública para LPC PM GPIO (2026-10-13)
+
+- Uma busca dirigida encontrou no PR aberto do xemu #2851 uma evidência
+  diferente, que deve ser separada da hipótese de field pin: o autor relata que
+  um kernel público lê `0x80CE`, testa o bit `0x20` e decide entre encoders
+  Conexant e Focus; para o Xbox 1.0 que o xemu toma como padrão, a resposta
+  esperada nesse endereço é `0x00`. Isso documenta um uso de `0x80CE` em outro
+  kernel/revisão, não o significado de `0x80C0` usado por FIFA Street 2.
+- No mesmo patch do xemu, a leitura do offset `0` (porta `0x80C0`) alterna um
+  bit chamado `field_pin`, mas o comentário literal pergunta se seria o pino
+  FIELD do encoder. Essa linha é uma hipótese do modelo de emulação, não uma
+  especificação nem uma confirmação independente. O patch está aberto e o
+  comportamento não foi adotado.
+- O Xbox Hardware Design Specification 1.02 §2.6.5–2.6.6 lista GPIOs do MCPX
+  associados a VBUS de portas, SMI e status SCART; não estabelece nesse trecho
+  uma ligação entre eles e o offset LPC PM `0xC0`, portanto não resolve o
+  registrador do jogo. A tabela comunitária de portas continua marcada FIXME.
+- Releitura estática do XBE: `IN AL,DX` em `0x00296F1C` lê especificamente
+  `DX=0x80C0`, após guardas de estado/contexto; o byte é reduzido ao bit 5,
+  invertido e usado para atualizar estado D3D e enfileirar DPC. A escrita em
+  `0x00298030` envia o byte `1` ao mesmo offset, mas o efeito dessa escrita
+  também permanece desconhecido. Não existe binding confirmado para leitura,
+  escrita, ISR ou apresentação.
+- Os logs preservados do bring-up não contêm telemetria `[D3D]` que demonstre
+  `Present` alcançado; a rota `D3D8_PresentFrame` do checkout temporário também
+  não emite essa telemetria. Logo, ainda não há evidência para conectar
+  apresentação nativa ao ISR do jogo. O vblank sintético continua bloqueado.
+
+Fontes consultadas: [PR xemu #2851, comentário do autor sobre `0x80CE`](https://github.com/xemu-project/xemu/pull/2851),
+[código GPIO no commit do PR](https://github.com/xemu-project/xemu/blob/5938def/hw/xbox/acpi_xbox.c)
+e [Xbox Hardware Design Specification 1.02, §2.6.5–2.6.6](https://consolemods.org/wiki/images/a/ae/Xbox_Hardware_Design_Specification_1.02.pdf).
+Essas fontes delimitam a hipótese, mas não definem `0x80C0` para este título.
+
+Próxima etapa: buscar evidência independente e específica do offset `0x80C0`
+e do `OUT 1` (por exemplo, outro kernel Xbox/documentação de MCPX/LPC ou uma
+captura controlada de execução); manter `IN/OUT` sem implementação até isso ser
+resolvido. A ligação `Present→ISR` só pode ser avaliada depois de provar que a
+rota de apresentação do título é alcançada e de determinar a semântica do
+evento. Nenhum XBE foi executado nesta etapa.
+
+`NOT_READY` permanece; nenhum gate principal mudou. A ISO continua somente
+leitura e não foi tocada nesta investigação.
+
+Validação local desta etapa documental: `tools/run-clean-room-authored-matrix.ps1`
+concluiu com exit 0 (`completed-authored-and-candidate-opt-in`), Release 0
+avisos/0 erros, self-test .NET 105/105 e runner 10/10; smokes relevantes,
+runtime authored headless/windowed, captura 960×540 e replays determinísticos
+dos traces de match/input/animação/áudio passaram. Readiness permaneceu
+`NOT_READY`, sem promover resultados authored a evidência do XBE. Build nativo
+Release não tinha alvos pendentes; CTest 3/3 passou (`no_emulation_runtime_support`,
+`recompiled_host_help`, `recompiled_host_rejects_synthetic_vblank`). Nenhum
+`--launch` foi executado. `git diff --check` passou. ISO: 2.013.003.776 bytes,
+atributo `Archive`, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.

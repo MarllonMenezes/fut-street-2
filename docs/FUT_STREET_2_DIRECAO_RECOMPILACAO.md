@@ -69,13 +69,16 @@ entrada somente leitura, com SHA-256 esperado
 Não publicar ISO, XBE, assets originais ou dumps neste repositório.
 Não inventar bindings, declarar conclusão ou iniciar code review.
 
-A próxima etapa é resolver por evidência os acessos D3D `IN/OUT` à porta
-`0x80C0`, auditar stubs/opcodes no-op alcançáveis e completar serviços de kernel
-necessários para o bring-up. O link e o primeiro bring-up controlado já foram
-realizados, mas não validam menu nem gates do jogo. Manter Release, self-tests,
-smokes relevantes, headless, replay determinístico quando aplicável e SHA-256
-da ISO em cada marco, sempre distinguindo testes do protótipo .NET de validações
-do núcleo recompilado. Não há prazo de conclusão.
+A etapa 1.42 consultou evidência pública sobre a faixa LPC PM. Um kernel público
+usa `0x80CE` para seleção de encoder, mas isso não define o `0x80C0` lido/escrito
+por FIFA Street 2; o bit chamado `field_pin` no xemu é uma hipótese explícita,
+não um binding. A próxima etapa é resolver por evidência os acessos D3D
+`IN/OUT` a `0x80C0`, auditar stubs/opcodes no-op alcançáveis e completar
+serviços de kernel necessários ao bring-up. O link e o primeiro bring-up
+controlado já foram realizados, mas não validam menu nem gates do jogo. Manter
+Release, self-tests, smokes relevantes, headless, replay determinístico quando
+aplicável e SHA-256 da ISO em cada marco, sempre distinguindo testes do protótipo
+.NET de validações do núcleo recompilado. Não há prazo de conclusão.
 
 ## Validação desta atualização documental — 2026-10-13
 
