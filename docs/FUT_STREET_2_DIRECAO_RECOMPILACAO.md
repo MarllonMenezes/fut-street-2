@@ -69,6 +69,17 @@ entrada somente leitura, com SHA-256 esperado
 Não publicar ISO, XBE, assets originais ou dumps neste repositório.
 Não inventar bindings, declarar conclusão ou iniciar code review.
 
+## Continuação após a etapa 1.43
+
+Foi versionado `native_recomp/patches/0005-lift-wbinvd-coherent-host-memory.patch`.
+O `WBINVD` alcançado no bring-up em `0x002954E4` é traduzido para uma barreira
+C11 sequencialmente consistente sobre memória coerente do host. Isso preserva
+ordenação das operações de memória traduzidas; não simula invalidação de caches
+nem implementa flush para GPU/DMA. Testes isolados do lifter passaram `2/2` e o
+chunk que contém o endereço compilou em uma biblioteca estática de validação.
+A geração completa ainda não foi refeita: continuam vigentes, por enquanto, os
+71 stubs e 154 instruções não traduzidas da geração anterior.
+
 A etapa 1.42 consultou evidência pública sobre a faixa LPC PM. Um kernel público
 usa `0x80CE` para seleção de encoder, mas isso não define o `0x80C0` lido/escrito
 por FIFA Street 2; o bit chamado `field_pin` no xemu é uma hipótese explícita,

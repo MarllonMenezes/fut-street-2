@@ -515,3 +515,38 @@ Release não tinha alvos pendentes; CTest 3/3 passou (`no_emulation_runtime_supp
 `--launch` foi executado. `git diff --check` passou. ISO: 2.013.003.776 bytes,
 atributo `Archive`, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
+## Etapa 1.43 — tradução parcial de WBINVD para memória coerente (2026-10-13)
+
+- O bring-up registrou execução de `WBINVD` em `0x002954E4`. O código traduzido
+  grava um DWORD em `0x80000000` logo antes da instrução e chama
+  `sub_00293320` logo depois. O endereço está dentro da janela de RAM contígua
+  mapeada pelo host; não há evidência neste caminho de acesso a uma API de
+  dispositivo que possa ser confundida com esse opcode.
+- A referência primária [Intel SDM, WBINVD](https://cdrdv2-public.intel.com/671143/334569-sdm-vol-2d.pdf)
+  define write-back e invalidação das caches internas, além de serialização.
+  Um recompiler estático não mantém uma cache de CPU guest separada: para a
+  RAM coerente mapeada no host, a tradução versionada em
+  `native_recomp/patches/0005-lift-wbinvd-coherent-host-memory.patch` emite
+  `atomic_thread_fence(memory_order_seq_cst)` via `RECOMP_WBINVD()`.
+- Limite deliberado: a barreira preserva ordenação das operações de memória
+  traduzidas; não invalida as caches físicas do host e não implementa
+  coerência/flush para GPU ou DMA. Qualquer backend de dispositivo ainda terá
+  de tratar sua visibilidade de recursos explicitamente. Nenhum binding Xbox,
+  NV2A ou ISR foi criado.
+- O patch foi aplicado em uma cópia isolada dos fontes temporários; o checkout
+  XboxRecomp com alterações preexistentes permaneceu intacto. Os novos testes
+  `test_lifter_wbinvd.py` passaram `2/2`. O chunk gerado contendo o site, após
+  aplicação da instrução emitida, compilou em uma biblioteca estática Release
+  de validação com o dispatch; houve 38 warnings preexistentes de parênteses
+  redundantes, sem erros. Isso valida o lowering e sua compilabilidade, não
+  uma nova geração completa nem um boot do jogo.
+- A geração usada pelo executável host ainda contém `RECOMP_UNIMPL` nesse site;
+  ela não foi regenerada nesta etapa. Assim, as contagens vigentes continuam
+  sendo 71 stubs e 154 instruções não traduzidas. Próximo passo: aplicar os
+  patches versionados sobre uma cópia limpa/fixada do XboxRecomp, regenerar as
+  15.702 funções, compilar o archive completo e observar qual operação alcançada
+  passa a ser a próxima dependência real. `OUT 1` em `0x00298030` e a semântica
+  de `0x80C0` continuam sem binding.
+- Nenhum XBE ou executável recompilado foi lançado; readiness permanece
+  `NOT_READY`. Os testes .NET authored não são validação do código original.

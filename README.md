@@ -47,12 +47,16 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: [etapa 1.42 — delimitação da evidência do GPIO](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-O host agora recusa `RECOMP_VBLANK`, que ativaria uma interrupção GPU fixa
-simulada. A evidência encontrada para `0x80CE` em outro kernel não define o
-`0x80C0` do jogo; a hipótese `field_pin` do xemu permanece explicitamente
-especulativa. Não há binding confirmado nem boot/menu. Os 71 stubs e 154 no-ops
-permanecem por auditar. Isso não fecha gates de fidelidade. A
+Último avanço registrado: etapa 1.43, no
+[relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
+Foi versionado um patch do lifter para o `WBINVD` alcançado em `0x002954E4`:
+barreira C11 sequencialmente consistente, limitada à ordenação de memória
+coerente no host. Não implementa flush de GPU/DMA. O patch passou validação
+isolada, mas a geração completa ainda não foi refeita; portanto 71 stubs e 154
+no-ops continuam sendo os números da geração anterior. A evidência encontrada
+para `0x80CE` em outro kernel não define o `0x80C0` do jogo; a hipótese
+`field_pin` do xemu permanece explicitamente especulativa. Não há binding
+confirmado nem boot/menu. Isso não fecha gates de fidelidade. A
 [direção, prioridades e itens fora do caminho crítico](docs/FUT_STREET_2_ESCOPO_RECOMPILACAO_E_PRIORIDADES.md)
 explica o que manter e o que arquivar sem apagar histórico.
 Readiness: `NOT_READY`.

@@ -1328,6 +1328,13 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - ISO intacta nas duas rodadas, exclusivamente entrada somente leitura: 2013003776 bytes, Archive, LastWriteTimeUtc 2026-01-22 10:03:26, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Readiness global `NOT_READY`; continuar clean-room .NET, sem emulação/recompilação/execução do XBE, bindings inventados, conclusão do projeto ou code review.
 
+## Continuação após a etapa 1.43 (2026-10-13)
+
+- Progresso atual é recompilação estática nativa C/C++, não reimplementação do gameplay em .NET. O patch `native_recomp/patches/0005-lift-wbinvd-coherent-host-memory.patch` mapeia somente a ordenação de `WBINVD` em memória coerente para fence C11; não implementa flush de dispositivo.
+- Testes do lifter `2/2` e compilação isolada Release do chunk contendo o endereço + dispatch foram aprovados; 38 warnings redundantes preexistentes, zero erros. Alterações existentes no checkout XboxRecomp foram preservadas.
+- A geração completa ainda precisa ser refeita; 71 stubs e 154 instruções não traduzidas continuam os valores válidos da geração anterior. Regerar 15.702 funções, build da biblioteca completa e avançar conforme o próximo trap alcançado.
+- `0x80C0`/`OUT 1` segue sem binding; sem XBE executado, boot/menu não validados, gates originais abertos e readiness `NOT_READY`. Não usar emulação, não adulterar a ISO nem publicar XBE/assets.
+
 ## Publicação GitHub do Fut Street 2 (2026-10-13)
 
 - Repositório público, conforme escolha explícita do usuário: [MarllonMenezes/fut-street-2](https://github.com/MarllonMenezes/fut-street-2), branch `main`. Workspace agora tem Git local; remote `origin` aponta para esse repositório via HTTPS. Snapshot completo inicial `2d396380ea6506a569ea6ef8ea3606d185268125` enviado e verificado contra o remoto.

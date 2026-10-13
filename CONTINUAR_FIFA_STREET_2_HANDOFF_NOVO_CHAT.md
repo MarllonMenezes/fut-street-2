@@ -4457,6 +4457,14 @@ SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - ISO somente leitura: 2013003776 bytes, atributo `Archive`, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 - Atualização publicada no GitHub: commit `7764b32` (`Document LPC GPIO evidence limits`), branch `main`. Continuar sem emulação, sem inventar bindings, sem declarar conclusão e sem code review.
 
+## Continuação após a etapa 1.43 (2026-10-13)
+
+- Progresso: patch versionado `native_recomp/patches/0005-lift-wbinvd-coherent-host-memory.patch` traduz o `WBINVD` alcançado em `0x002954E4` para fence C11 sequencialmente consistente em memória coerente do host. Isso não é flush de cache físico nem implementação para GPU/DMA.
+- Testes específicos do lifter passaram `2/2`; um espelho isolado compilou o chunk com o site e o dispatch em uma biblioteca estática Release. O checkout XboxRecomp com alterações locais foi preservado e não foi modificado.
+- A saída gerada usada pelo host ainda não foi regenerada: continuam vigentes 71 stubs e 154 instruções não traduzidas. Próxima ação: aplicar os patches sobre uma cópia fixada, regenerar as 15.702 funções e compilar a biblioteca completa. O próximo bloqueio deve ser observado, não presumido.
+- `OUT 1` em `0x00298030`/GPIO `0x80C0` continua sem binding; `RECOMP_VBLANK` segue recusado. Nenhum XBE/host foi lançado nesta etapa; nada indica boot/menu ou gates de rendering, assets, gameplay original e áudio aprovados.
+- Readiness `NOT_READY`; preservar ISO somente leitura, não enviar XBE/assets, não inventar bindings, não declarar conclusão e não iniciar code review.
+
 
 
 
