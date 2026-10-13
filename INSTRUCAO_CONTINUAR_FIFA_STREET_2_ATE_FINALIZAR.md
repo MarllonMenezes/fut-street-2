@@ -1,5 +1,15 @@
 # Instrução para continuar o FIFA Street 2 até finalizar
 
+## Direção vigente — 2026-10-13
+
+O objetivo do **Fut Street 2** é recompilação estática do código original de
+FIFA Street 2 do Xbox original para PC, não uma recriação do gameplay.
+Leia primeiro [direção e limites](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+Esta atualização substitui a definição histórica de reimplementação .NET
+como produto final, sem fingir que a recompilação já ocorreu. Stack do núcleo
+e política de GPU/áudio pendem de confirmação; não adotar runtime de terceiros
+nem executar o XBE enquanto esse escopo não estiver definido. `NOT_READY`.
+
 Continue o projeto FIFA Street 2 no workspace `D:\projeto zeta` até que os
 gates de renderização, assets, gameplay e áudio estejam integrados e
 verificados.
@@ -19,8 +29,11 @@ as alterações existentes e não use comandos destrutivos.
 
 ## Restrições
 
-- Faça uma reimplementação clean-room em .NET; não use emulação.
-- Não execute o XBE e não diga que o XBE foi recompilado.
+- Trabalhe em direção à recompilação estática do código original, preservando
+  o protótipo .NET como base auxiliar, não como substituto do jogo original.
+- Confirme a stack do núcleo e o alcance de "sem emulação" antes da integração
+  de runtime; até lá, não execute o XBE nem adote emulação de hardware.
+- Não diga que o XBE foi recompilado sem geração, build e validação comprovados.
 - Mantenha esta ISO somente para leitura:
   `D:\projeto zeta\FIFA Street 2 (USA) (En,Es).iso`.
 - Não invente bindings para UVs, materiais, skinning, rigging, animação,

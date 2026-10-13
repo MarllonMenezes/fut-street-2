@@ -1,5 +1,14 @@
 # FIFA Street 2 — handoff técnico para continuação em outro chat
 
+## Direção vigente — 2026-10-13
+
+O objetivo confirmado é **recompilação estática do código original para PC**,
+não recriar o jogo em .NET. Leia primeiro
+[direção e limites](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+O snapshot abaixo preserva o objetivo anterior como histórico. O protótipo
+.NET não é o jogo recompilado; XBE ainda não recompilado, `NOT_READY`.
+Stack do núcleo e política de GPU/áudio pendem de confirmação.
+
 Data do snapshot: 2026-10-08, horário de São Paulo  
 Workspace: `D:\projeto zeta`  
 Objetivo: reimplementação clean-room em .NET, sem emulação e sem executar o XBE.

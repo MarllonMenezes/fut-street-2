@@ -1,7 +1,17 @@
-# Fut Street 2 PC — clean-room runtime
+# Fut Street 2 PC — protótipo .NET e ferramentas de análise
 
-Este projeto é código novo para PC. Ele não executa o XBE, não depende de SDK
-Xbox e não modifica a imagem original.
+O objetivo do **Fut Street 2** é recompilação estática do código original de
+FIFA Street 2 do Xbox original para PC, não uma recriação do jogo.
+Veja [direção vigente](../docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+Esta pasta contém o protótipo authored .NET e ferramentas existentes; não
+contém o jogo original recompilado. Ela não executa o XBE, não depende de SDK
+Xbox e não modifica a imagem original. Estado global: `NOT_READY`.
+
+Os registros abaixo documentam a trajetória anterior de reimplementação e
+análise. Instruções históricas de manter o produto exclusivamente em .NET e
+de nunca recompilar o XBE não definem o novo objetivo. A stack do núcleo e
+a política de GPU/áudio continuam pendentes de confirmação, sem adoção
+automática de runtime ou emulação.
 
 O nome público do projeto e aplicativo é **Fut Street 2** desde 2026-10-13.
 Título Win32, banners .NET e metadados do produto usam esse nome. `fifa_pc`,

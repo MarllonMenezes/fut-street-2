@@ -1,5 +1,14 @@
 # FIFA Street 2 — status de recompilação
 
+## Direção vigente — 2026-10-13
+
+Objetivo: **recompilação estática do código original para PC**, não recriação
+do gameplay. Estado real: **XBE ainda não recompilado; `NOT_READY`**.
+O protótipo authored .NET e seus subgates não demonstram execução do original.
+Leia [direção e limites](FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+Os registros abaixo são históricos; stack do núcleo e política de GPU/áudio
+pendem de confirmação.
+
 ## Etapa 1.07 — controle de nomes EVT contra o universo de áudio
 
 `fifa_pc/Runtime/AudioEventNameAssetTextSearchAudit.cs` e `tools/analysis/audio_event_name_asset_text_search_control.py` foram integrados à matriz, ao self-test e ao `ProjectReadinessAudit`. A busca streaming usa os `17` nomes candidatos reparseados do índice textual de `data/audio/eventspa.evt` e cobre os `60` assets restantes: `60/60` válidos, `1.737.085.606` bytes, `0` pares asset/nome com hit e `0` ocorrências; o controle independente reconcilia `1.020/1.020` linhas sem hit e `0` duplicidades.

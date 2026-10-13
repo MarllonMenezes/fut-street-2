@@ -1,5 +1,15 @@
 # FIFA Street 2 — estado real e plano de otimização
 
+## Atualização de direção — 2026-10-13
+
+O usuário confirmou recompilação estática do código original como objetivo,
+não uma recriação em .NET. Leia
+[direção vigente](FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+O plano abaixo preserva decisões do escopo anterior: a restrição de usar
+XboxRecomp somente para análise não é a definição do produto desejado.
+Nenhum runtime foi adotado por esta atualização; stack e política de GPU/áudio
+pendem de confirmação. XBE ainda não recompilado; `NOT_READY`.
+
 Data da avaliação inicial: 2026-10-09, America/Sao_Paulo.
 Pesquisa e aplicação mais recentes: 2026-10-13;
 ver [pesquisa de aceleração e etapa 1.26](FIFA_STREET_2_ACELERACAO_PESQUISA_2026-10-13.md).

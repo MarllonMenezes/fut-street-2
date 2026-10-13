@@ -1,8 +1,14 @@
 # Publicação do Fut Street 2 no GitHub
 
-Escopo do repositório: fontes clean-room .NET, ferramentas próprias de
-análise/teste e documentação de continuidade. Estado do projeto: `NOT_READY`.
-Não é uma distribuição do jogo original nem execução/recompilação do XBE.
+Objetivo público vigente: **recompilação estática de FIFA Street 2 do Xbox
+original para PC**, não uma recriação do gameplay. Estado: `NOT_READY`;
+a recompilação do código original ainda não foi implementada nem validada.
+Veja [direção vigente](FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+
+Conteúdo atual do repositório: protótipo authored .NET, ferramentas próprias
+de análise/teste e documentação de continuidade. Não é uma distribuição do
+jogo original nem um port recompilado já funcional. Os comandos abaixo
+validam a base .NET existente, não a execução do código original.
 
 ## Arquivos que não são publicados
 

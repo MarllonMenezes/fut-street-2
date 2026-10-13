@@ -1,5 +1,14 @@
 # FIFA Street 2 — handoff para novo chat
 
+## Direção vigente — 2026-10-13
+
+O objetivo confirmado é **recompilação estática do código original para PC**,
+não recriar o jogo em .NET. Leia primeiro
+[direção e limites](docs/FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+Os registros abaixo são históricos. O protótipo .NET não é o jogo
+recompilado; XBE ainda não recompilado, readiness `NOT_READY`.
+Stack do núcleo e política de GPU/áudio pendem de confirmação.
+
 ## Etapa 1.07 — controle independente de nomes EVT em todos os assets de áudio — 2026-10-08
 
 `Runtime/AudioEventNameAssetTextSearchAudit.cs` adiciona `audio-event-name-asset-text-search-audit`, integrado à matriz, ao self-test e ao `ProjectReadinessAudit`. Foram reparseados `17` nomes do índice textual de `eventspa.evt` e buscados como ASCII exato nos `60` assets de `data/audio` fora do EVT: `60/60` válidos, `1.737.085.606` bytes, `0` pares asset/nome com hit e `0` ocorrências.

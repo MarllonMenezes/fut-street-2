@@ -1,5 +1,15 @@
 # FIFA Street 2 — pesquisa de aceleração e aplicação
 
+## Atualização de direção — 2026-10-13
+
+Esta pesquisa documenta o escopo anterior de reimplementação .NET. O objetivo
+agora confirmado é recompilação estática do código original para PC, não
+recriação do gameplay. Leia
+[direção vigente](FUT_STREET_2_DIRECAO_RECOMPILACAO.md).
+As decisões históricas abaixo não constituem adoção nem rejeição definitiva
+do runtime XboxRecomp no novo escopo. Stack e política de GPU/áudio pendem de
+confirmação; XBE ainda não recompilado; `NOT_READY`.
+
 Pesquisa em 2026-10-13, America/Sao_Paulo. Objetivo: reduzir o custo das
 descobertas que bloqueiam a reimplementação .NET. Os critérios dos gates e
 a política de acesso somente leitura à ISO permanecem vigentes.
