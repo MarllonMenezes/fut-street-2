@@ -14,6 +14,26 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.34
+
+O release 2.34 fecha um gate de fronteira dos produtores para os dois
+callbacks que continuam sem destino runtime provado. No callback de campo de
+objeto, o único caller direto observado passa o objeto derivado de
+`MEM32(ebp + 8)`, não escreve localmente em `+0x584` e deixa `8` writers
+candidatos fora do subgrafo direto. No callback de registro indexado, os `2`
+callers diretos passam o frame `ebp - 0x10`; não há escrita direta observada no
+campo de tabela `+0x8`, há `2` escritas no índice `+0xC`, e o inicializador da
+raiz cobre `32` registros com o campo de destino zerado.
+
+Essa fronteira é verificável, mas a identidade entre a raiz inicializada e o
+objeto consumido pelo callback indexado continua não provada; os `47` writers
+indexados fora do subgrafo seguem candidatos sem binding. Portanto o release
+não resolve nenhum destino, não implementa semântica de objeto/tabela e não
+afirma execução original. A suíte Python passou em `114/114`, a prontidão
+permanece `NOT_READY` e a estimativa conservadora do PoC jogável continua em
+aproximadamente `31% concluído / 69% restante`. A análise permanece estática e
+não executa o XBE.
+
 ## Estado verificável — release 2.33
 
 O release 2.33 adiciona ao auditor um gate conservador para os `7` callbacks

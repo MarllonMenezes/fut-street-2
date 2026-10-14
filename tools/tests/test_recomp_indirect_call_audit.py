@@ -11,6 +11,7 @@ from pathlib import Path
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
     classify_dynamic_callback_initialization,
+    recover_dynamic_callback_producer_boundary,
     recover_dynamic_callback_caller_provenance,
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
@@ -217,6 +218,79 @@ void sub_00001020(void)
                 "runtime-object-field-initialization-unproven",
                 "runtime-indexed-record-initialization-unproven",
             ],
+        )
+        self.assertEqual(result["semantics"], "not-claimed")
+
+    def test_recovers_dynamic_callback_producer_boundary_without_alias_claim(
+        self,
+    ) -> None:
+        result = recover_dynamic_callback_producer_boundary(
+            [
+                {
+                    "classification": "dynamic-object-field-target",
+                    "call_site": "0x2000",
+                },
+                {
+                    "classification": "dynamic-indexed-record-target",
+                    "call_site": "0x2010",
+                },
+            ],
+            [
+                {
+                    "caller": "0x2100",
+                    "caller_name": "sub_00002100",
+                    "source": "recomp_0000.c:10",
+                    "target": "0x2200",
+                    "object_push": {
+                        "operand": "edi",
+                        "source_assignment": {"rhs": "MEM32(ebp + 8)"},
+                    },
+                    "fields": [{"field_offset": "0x584", "writes": []}],
+                }
+            ],
+            [
+                {
+                    "object_pointer_expression": "ebp + -16",
+                    "container_fields": [
+                        {"field_offset": "0x8", "writes": []},
+                        {"field_offset": "0xC", "writes": [{"source": "a"}]},
+                    ],
+                },
+                {
+                    "object_pointer_expression": "ebp + -16",
+                    "container_fields": [
+                        {"field_offset": "0x8", "writes": []},
+                        {"field_offset": "0xC", "writes": [{"source": "b"}]},
+                    ],
+                },
+            ],
+            {"status": "verified-indexed-callback-frame-provenance", "verified_sites": 2},
+            {"status": "verified-bounded-indexed-table-initializer-shape"},
+            {"status": "verified-bounded-no-root-reference-in-writer-function-bodies"},
+            {
+                "dynamic-object-field-target": [{"source": "outside:1"}],
+                "dynamic-indexed-record-target": [{"source": "outside:2"}],
+            },
+        )
+
+        self.assertEqual(
+            result["status"],
+            "verified-bounded-dynamic-callback-producer-boundary",
+        )
+        self.assertEqual(
+            result["object_callback"]["status"],
+            "verified-object-callback-parameter-boundary",
+        )
+        self.assertEqual(
+            result["object_callback"]["outside_direct_writer_sites"], 1
+        )
+        self.assertEqual(
+            result["indexed_callback"]["status"],
+            "verified-indexed-callback-frame-field-boundary",
+        )
+        self.assertEqual(
+            result["indexed_callback"]["direct_container_field_write_counts"],
+            {"0x8": 0, "0xC": 2},
         )
         self.assertEqual(result["semantics"], "not-claimed")
 

@@ -3739,6 +3739,143 @@ def classify_dynamic_callback_initialization(
     }
 
 
+def recover_dynamic_callback_producer_boundary(
+    classified: list[dict[str, Any]],
+    object_field_provenance: list[dict[str, Any]],
+    indexed_container_provenance: list[dict[str, Any]],
+    indexed_frame_provenance: dict[str, Any],
+    indexed_table_initialization: dict[str, Any],
+    indexed_writer_root_link_provenance: dict[str, Any],
+    dynamic_target_outside_direct_writers: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    """Join direct caller shapes with bounded producer-side evidence.
+
+    The result describes which fields and arguments are observed immediately
+    before each unresolved callback consumer.  It does not prove object
+    identity, interprocedural dominance, allocator behavior, or a callback
+    target.  In particular, an initialized indexed-table root is kept separate
+    from the frame object passed to the consumer until a root link is proven.
+    """
+    object_sites = [
+        row
+        for row in classified
+        if row.get("classification") == "dynamic-object-field-target"
+    ]
+    indexed_sites = [
+        row
+        for row in classified
+        if row.get("classification") == "dynamic-indexed-record-target"
+    ]
+
+    object_source_rows: list[dict[str, Any]] = []
+    for row in object_field_provenance:
+        object_push = row.get("object_push", {})
+        source_assignment = object_push.get("source_assignment", {})
+        source_rhs = re.sub(r"\s+", "", str(source_assignment.get("rhs", "")))
+        source_status = (
+            "caller-argument-object-observed"
+            if source_rhs.lower() == "mem32(ebp+8)"
+            else "caller-object-source-not-parameter-proven"
+        )
+        field_write_sites = sum(
+            len(field.get("writes", [])) for field in row.get("fields", [])
+        )
+        object_source_rows.append(
+            {
+                "caller": row.get("caller"),
+                "caller_name": row.get("caller_name", ""),
+                "source": row.get("source"),
+                "target": row.get("target"),
+                "object_operand": object_push.get("operand"),
+                "object_source_assignment": source_assignment,
+                "object_source_status": source_status,
+                "field_write_sites": field_write_sites,
+            }
+        )
+
+    object_source_statuses = Counter(
+        row["object_source_status"] for row in object_source_rows
+    )
+    object_field_write_sites = sum(
+        row["field_write_sites"] for row in object_source_rows
+    )
+    object_outside_writer_sites = len(
+        dynamic_target_outside_direct_writers.get(
+            "dynamic-object-field-target", []
+        )
+    )
+    object_status = (
+        "verified-object-callback-parameter-boundary"
+        if len(object_sites) == 1
+        and object_source_rows
+        and object_source_statuses["caller-argument-object-observed"]
+        == len(object_source_rows)
+        and object_field_write_sites == 0
+        else "incomplete-object-callback-parameter-boundary"
+    )
+
+    indexed_field_write_counts = Counter()
+    indexed_callers_with_frame = 0
+    for row in indexed_container_provenance:
+        fields = row.get("container_fields", [])
+        if row.get("object_pointer_expression") == "ebp + -16":
+            indexed_callers_with_frame += 1
+        for field in fields:
+            indexed_field_write_counts[str(field.get("field_offset"))] += len(
+                field.get("writes", [])
+            )
+
+    indexed_frame_sites = int(indexed_frame_provenance.get("verified_sites", 0))
+    indexed_table_init_status = indexed_table_initialization.get("status")
+    indexed_root_link_status = indexed_writer_root_link_provenance.get(
+        "status", "not-assessed"
+    )
+    indexed_status = (
+        "verified-indexed-callback-frame-field-boundary"
+        if len(indexed_sites) == 1
+        and indexed_callers_with_frame == len(indexed_container_provenance)
+        and indexed_frame_sites == indexed_callers_with_frame
+        and indexed_field_write_counts["0x8"] == 0
+        and indexed_field_write_counts["0xC"] > 0
+        and indexed_table_init_status
+        == "verified-bounded-indexed-table-initializer-shape"
+        else "incomplete-indexed-callback-frame-field-boundary"
+    )
+
+    return {
+        "status": (
+            "verified-bounded-dynamic-callback-producer-boundary"
+            if object_status.startswith("verified-")
+            and indexed_status.startswith("verified-")
+            else "incomplete-bounded-dynamic-callback-producer-boundary"
+        ),
+        "semantics": "not-claimed",
+        "object_callback": {
+            "status": object_status,
+            "callback_sites": len(object_sites),
+            "direct_caller_sites": len(object_source_rows),
+            "object_source_status_counts": dict(object_source_statuses),
+            "direct_field_write_sites": object_field_write_sites,
+            "outside_direct_writer_sites": object_outside_writer_sites,
+            "callers": object_source_rows,
+        },
+        "indexed_callback": {
+            "status": indexed_status,
+            "callback_sites": len(indexed_sites),
+            "direct_caller_sites": len(indexed_container_provenance),
+            "direct_frame_provenance_sites": indexed_frame_sites,
+            "direct_container_field_write_counts": dict(indexed_field_write_counts),
+            "table_initialization_status": indexed_table_init_status,
+            "table_root_link_status": indexed_root_link_status,
+            "outside_direct_writer_sites": len(
+                dynamic_target_outside_direct_writers.get(
+                    "dynamic-indexed-record-target", []
+                )
+            ),
+        },
+    }
+
+
 def recover_dynamic_callback_caller_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -5568,6 +5705,15 @@ def audit(
         dynamic_indexed_writer_root_link_provenance,
         dynamic_target_outside_direct_writers,
     )
+    dynamic_callback_producer_boundary = recover_dynamic_callback_producer_boundary(
+        classified,
+        dynamic_callback_object_field_provenance,
+        dynamic_callback_container_field_provenance,
+        dynamic_indexed_callback_frame_provenance,
+        indexed_callback_table_initialization,
+        dynamic_indexed_writer_root_link_provenance,
+        dynamic_target_outside_direct_writers,
+    )
     dynamic_callback_initialization_by_site = {
         item["call_site"]: item
         for item in dynamic_callback_initialization["sites"]
@@ -6408,6 +6554,53 @@ def audit(
         "dynamic_callback_initialization_semantics": (
             dynamic_callback_initialization["semantics"]
         ),
+        "dynamic_callback_producer_boundary_status": (
+            dynamic_callback_producer_boundary["status"]
+        ),
+        "dynamic_callback_producer_boundary_semantics": (
+            dynamic_callback_producer_boundary["semantics"]
+        ),
+        "dynamic_object_callback_producer_status": (
+            dynamic_callback_producer_boundary["object_callback"]["status"]
+        ),
+        "dynamic_object_callback_direct_caller_sites": (
+            dynamic_callback_producer_boundary["object_callback"][
+                "direct_caller_sites"
+            ]
+        ),
+        "dynamic_object_callback_direct_field_write_sites": (
+            dynamic_callback_producer_boundary["object_callback"][
+                "direct_field_write_sites"
+            ]
+        ),
+        "dynamic_object_callback_outside_direct_writer_sites": (
+            dynamic_callback_producer_boundary["object_callback"][
+                "outside_direct_writer_sites"
+            ]
+        ),
+        "dynamic_indexed_callback_producer_status": (
+            dynamic_callback_producer_boundary["indexed_callback"]["status"]
+        ),
+        "dynamic_indexed_callback_direct_caller_sites": (
+            dynamic_callback_producer_boundary["indexed_callback"][
+                "direct_caller_sites"
+            ]
+        ),
+        "dynamic_indexed_callback_direct_frame_provenance_sites": (
+            dynamic_callback_producer_boundary["indexed_callback"][
+                "direct_frame_provenance_sites"
+            ]
+        ),
+        "dynamic_indexed_callback_direct_container_field_write_counts": (
+            dynamic_callback_producer_boundary["indexed_callback"][
+                "direct_container_field_write_counts"
+            ]
+        ),
+        "dynamic_indexed_callback_table_root_identity_status": (
+            dynamic_callback_producer_boundary["indexed_callback"][
+                "table_root_link_status"
+            ]
+        ),
         "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
         "dynamic_target_direct_writer_counts": dynamic_writer_counts,
         "dynamic_target_direct_writer_value_kinds": dynamic_writer_value_kinds,
@@ -6948,6 +7141,7 @@ def audit(
         ),
         "dynamic_source_provenance": dynamic_source_provenance,
         "dynamic_callback_initialization": dynamic_callback_initialization,
+        "dynamic_callback_producer_boundary": dynamic_callback_producer_boundary,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,
         "kernel_return_use_provenance": kernel_return_use_provenance,
