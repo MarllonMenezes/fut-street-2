@@ -43,6 +43,8 @@ void xbe_entry_point(void)
 {
     { uint32_t _icall_target = MEM32(0x00011010); PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
     { uint32_t _icall_target = eax; PUSH32(esp, 0x00001009u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001009u); }
+    edi = MEM32(0x00011010);
+    { uint32_t _icall_target = edi; PUSH32(esp, 0x0000100Au); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Au); }
 }
 void sub_00001020(void)
 {
@@ -62,11 +64,13 @@ void sub_00001020(void)
 
         summary = result["summary"]
         self.assertEqual(summary["directly_reachable_functions"], 2)
-        self.assertEqual(summary["indirect_call_sites"], 2)
-        self.assertEqual(summary["kernel_thunk_slot_sites"], 1)
+        self.assertEqual(summary["indirect_call_sites"], 3)
+        self.assertEqual(summary["kernel_thunk_slot_sites"], 2)
+        self.assertEqual(summary["linear_register_alias_sites"], 1)
         self.assertEqual(summary["dynamic_register_or_object_targets"], 1)
         self.assertEqual(summary["kernel_thunk_table_entries"], 1)
         self.assertEqual(result["sites"][0]["kernel_ordinal"], 0x42)
+        self.assertEqual(result["sites"][2]["classification_source"], "linear-register-alias")
 
 
 if __name__ == "__main__":

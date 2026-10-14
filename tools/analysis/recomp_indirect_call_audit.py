@@ -24,6 +24,12 @@ except ImportError:  # pragma: no cover - supports direct script execution
 
 
 FUNCTION_SYMBOL_RE = re.compile(r"^void\s+([A-Za-z_][A-Za-z0-9_]*)\(void\)")
+REGISTER_ASSIGNMENT_RE = re.compile(
+    r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*(?P<rhs>[^;]+);"
+)
+REGISTER_WRITE_RE = re.compile(
+    r"\b(?P<register>eax|ebx|ecx|edx|esi|edi)\s*(?:\+\+|--|\+=|-=|&=|\|=)"
+)
 INDIRECT_CALL_RE = re.compile(
     r"_icall_target\s*=\s*(?P<expression>[^;]+);.*?"
     r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*0x(?P<site>[0-9A-Fa-f]{8})u\)"
@@ -138,26 +144,42 @@ def recover_indirect_sites(
     sites: list[dict[str, Any]] = []
     for source_path in sorted(generated_dir.rglob("recomp_*.c")):
         current: int | None = None
+        register_aliases: dict[str, int] = {}
         for line_number, line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         ):
             symbol_match = FUNCTION_SYMBOL_RE.match(line)
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
+                register_aliases = {}
             if current is None or current not in directly_reachable:
                 continue
             call_match = INDIRECT_CALL_RE.search(line)
-            if call_match is None:
-                continue
-            sites.append(
-                {
+            if call_match is not None:
+                expression = call_match.group("expression").strip()
+                row = {
                     "function": f"0x{current:08X}",
                     "function_name": str(function_by_address[current].get("name", "")),
                     "call_site": f"0x{int(call_match.group('site'), 16):08X}",
-                    "target_expression": call_match.group("expression").strip(),
+                    "target_expression": expression,
                     "source": f"{source_path.name}:{line_number}",
                 }
-            )
+                if expression in register_aliases:
+                    row["aliased_fixed_slot"] = f"0x{register_aliases[expression]:08X}"
+                    row["target_alias_register"] = expression
+                sites.append(row)
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match:
+                register = assignment_match.group("register")
+                rhs = assignment_match.group("rhs").strip()
+                fixed_match = FIXED_SLOT_RE.fullmatch(rhs)
+                if fixed_match:
+                    register_aliases[register] = int(fixed_match.group("address"), 16)
+                else:
+                    register_aliases.pop(register, None)
+            for write_match in REGISTER_WRITE_RE.finditer(line):
+                register_aliases.pop(write_match.group("register"), None)
     if not sites:
         raise ValueError("no indirect calls found in directly reachable generated code")
     return sites
@@ -178,13 +200,16 @@ def classify_sites(
         row = dict(site)
         expression = site["target_expression"]
         fixed_match = FIXED_SLOT_RE.fullmatch(expression)
-        if fixed_match is None:
+        aliased_slot = site.get("aliased_fixed_slot")
+        if fixed_match is None and aliased_slot is None:
             row["classification"] = "dynamic-register-or-object-target"
             rows.append(row)
             continue
 
-        slot = int(fixed_match.group("address"), 16)
+        slot = int(fixed_match.group("address"), 16) if fixed_match else int(str(aliased_slot), 0)
         row["fixed_slot"] = f"0x{slot:08X}"
+        if fixed_match is None:
+            row["classification_source"] = "linear-register-alias"
         file_offset = _file_offset(sections, len(data), slot)
         raw_value = _u32(data, file_offset) if file_offset is not None else None
         row["raw_value"] = None if raw_value is None else f"0x{raw_value:08X}"
@@ -225,6 +250,7 @@ def audit(
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
+    aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
         "entry_point": f"0x{entry:08X}",
         "directly_reachable_functions": len(directly_reachable),
@@ -233,6 +259,7 @@ def audit(
         "functions_with_indirect_calls": len({row["function"] for row in classified}),
         "fixed_slot_sites": len(fixed_slots),
         "unique_fixed_slots": len({row["fixed_slot"] for row in fixed_slots}),
+        "linear_register_alias_sites": len(aliased_sites),
         "kernel_thunk_slot_sites": len(kernel_slots),
         "unique_kernel_thunk_slots": len({row["fixed_slot"] for row in kernel_slots}),
         "dynamic_register_or_object_targets": classifications[
