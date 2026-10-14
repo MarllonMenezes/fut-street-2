@@ -1,0 +1,77 @@
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+index e6a8949..2f68c6b 100644
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1502,6 +1502,21 @@ class Lifter:
+             return self._lift_ret(insn, ops)
+         if m == "jmp":
+             return self._lift_jmp(insn, ops)
++        if m == "ljmp":
++            # The only far jump in this image reloads selector 8 and targets
++            # the very next guest instruction.  On the flat host there is no
++            # control-flow change to reproduce; SGDT/CLI/STI around the site
++            # remain runtime-visible because the descriptor/interrupt effects
++            # are not being claimed here.
++            if (len(ops) == 2
++                    and all(op.type == "imm" for op in ops)
++                    and ops[0].imm == 8
++                    and ops[1].imm == insn.end_address):
++                return [
++                    f"/* ljmp 0x8:{ops[1].imm:08X}: proven flat-host fall-through; "
++                    "CS/GDT reload is not modeled */"
++                ]
++            return self._unimplemented(insn, m)
+         if insn.is_cond_jump:
+             return self._lift_jcc(insn)
+
+diff --git a/tools/recomp/test_lifter_ljmp.py b/tools/recomp/test_lifter_ljmp.py
+new file mode 100644
+index 0000000..75e77a6
+--- /dev/null
++++ b/tools/recomp/test_lifter_ljmp.py
+@@ -0,0 +1,45 @@
++"""Only the proven sequential flat-host far jump may be lowered."""
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter
++
++
++def _imm(value):
++    return Operand(type="imm", imm=value)
++
++
++def _ljmp(address, size=7, selector=8, target=None):
++    if target is None:
++        target = address + size
++    return Instruction(
++        address, size, "ljmp", f"{selector}:{target:08x}", "",
++        operands=[_imm(selector), _imm(target)],
++    )
++
++
++def test_same_target_selector_eight_is_flat_fallthrough():
++    lifter = Lifter()
++    out = " ".join(lifter.lift_instruction(_ljmp(0x00253FE9)))
++
++    assert "proven flat-host fall-through" in out
++    assert "CS/GDT reload is not modeled" in out
++    assert "RECOMP_UNIMPL" not in out
++    assert lifter.unimplemented == {}
++
++
++def test_non_sequential_far_jump_remains_visible():
++    lifter = Lifter()
++    out = " ".join(lifter.lift_instruction(
++        _ljmp(0x00253FE9, target=0x00254010)))
++
++    assert 'RECOMP_UNIMPL("ljmp 8:00254010", 0x00253FE9u);' in out
++    assert lifter.unimplemented == {"ljmp": [0x00253FE9]}
++
++
++def test_other_code_selector_remains_visible():
++    lifter = Lifter()
++    out = " ".join(lifter.lift_instruction(
++        _ljmp(0x00253FE9, selector=0x10)))
++
++    assert "RECOMP_UNIMPL" in out
++    assert lifter.unimplemented == {"ljmp": [0x00253FE9]}
