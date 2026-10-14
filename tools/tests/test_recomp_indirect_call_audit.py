@@ -78,6 +78,53 @@ void sub_00001020(void)
         self.assertEqual(result["sites"][0]["kernel_ordinal"], 0x42)
         self.assertEqual(result["sites"][2]["classification_source"], "linear-register-alias")
 
+    def test_preserves_dynamic_memory_provenance(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    eax = MEM32(ecx + 0x584);
+    { uint32_t _icall_target = eax; PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
+    { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); PUSH32(esp, 0x00001009u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001009u); }
+    { uint32_t _icall_target = MEM32(ecx); PUSH32(esp, 0x0000100Au); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Au); }
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            functions_path = root / "functions.json"
+            generated = root / "generated"
+            xbe_path = root / "default.xbe"
+            generated.mkdir()
+            functions_path.write_text(json.dumps(functions), encoding="utf-8")
+            (generated / "recomp_0000.c").write_text(generated_source, encoding="utf-8")
+            self._write_fixture_xbe(xbe_path)
+
+            result = audit(functions_path, generated, xbe_path, 0x1000)
+
+        self.assertEqual(
+            result["summary"]["dynamic_target_family_counts"],
+            {
+                "dynamic-memory-target": 1,
+                "dynamic-object-field-target": 1,
+                "dynamic-indexed-record-target": 1,
+            },
+        )
+        self.assertEqual(
+            result["sites"][0]["target_source_expression"],
+            "MEM32(ecx + 0x584)",
+        )
+        self.assertEqual(
+            result["sites"][0]["classification"],
+            "dynamic-object-field-target",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

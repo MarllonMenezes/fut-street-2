@@ -145,6 +145,7 @@ def recover_indirect_sites(
     for source_path in sorted(generated_dir.rglob("recomp_*.c")):
         current: int | None = None
         register_aliases: dict[str, int] = {}
+        register_memory_sources: dict[str, str] = {}
         for line_number, line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         ):
@@ -152,6 +153,7 @@ def recover_indirect_sites(
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
                 register_aliases = {}
+                register_memory_sources = {}
                 prcb_cache_sequence_pending = False
                 prcb_cache_loaded = False
                 prcb_cache_guard_checked = False
@@ -182,6 +184,8 @@ def recover_indirect_sites(
                 if expression in register_aliases:
                     row["aliased_fixed_slot"] = f"0x{register_aliases[expression]:08X}"
                     row["target_alias_register"] = expression
+                if expression in register_memory_sources:
+                    row["target_source_expression"] = register_memory_sources[expression]
                 if (
                     expression == "MEM32(eax + 0x14)"
                     and prcb_cache_guard_checked
@@ -196,13 +200,36 @@ def recover_indirect_sites(
                 fixed_match = FIXED_SLOT_RE.fullmatch(rhs)
                 if fixed_match:
                     register_aliases[register] = int(fixed_match.group("address"), 16)
+                    register_memory_sources.pop(register, None)
+                elif rhs.startswith("MEM32(") and rhs.endswith(")"):
+                    register_aliases.pop(register, None)
+                    register_memory_sources[register] = rhs
                 else:
                     register_aliases.pop(register, None)
+                    register_memory_sources.pop(register, None)
             for write_match in REGISTER_WRITE_RE.finditer(line):
-                register_aliases.pop(write_match.group("register"), None)
+                register = write_match.group("register")
+                register_aliases.pop(register, None)
+                register_memory_sources.pop(register, None)
     if not sites:
         raise ValueError("no indirect calls found in directly reachable generated code")
     return sites
+
+
+def _dynamic_target_family(site: dict[str, Any]) -> str:
+    """Name the conservative data-flow shape, without resolving its value."""
+    if site.get("prcb_cache_guarded"):
+        return "prcb-guarded-dynamic-callback"
+    source_expression = site.get(
+        "target_source_expression", site["target_expression"]
+    )
+    if source_expression == "MEM32(ecx + 0x584)":
+        return "dynamic-object-field-target"
+    if source_expression == "MEM32(ebx + esi * 4 + 8)":
+        return "dynamic-indexed-record-target"
+    if source_expression.startswith("MEM32("):
+        return "dynamic-memory-target"
+    return "dynamic-register-or-object-target"
 
 
 def classify_sites(
@@ -226,7 +253,7 @@ def classify_sites(
         fixed_match = FIXED_SLOT_RE.fullmatch(expression)
         aliased_slot = site.get("aliased_fixed_slot")
         if fixed_match is None and aliased_slot is None:
-            row["classification"] = "dynamic-register-or-object-target"
+            row["classification"] = _dynamic_target_family(site)
             rows.append(row)
             continue
 
@@ -286,15 +313,36 @@ def audit(
         "linear_register_alias_sites": len(aliased_sites),
         "kernel_thunk_slot_sites": len(kernel_slots),
         "unique_kernel_thunk_slots": len({row["fixed_slot"] for row in kernel_slots}),
-        "dynamic_register_or_object_targets": classifications[
-            "dynamic-register-or-object-target"
-        ],
+        "dynamic_register_or_object_targets": sum(
+            classifications[name]
+            for name in (
+                "dynamic-register-or-object-target",
+                "dynamic-memory-target",
+                "dynamic-object-field-target",
+                "dynamic-indexed-record-target",
+            )
+        ),
+        "dynamic_target_family_counts": {
+            name: classifications[name]
+            for name in (
+                "dynamic-memory-target",
+                "dynamic-object-field-target",
+                "dynamic-indexed-record-target",
+                "dynamic-register-or-object-target",
+                "prcb-guarded-dynamic-callback",
+            )
+            if classifications[name]
+        },
         "prcb_guarded_dynamic_callback_sites": classifications[
             "prcb-guarded-dynamic-callback"
         ],
         "unresolved_dynamic_sites": classifications[
             "dynamic-register-or-object-target"
-        ] + classifications["prcb-guarded-dynamic-callback"],
+        ]
+        + classifications["dynamic-memory-target"]
+        + classifications["dynamic-object-field-target"]
+        + classifications["dynamic-indexed-record-target"]
+        + classifications["prcb-guarded-dynamic-callback"],
         "fixed_known_function_pointer_sites": classifications[
             "fixed-known-function-pointer"
         ],
