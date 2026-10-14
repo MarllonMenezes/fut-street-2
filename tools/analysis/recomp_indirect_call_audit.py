@@ -3581,6 +3581,164 @@ def recover_prcb_callback_cache_provenance(
     return evidence
 
 
+def classify_dynamic_callback_initialization(
+    classified: list[dict[str, Any]],
+    prcb_host_layout_evidence: dict[str, Any] | None,
+    indexed_callback_frame_seed_provenance: dict[str, Any] | None,
+    indexed_callback_root_link_provenance: dict[str, Any] | None,
+    dynamic_target_outside_direct_writers: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Classify bounded initial-state evidence for unresolved callbacks.
+
+    This is deliberately not a target resolver.  A zero value in the input
+    image, or a zeroed host cache, is recorded as a conservative quiescence
+    observation only.  Object and indexed-record callbacks remain
+    runtime-initialization-unproven even when their surrounding data layout is
+    understood.
+    """
+    dynamic_classes = {
+        "dynamic-memory-target",
+        "dynamic-object-field-target",
+        "dynamic-indexed-record-target",
+        "prcb-guarded-dynamic-callback",
+        "dynamic-register-or-object-target",
+    }
+    outside_writers = dynamic_target_outside_direct_writers or {}
+    frame_seed = indexed_callback_frame_seed_provenance or {}
+    root_link = indexed_callback_root_link_provenance or {}
+    host_prcb = prcb_host_layout_evidence or {}
+    required_prcb_zero_block_bytes = 0x250 + 0x14 + 4
+    host_prcb_zeroed = (
+        host_prcb.get("status") == "verified-zeroed-fake-prcb-cache-layout"
+        and host_prcb.get("fake_prcb_va") is not None
+        and int(host_prcb.get("zero_block_bytes") or 0) >= required_prcb_zero_block_bytes
+        and host_prcb.get("fs_pointer_assignment_source") is not None
+    )
+
+    site_rows: list[dict[str, Any]] = []
+    for row in classified:
+        classification = row.get("classification")
+        if classification not in dynamic_classes:
+            continue
+
+        evidence: dict[str, Any] = {}
+        if classification == "dynamic-memory-target":
+            raw_values = row.get("target_memory_raw_values", {})
+            all_zero = bool(raw_values) and all(
+                value == "0x00000000" for value in raw_values.values()
+            )
+            guarded = "conditional_nonzero_guard_evidence" in row
+            no_direct_writer = row.get("direct_writer_status") == (
+                "no-proven-direct-writer"
+            )
+            evidence = {
+                "target_memory_raw_values": raw_values,
+                "nonzero_guard_observed": guarded,
+                "direct_writer_status": row.get("direct_writer_status"),
+                "outside_direct_writer_candidates": len(
+                    outside_writers.get("dynamic-memory-target", [])
+                ),
+            }
+            status = (
+                "static-image-zero-guarded"
+                if all_zero and guarded and no_direct_writer
+                else "runtime-memory-initialization-unproven"
+            )
+        elif classification == "prcb-guarded-dynamic-callback":
+            provenance = row.get("prcb_callback_cache_provenance", {})
+            shape_observed = provenance.get("status") == (
+                "prcb-cache-callback-field-shape-observed"
+            )
+            guarded = bool(provenance.get("guarded")) or (
+                "conditional_skip_evidence" in row
+            )
+            evidence = {
+                "host_layout_status": host_prcb.get("status"),
+                "host_fake_prcb_va": host_prcb.get("fake_prcb_va"),
+                "host_zero_block_bytes": host_prcb.get("zero_block_bytes"),
+                "required_zero_block_bytes": required_prcb_zero_block_bytes,
+                "callback_field_offset": provenance.get("callback_field_offset"),
+                "cache_offset": provenance.get("cache_offset"),
+                "callback_field_shape_status": provenance.get("status"),
+                "guarded": guarded,
+                "xbox_runtime_value_proven": False,
+            }
+            status = (
+                "host-fake-prcb-zeroed-guarded"
+                if host_prcb_zeroed and shape_observed and guarded
+                else "runtime-prcb-state-unproven"
+            )
+        elif classification == "dynamic-object-field-target":
+            evidence = {
+                "target_source_expression": row.get("target_source_expression"),
+                "direct_writer_status": row.get("direct_writer_status"),
+                "outside_direct_writer_candidates": len(
+                    outside_writers.get("dynamic-object-field-target", [])
+                ),
+            }
+            status = "runtime-object-field-initialization-unproven"
+        elif classification == "dynamic-indexed-record-target":
+            evidence = {
+                "frame_seed_status": frame_seed.get("status"),
+                "frame_seed_sites": frame_seed.get("site_count", 0),
+                "frame_seed_zero_guard_sites": frame_seed.get(
+                    "zero_guard_sites", 0
+                ),
+                "frame_seed_known_function_target_sites": frame_seed.get(
+                    "known_function_target_sites", 0
+                ),
+                "root_link_status": root_link.get("status"),
+                "outside_direct_writer_candidates": len(
+                    outside_writers.get("dynamic-indexed-record-target", [])
+                ),
+            }
+            status = "runtime-indexed-record-initialization-unproven"
+        else:
+            evidence = {
+                "target_expression": row.get("target_expression"),
+                "direct_writer_status": row.get("direct_writer_status"),
+            }
+            status = "dynamic-initialization-unclassified"
+
+        site_rows.append(
+            {
+                "call_site": row["call_site"],
+                "function": row["function"],
+                "function_name": row.get("function_name", ""),
+                "classification": classification,
+                "status": status,
+                "evidence": evidence,
+            }
+        )
+
+    class_counts = Counter(row["status"] for row in site_rows)
+    unclassified_sites = class_counts["dynamic-initialization-unclassified"]
+    return {
+        "status": (
+            "verified-conservative-dynamic-callback-initialization-classification"
+            if site_rows and not unclassified_sites
+            else "incomplete-conservative-dynamic-callback-initialization-classification"
+        ),
+        "site_count": len(site_rows),
+        "static_image_zero_guard_sites": class_counts[
+            "static-image-zero-guarded"
+        ],
+        "host_prcb_zero_guard_sites": class_counts[
+            "host-fake-prcb-zeroed-guarded"
+        ],
+        "runtime_initialization_unproven_sites": sum(
+            count
+            for status, count in class_counts.items()
+            if status.endswith("initialization-unproven")
+            or status == "runtime-prcb-state-unproven"
+        ),
+        "unclassified_sites": unclassified_sites,
+        "class_counts": dict(class_counts),
+        "semantics": "not-claimed",
+        "sites": site_rows,
+    }
+
+
 def recover_dynamic_callback_caller_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -5403,6 +5561,24 @@ def audit(
         )
         if observed_register_constants:
             row["kernel_register_constant_arguments"] = observed_register_constants
+    dynamic_callback_initialization = classify_dynamic_callback_initialization(
+        classified,
+        prcb_host_layout_evidence,
+        indexed_callback_frame_seed_provenance,
+        dynamic_indexed_writer_root_link_provenance,
+        dynamic_target_outside_direct_writers,
+    )
+    dynamic_callback_initialization_by_site = {
+        item["call_site"]: item
+        for item in dynamic_callback_initialization["sites"]
+    }
+    for row in classified:
+        initialization = dynamic_callback_initialization_by_site.get(
+            row["call_site"]
+        )
+        if initialization is not None:
+            row["dynamic_initialization_status"] = initialization["status"]
+            row["dynamic_initialization_evidence"] = initialization["evidence"]
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -6208,6 +6384,30 @@ def audit(
             if kernel_file_information_evidence is None
             else len(kernel_file_info_missing_rows)
         ),
+        "dynamic_callback_initialization_status": dynamic_callback_initialization[
+            "status"
+        ],
+        "dynamic_callback_initialization_sites": dynamic_callback_initialization[
+            "site_count"
+        ],
+        "dynamic_callback_static_image_zero_guard_sites": (
+            dynamic_callback_initialization["static_image_zero_guard_sites"]
+        ),
+        "dynamic_callback_host_prcb_zero_guard_sites": (
+            dynamic_callback_initialization["host_prcb_zero_guard_sites"]
+        ),
+        "dynamic_callback_runtime_initialization_unproven_sites": (
+            dynamic_callback_initialization["runtime_initialization_unproven_sites"]
+        ),
+        "dynamic_callback_initialization_unclassified_sites": (
+            dynamic_callback_initialization["unclassified_sites"]
+        ),
+        "dynamic_callback_initialization_class_counts": (
+            dynamic_callback_initialization["class_counts"]
+        ),
+        "dynamic_callback_initialization_semantics": (
+            dynamic_callback_initialization["semantics"]
+        ),
         "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
         "dynamic_target_direct_writer_counts": dynamic_writer_counts,
         "dynamic_target_direct_writer_value_kinds": dynamic_writer_value_kinds,
@@ -6747,6 +6947,7 @@ def audit(
             dynamic_object_field_writer_overlap_provenance
         ),
         "dynamic_source_provenance": dynamic_source_provenance,
+        "dynamic_callback_initialization": dynamic_callback_initialization,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,
         "kernel_return_use_provenance": kernel_return_use_provenance,

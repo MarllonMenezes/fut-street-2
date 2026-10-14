@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
+    classify_dynamic_callback_initialization,
     recover_dynamic_callback_caller_provenance,
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
@@ -132,6 +133,92 @@ void sub_00001020(void)
         self.assertEqual(summary["kernel_thunk_table_entries"], 1)
         self.assertEqual(result["sites"][0]["kernel_ordinal"], 0x42)
         self.assertEqual(result["sites"][2]["classification_source"], "linear-register-alias")
+
+    def test_classifies_dynamic_callback_initial_state_without_resolving_targets(
+        self,
+    ) -> None:
+        classified = [
+            {
+                "call_site": "0x1000",
+                "function": "0x1100",
+                "function_name": "sub_00001100",
+                "classification": "dynamic-memory-target",
+                "target_memory_raw_values": {
+                    "0x0030BC94": "0x00000000",
+                    "0x0030BC98": "0x00000000",
+                },
+                "conditional_nonzero_guard_evidence": {},
+                "direct_writer_status": "no-proven-direct-writer",
+            },
+            {
+                "call_site": "0x1010",
+                "function": "0x1110",
+                "function_name": "sub_00001110",
+                "classification": "prcb-guarded-dynamic-callback",
+                "conditional_skip_evidence": {},
+                "prcb_callback_cache_provenance": {
+                    "status": "prcb-cache-callback-field-shape-observed",
+                    "guarded": True,
+                    "cache_offset": "0x250",
+                    "callback_field_offset": "0x14",
+                },
+            },
+            {
+                "call_site": "0x1020",
+                "function": "0x1120",
+                "function_name": "sub_00001120",
+                "classification": "dynamic-object-field-target",
+                "target_source_expression": "MEM32(ecx + 0x584)",
+                "direct_writer_status": "no-proven-direct-writer",
+            },
+            {
+                "call_site": "0x1030",
+                "function": "0x1130",
+                "function_name": "sub_00001130",
+                "classification": "dynamic-indexed-record-target",
+            },
+        ]
+
+        result = classify_dynamic_callback_initialization(
+            classified,
+            {
+                "status": "verified-zeroed-fake-prcb-cache-layout",
+                "fake_prcb_va": "0x00761000",
+                "zero_block_bytes": 0x400,
+                "fs_pointer_assignment_source": "xbox_memory_layout.c:2169",
+            },
+            {
+                "status": "static-frame-seed-slot-candidates-observed",
+                "site_count": 3,
+                "zero_guard_sites": 3,
+                "known_function_target_sites": 3,
+            },
+            {"status": "verified-bounded-no-root-reference-in-writer-function-bodies"},
+            {
+                "dynamic-object-field-target": [{"source": "outside.c:1"}],
+                "dynamic-indexed-record-target": [{"source": "outside.c:2"}],
+            },
+        )
+
+        self.assertEqual(
+            result["status"],
+            "verified-conservative-dynamic-callback-initialization-classification",
+        )
+        self.assertEqual(result["site_count"], 4)
+        self.assertEqual(result["static_image_zero_guard_sites"], 1)
+        self.assertEqual(result["host_prcb_zero_guard_sites"], 1)
+        self.assertEqual(result["runtime_initialization_unproven_sites"], 2)
+        self.assertEqual(result["unclassified_sites"], 0)
+        self.assertEqual(
+            [row["status"] for row in result["sites"]],
+            [
+                "static-image-zero-guarded",
+                "host-fake-prcb-zeroed-guarded",
+                "runtime-object-field-initialization-unproven",
+                "runtime-indexed-record-initialization-unproven",
+            ],
+        )
+        self.assertEqual(result["semantics"], "not-claimed")
 
     def test_verifies_indirect_tail_switch_table_against_xbe(self) -> None:
         functions = [

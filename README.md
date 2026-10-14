@@ -14,6 +14,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.33
+
+O release 2.33 adiciona ao auditor um gate conservador para os `7` callbacks
+indiretos que ainda não têm destino final provado. Todos os `7/7` agora têm
+uma classe de estado inicial observável, sem converter valores zerados em
+bindings ou destinos inventados:
+
+- `1` alvo de memória está zerado no snapshot do XBE, com guard não-zero e sem
+  writer direto provado;
+- `4` callbacks dependem de campos do cache PRCB; o layout PRCB sintético do
+  host começa zerado e cobre os offsets observados, mas isso não prova o valor
+  que o kernel Xbox teria em runtime;
+- `2` continuam explicitamente sem inicialização runtime provada: `1` campo
+  de objeto em `+0x584` e `1` registro indexado.
+
+O gate comprova somente a classificação estática/conservadora (`1` snapshot
+quiescente, `4` quiescentes no layout inicial do host e `2` potencialmente
+inicializáveis em runtime). Ele não resolve os callbacks, não implementa o
+kernel Xbox e não afirma semântica original. A suíte Python passou em
+`113/113`, a prontidão permanece `NOT_READY` e a estimativa conservadora do
+PoC jogável continua em aproximadamente `31% concluído / 69% restante`. A
+análise permanece estática e não executa o XBE.
+
 ## Abordagem
 
 - Usar o [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) como base para análise e tradução estática do código Xbox x86 para C, com uma pilha de patches versionada em [`native_recomp/patches`](native_recomp/patches).
