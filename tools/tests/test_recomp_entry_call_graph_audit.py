@@ -46,6 +46,9 @@ class RecompEntryCallGraphAuditTests(unittest.TestCase):
             summary["unimplemented_sites_in_directly_reachable_function_scopes"], 1
         )
         self.assertEqual(
+            summary["unimplemented_sites_in_tail_augmented_function_scopes"], 1
+        )
+        self.assertEqual(
             summary["unimplemented_direct_reachable_site_addresses"],
             ["0x00001008"],
         )
@@ -54,11 +57,52 @@ class RecompEntryCallGraphAuditTests(unittest.TestCase):
             ["0x00002008"],
         )
         self.assertEqual(result["unimplemented_sites"][0]["text"], "fixture")
+        self.assertTrue(
+            result["unimplemented_sites"][0]["in_tail_augmented_function_scope"]
+        )
         self.assertEqual(
             result["unimplemented_sites"][0]["sources"],
             ["recomp_0000.c:1"],
         )
         self.assertEqual(result["missing_direct_reachable_translations"], [])
+
+    def test_tail_augmented_scope_exposes_unimplemented_target(self) -> None:
+        functions = [
+            {"start": "0x1000", "end": "0x1010", "calls_to": []},
+            {"start": "0x1020", "end": "0x1030", "calls_to": []},
+        ]
+        generated_source = (
+            "void sub_00001000(void) {"
+            " return; /* tail jmp 0x00001020 */ }\n"
+            "void sub_00001020(void) {"
+            " RECOMP_UNIMPL(\"fixture-tail\", 0x00001024u); }\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            functions_path = root / "functions.json"
+            generated = root / "generated"
+            generated.mkdir()
+            functions_path.write_text(json.dumps(functions), encoding="utf-8")
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+
+            result = audit(functions_path, generated, 0x1000)
+
+        summary = result["summary"]
+        self.assertEqual(summary["directly_reachable_functions"], 1)
+        self.assertEqual(summary["tail_augmented_directly_reachable_functions"], 2)
+        self.assertEqual(
+            summary["unimplemented_sites_in_directly_reachable_function_scopes"],
+            0,
+        )
+        self.assertEqual(
+            summary["unimplemented_sites_in_tail_augmented_function_scopes"], 1
+        )
+        self.assertEqual(
+            summary["tail_augmented_unimplemented_status"],
+            "unimplemented-sites-in-tail-augmented-scopes",
+        )
 
     def test_missing_translated_direct_function_is_reported(self) -> None:
         functions = [

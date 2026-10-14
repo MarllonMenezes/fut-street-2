@@ -315,6 +315,9 @@ def audit(
                 "in_directly_reachable_function_scope": any(
                     owner in reachable for owner in owners
                 ),
+                "in_tail_augmented_function_scope": any(
+                    owner in tail_augmented_reachable for owner in owners
+                ),
             }
         )
 
@@ -369,6 +372,9 @@ def audit(
         "unimplemented_sites_in_directly_reachable_function_scopes": sum(
             row["in_directly_reachable_function_scope"] for row in unimplemented_rows
         ),
+        "unimplemented_sites_in_tail_augmented_function_scopes": sum(
+            row["in_tail_augmented_function_scope"] for row in unimplemented_rows
+        ),
         "unimplemented_direct_reachable_site_addresses": [
             row["address"]
             for row in unimplemented_rows
@@ -379,6 +385,24 @@ def audit(
             for row in unimplemented_rows
             if not row["in_directly_reachable_function_scope"]
         ],
+        "unimplemented_tail_augmented_site_addresses": [
+            row["address"]
+            for row in unimplemented_rows
+            if row["in_tail_augmented_function_scope"]
+        ],
+        "unimplemented_outside_tail_augmented_scope_addresses": [
+            row["address"]
+            for row in unimplemented_rows
+            if not row["in_tail_augmented_function_scope"]
+        ],
+        "tail_augmented_unimplemented_status": (
+            "no-unimplemented-sites-in-tail-augmented-scopes"
+            if not any(
+                row["in_tail_augmented_function_scope"]
+                for row in unimplemented_rows
+            )
+            else "unimplemented-sites-in-tail-augmented-scopes"
+        ),
         "status": (
             "verified-direct-call-translation-coverage"
             if not missing

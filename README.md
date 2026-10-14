@@ -20,6 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.31
+
+O release 2.31 transforma a auditoria de `RECOMP_UNIMPL` em um gate que
+também considera o alcance auxiliar por `tail jmp`. No C gerado completo do
+estágio 23, `15.600/15.600` funções foram emitidas e restaram somente `2`
+sites não implementados: `sgdt [esp + 6]` em `0x00253FD8` e `out dx, al` em
+`0x00298030`.
+
+Os dois sites estão fora das `78` funções diretamente alcançáveis e também
+fora das `80` funções quando as duas arestas diretas `tail jmp` são seguidas.
+Isso comprova apenas que o alcance estrutural auditado não contém esses
+opcodes; eles continuam deliberadamente sem implementação e não devem ser
+tratados como resolvidos. A compilação CMake do artefato gerado foi concluída,
+com CTest auxiliar em `3/3` no build de bibliotecas e `6/6` no build host,
+incluindo apenas smokes e rejeições de preflight — não boot ou execução do
+XBE.
+
+A suíte Python passou `112/112`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.30
 
 O release 2.30 amplia a auditoria estrutural para transferências diretas
