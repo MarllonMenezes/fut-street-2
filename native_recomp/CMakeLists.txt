@@ -59,6 +59,7 @@ add_library(fut_street_2_no_emulation_runtime_support STATIC
     graphics_vertex_program.c
     graphics_surfaces.c
     graphics_draw_state.c
+    graphics_software_state.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -66,6 +67,10 @@ target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 if(BUILD_TESTING)
+    add_executable(graphics_software_state_test tests/graphics_software_state_test.c)
+    target_include_directories(graphics_software_state_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(graphics_software_state_test PRIVATE fut_street_2_no_emulation_runtime_support)
+    add_test(NAME graphics_software_state COMMAND graphics_software_state_test)
     add_executable(graphics_kelvin_state_test tests/graphics_kelvin_state_test.c)
     target_include_directories(graphics_kelvin_state_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(graphics_kelvin_state_test PRIVATE fut_street_2_no_emulation_runtime_support)

@@ -15,6 +15,15 @@ static int memory_read(void *context, uint32_t address, void *data, size_t size)
     else return 0;
     return 1;
 }
+static int memory_write(void *context, uint32_t address, const void *data, size_t size)
+{
+    Memory *memory = context;
+    if (memory->fail || size > 256) return 0;
+    if (address == 0x80001000) memcpy(memory->color, data, size);
+    else if (address == 0x80002000) memcpy(memory->depth, data, size);
+    else return 0;
+    return 1;
+}
 static int verify_texture(ID3D11Device *device, ID3D11DeviceContext *context,
     FutNativeConstants *completion, ID3D11Texture2D *texture, const uint8_t *expected,
     unsigned source_pitch, int depth, uint32_t cleared, int after_clear)
@@ -116,6 +125,31 @@ int main(void)
         D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL, 1.0f, 0x5A);
     CHECK(verify_texture(device, context, &completion, native.color, NULL, 0, 0, 0xFF112233u, 1) == 0, 21);
     CHECK(verify_texture(device, context, &completion, native.depth, NULL, 0, 1, 0xFFFFFF5Au, 1) == 0, 22);
+    FutGraphicsKelvinState clear_state = {0};
+    fut_graphics_kelvin_state(&clear_state, 0x1D98, 3u<<16);
+    fut_graphics_kelvin_state(&clear_state, 0x1D9C, 2u<<16);
+    fut_graphics_kelvin_state(&clear_state, 0x1D90, 0xAA123456u);
+    fut_graphics_kelvin_state(&clear_state, 0x1D8C, 0xFFFFFF79u);
+    CHECK(SUCCEEDED(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,0xF3,memory_read,memory_write,&memory,NULL)),26);
+    for (unsigned y=0;y<3;++y) for (unsigned x=0;x<8;++x) {
+        uint32_t c,z;memcpy(&c,memory.color+y*40+x*4,4);memcpy(&z,memory.depth+y*44+x*4,4);
+        CHECK(c==0xAA123456u && z==0xFFFFFF79u,27);
+    }
+    CHECK(memory.color[32]==0xCD && memory.color[72]==0xCD && memory.depth[32]==0xAB && memory.depth[76]==0xAB,28);
+    Memory cleared_memory=memory;
+    clear_state.clear_x=2u<<16;
+    CHECK(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,0xF3,memory_read,memory_write,&memory,NULL)==E_NOTIMPL &&
+        !memcmp(memory.color,cleared_memory.color,256) && !memcmp(memory.depth,cleared_memory.depth,256),29);
+    clear_state.clear_x=3u<<16;
+    CHECK(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,0x10,memory_read,memory_write,&memory,NULL)==E_NOTIMPL,30);
+    clear_state.clear_depth=0x12345600;
+    CHECK(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,1,memory_read,memory_write,&memory,NULL)==E_NOTIMPL,31);
+    clear_state.clear_depth=0x58;
+    CHECK(SUCCEEDED(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,2,memory_read,memory_write,&memory,NULL)),32);
+    uint32_t preserved_depth;memcpy(&preserved_depth,memory.depth,4);CHECK(preserved_depth==0xFFFFFF58u,33);
+    HANDLE stop=CreateEventA(NULL,TRUE,TRUE,NULL); CHECK(stop!=NULL,34);
+    CHECK(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,3,memory_read,memory_write,&memory,stop)==E_ABORT,35);
+    CloseHandle(stop);
     fut_native_surfaces_destroy(&native); fut_native_constants_destroy(&completion);
     ID3D11DeviceContext_Release(context); ID3D11Device_Release(device);
     puts("Pitched sample storage: native color/depth upload, exact readback, clear and range checks OK; no MSAA draw claimed");

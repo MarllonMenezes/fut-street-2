@@ -79,3 +79,75 @@ done:
     fut_native_surfaces_destroy(&next);
     return hr;
 }
+
+static HRESULT download_clear(ID3D11Device *device, ID3D11DeviceContext *context,
+    FutNativeConstants *completion, ID3D11Texture2D *texture, const FutGraphicsSurfacePlan *plan,
+    uint8_t *bytes, int depth, uint32_t mask, uint32_t expected, HANDLE stop)
+{
+    D3D11_TEXTURE2D_DESC desc; ID3D11Texture2D_GetDesc(texture, &desc);
+    desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging = NULL;
+    HRESULT hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &staging);
+    if (FAILED(hr)) return hr;
+    ID3D11DeviceContext_CopyResource(context, (ID3D11Resource *)staging, (ID3D11Resource *)texture);
+    if (!fut_native_constants_finish(completion, NULL, 2000, stop)) hr = E_FAIL;
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    if (SUCCEEDED(hr)) hr = ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped);
+    if (SUCCEEDED(hr)) {
+        uint32_t pitch = depth ? plan->depth_pitch : plan->color_pitch;
+        for (uint32_t y = 0; y < plan->height; ++y) for (uint32_t x = 0; x < plan->width; ++x) {
+            uint32_t word; memcpy(&word, (const uint8_t *)mapped.pData + (size_t)y*mapped.RowPitch+x*4, 4);
+            if (depth) word = fut_graphics_depth_to_guest(word);
+            if ((word & mask) != (expected & mask)) hr = E_FAIL;
+            memcpy(bytes + (size_t)y*pitch+x*4, &word, 4);
+        }
+        ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)staging, 0);
+    }
+    ID3D11Texture2D_Release(staging);
+    return hr;
+}
+HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *device,
+    ID3D11DeviceContext *context, FutNativeConstants *completion,
+    const FutGraphicsKelvinState *state, uint32_t flags, FutGraphicsMemoryRead read,
+    FutGraphicsMemoryWrite write, void *memory_context, HANDLE stop_event)
+{
+    if (!native || !native->valid || !valid_plan(&native->plan) || !device || !context ||
+        !completion || !state || !read || !write || (flags & ~0xF3u)) return E_INVALIDARG;
+    if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) return E_ABORT;
+    if (!flags) return S_OK;
+    unsigned colors = flags & 0xF0, depth_flags = flags & 3;
+    unsigned required = 12 | (colors ? 2 : 0) | (depth_flags ? 1 : 0);
+    const FutGraphicsSurfacePlan *p = &native->plan;
+    if ((state->clear_valid & required) != required || (state->control0 & 0x1000) ||
+        (colors && colors != 0xF0) || state->clear_x != ((p->logical_width - 1) << 16) ||
+        state->clear_y != ((p->logical_height - 1) << 16) ||
+        ((flags & 1) && (state->clear_depth >> 8) != 0 && (state->clear_depth >> 8) != 0xFFFFFF)) return E_NOTIMPL;
+    uint8_t *color = colors ? HeapAlloc(GetProcessHeap(), 0, p->color_span) : NULL;
+    uint8_t *depth = depth_flags ? HeapAlloc(GetProcessHeap(), 0, p->depth_span) : NULL;
+    HRESULT hr = E_OUTOFMEMORY;
+    if ((colors && !color) || (depth_flags && !depth)) goto done;
+    hr = E_FAIL;
+    if ((colors && !read(memory_context, p->color_address, color, p->color_span)) ||
+        (depth_flags && !read(memory_context, p->depth_address, depth, p->depth_span))) goto done;
+    if (colors) {
+        float rgba[4] = {((state->clear_color>>16)&255)/255.0f, ((state->clear_color>>8)&255)/255.0f,
+            (state->clear_color&255)/255.0f, (state->clear_color>>24)/255.0f};
+        ID3D11DeviceContext_ClearRenderTargetView(context, native->target, rgba);
+    }
+    if (depth_flags) ID3D11DeviceContext_ClearDepthStencilView(context, native->depth_target,
+        ((flags&1)?D3D11_CLEAR_DEPTH:0)|((flags&2)?D3D11_CLEAR_STENCIL:0),
+        (state->clear_depth>>8) ? 1.0f : 0.0f, (UINT8)state->clear_depth);
+    hr = fut_native_constants_finish(completion, NULL, 2000, stop_event) ? S_OK : E_FAIL;
+    if (SUCCEEDED(hr) && colors) hr = download_clear(device, context, completion, native->color, p,
+        color, 0, UINT32_MAX, state->clear_color, stop_event);
+    uint32_t z_mask = ((flags&1)?0xFFFFFF00u:0)|((flags&2)?255u:0);
+    if (SUCCEEDED(hr) && depth_flags) hr = download_clear(device, context, completion, native->depth, p,
+        depth, 1, z_mask, state->clear_depth, stop_event);
+    if (SUCCEEDED(hr) && stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) hr = E_ABORT;
+    if (SUCCEEDED(hr) && colors && !write(memory_context, p->color_address, color, p->color_span)) hr = E_FAIL;
+    if (SUCCEEDED(hr) && depth_flags && !write(memory_context, p->depth_address, depth, p->depth_span)) hr = E_FAIL;
+done:
+    if (color) HeapFree(GetProcessHeap(), 0, color);
+    if (depth) HeapFree(GetProcessHeap(), 0, depth);
+    return hr;
+}

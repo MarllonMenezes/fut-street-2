@@ -14,6 +14,49 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.68
+
+O código recompilado chegou a **dois clears originais**: depth/stencil com
+flags `0x03`, depois cor/depth/stencil com `0xF3`, cor `0xFF000000` e
+Z/stencil `0xFFFFFF00`. A GPU nativa foi aguardada, todos os bits selecionados
+foram conferidos por readback e os resultados voltaram à memória guest sem
+sobrescrever o padding. A segunda submissão terminou: `2.876` bytes/`471`
+parâmetros, marcador `7` em `0x82801000` e avanço de DMA GET após conclusão.
+Isso inicializa buffers; **não é um draw original nem um frame apresentado**.
+
+A notificação `0x28` foi identificada como estado `SAMPLEALPHA`: o dispatcher
+de render states do próprio jogo usa o índice `159`, confirmado pela
+[definição de render states do Cxbx](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/master/src/core/hle/D3D8/XbD3D8Types.h).
+`graphics_software_state.c` retém o valor e as duas escritas RDI exatas do
+seletor `8`. O seletor `9` retém somente as escritas de registro observadas,
+com os argumentos existentes nos campos de clear. Não chama um ISR sintético
+nem descarta estados desconhecidos. A equivalência de rasterização desses
+controles **continua pendente**: qualquer draw dependente deles é recusado,
+inclusive após escrever zero. Não os trate como alpha-to-coverage já implementado.
+
+`graphics_native_surfaces.c` traduz o caminho de clear completo observado
+para [ClearRenderTargetView](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-clearrendertargetview)
+e [ClearDepthStencilView](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-cleardepthstencilview).
+Essa forma cobre o retângulo inteiro e todas/nenhuma componentes de cor,
+com depth inteiro nos endpoints. Readback com comparação exata precede
+writeback; qualquer falha impede a publicação do marcador. Retângulos/canais
+parciais, outros valores de depth e depth float ainda são recusados.
+Estados de textura/texgen/bump e color key são preservados para tradução
+posterior, não declarados executados por um pixel shader original.
+
+O teste WARP verifica clear e writeback com dados sintéticos, preservação de
+padding, stencil-only preservando depth, cancelamento e recusa das formas
+não suportadas. O teste software valida os registros retidos, ausência de
+mutação após rejeição e a trava de draw. Build Release e CTest passaram
+`16/16`; testes públicos passaram `161/161`; build/self-test .NET passaram
+sem avisos/erros, `105` testes (somente o protótipo). ISO intacta; saídas no D:.
+
+A terceira submissão contém `1.948` bytes e interrompe no offset `12`, método
+`0x020C`, pitch `0x14000A00`. O frontend tenta validar a nova descrição usando
+ainda o formato anterior: próximo alvo é o ciclo de troca/coerência de
+superfícies e a validação no ponto correto de uso. Depois permanecem os draws,
+shaders e controles de rasterização pendentes. `NOT_READY` permanece.
+
 ## Estado verificável — release 2.67
 
 A segunda submissão agora ultrapassa o clipping e configura os estados

@@ -14,6 +14,7 @@
 #include "graphics_native_vertex.h"
 #include "graphics_native_surfaces.h"
 #include "graphics_native_pipeline.h"
+#include "graphics_software_state.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -41,6 +42,15 @@ static int write32(uint32_t va, uint32_t value)
         && written == sizeof(value);
 }
 
+static int object_memory_write(void *context, uint32_t address, const void *data, size_t size)
+{
+    (void)context;
+    SIZE_T written = 0;
+    if (address < 0x80000000u || address >= 0x84000000u || size > 0x84000000u - address) return 0;
+    return WriteProcessMemory(GetCurrentProcess(), (void *)((uintptr_t)xbox_GetMemoryOffset() + address),
+        data, size, &written) && written == size;
+}
+
 static void fail_backend(const char *reason)
 {
     fprintf(stderr, "[GRAPHICS] %s\n", reason);
@@ -59,6 +69,7 @@ typedef struct {
     FutGraphicsSurfaceState surfaces;
     FutNativeSurfaces native_surfaces;
     FutNativePipeline pipeline;
+    FutGraphicsSoftwareState software;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
@@ -197,6 +208,28 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
+        if (method == 0x100u && value) {
+            if (!fut_graphics_software_state(&state->software, value, state->kelvin.clear_depth,
+                    state->kelvin.clear_color, state->kelvin.clear_valid)) return 0;
+            fprintf(stderr, "[GRAPHICS] software state retained: selector=%u data=%u; RDI-dependent draws remain gated\n",
+                value & 31, value >> 5);
+            return 1;
+        }
+        if ((method == 0x17FCu && value) || method == 0x1810u || method == 0x1818u || method == 0x1800u || method == 0x1808u) {
+            if (!fut_graphics_software_draw_ready(&state->software)) {
+                fprintf(stderr, "[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
+                return 0;
+            }
+        }
+        if (method == 0x1D94u) {
+            if (!native_prepare_surfaces(state)) return 0;
+            HRESULT hr = fut_native_surfaces_clear(&state->native_surfaces, state->device, state->context,
+                &state->native_constants, &state->kelvin, value, object_memory_read, object_memory_write, NULL, backend_stop);
+            if (FAILED(hr)) { fprintf(stderr, "[GRAPHICS] native clear/readback failed: flags=%08X HRESULT=%08lX\n", value, hr); return 0; }
+            fprintf(stderr, "[GRAPHICS] original clear completed with exact GPU readback and guest writeback: flags=%08X color=%08X zstencil=%08X\n",
+                value, state->kelvin.clear_color, state->kelvin.clear_depth);
+            return 1;
+        }
         if (method == 0x110u) {
             if (value || !native_finish(state)) return 0;
             return 1; /* Wait for actual native work; no guest marker written. */

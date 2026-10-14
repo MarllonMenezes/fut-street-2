@@ -12,6 +12,29 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
     FutGraphicsDrawStatus draw = fut_graphics_draw_state(&state->draw, method, value);
     if (draw == FUT_DRAW_STATE_APPLIED) return FUT_KELVIN_APPLIED;
     if (draw == FUT_DRAW_STATE_REJECTED) return FUT_KELVIN_REJECTED;
+    /* Texture description/FF texgen state is retained for the translated
+     * fragment program; accepting state is not executing a texture sample. */
+    if (method >= 0x3C0 && method < 0x400) {
+        unsigned slot = (method - 0x3C0) / 4;
+        if (value != 0 && value != 0x2400 && value != 0x2401 && value != 0x2402 && value != 0x8511 && value != 0x8512)
+            return FUT_KELVIN_REJECTED;
+        if ((value == 0x2402 && slot % 4 >= 2) || ((value == 0x8511 || value == 0x8512) && slot % 4 == 3))
+            return FUT_KELVIN_REJECTED;
+        state->textures[slot / 4].texgen[slot % 4] = value;
+        return FUT_KELVIN_APPLIED;
+    }
+    if (method >= 0xAE0 && method < 0xAF0) {
+        state->textures[(method - 0xAE0) / 4].color_key = value;
+        return FUT_KELVIN_APPLIED;
+    }
+    if (method >= 0x1B00 && method < 0x1C00) {
+        unsigned stage = (method - 0x1B00) / 64, local = method & 63;
+        if (local == 0xC) state->textures[stage].control0 = value;
+        else if (local == 0x24) state->textures[stage].border_color = value;
+        else if (local >= 0x28 && local <= 0x3C) state->textures[stage].bump_env[(local - 0x28) / 4] = value;
+        else return FUT_KELVIN_NOT_HANDLED;
+        return FUT_KELVIN_APPLIED;
+    }
     unsigned row = 0, component = 0;
     int constant = 0;
     if (method >= 0x1940u && method < 0x1980u) {
@@ -115,7 +138,10 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         if (value == 0 || value > 7) return FUT_KELVIN_REJECTED;
         state->flip_modulo = value; break;
     case 0x1D90:
-        state->clear_color = value; break;
+        state->clear_color = value; state->clear_valid |= 2; break;
+    case 0x1D8C: state->clear_depth = value; state->clear_valid |= 1; break;
+    case 0x1D98: state->clear_x = value & 0x0FFF0FFFu; state->clear_valid |= 4; break;
+    case 0x1D9C: state->clear_y = value & 0x0FFF0FFFu; state->clear_valid |= 8; break;
     default:
         return FUT_KELVIN_NOT_HANDLED;
     }

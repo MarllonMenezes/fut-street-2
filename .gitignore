@@ -74,6 +74,8 @@
 !/native_recomp/graphics_draw_state.h
 !/native_recomp/graphics_native_pipeline.c
 !/native_recomp/graphics_native_pipeline.h
+!/native_recomp/graphics_software_state.c
+!/native_recomp/graphics_software_state.h
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c
