@@ -177,6 +177,13 @@ DYNAMIC_INDEXED_RECORD_ALIAS_RE = re.compile(
 )
 INDEXED_CALLBACK_TABLE_BASE = 0x00361360
 INDEXED_CALLBACK_TABLE_CAPACITY_SLOT = 0x0036135C
+INDEXED_CALLBACK_CONSUMER_FUNCTION = 0x0026E70A
+INDEXED_CALLBACK_CONSUMER_CALL_SITE = 0x0026E75E
+INDEXED_CALLBACK_CONSUMER_OBJECT_TABLE_OFFSET = 0x8
+INDEXED_CALLBACK_CONSUMER_OBJECT_INDEX_OFFSET = 0xC
+INDEXED_CALLBACK_CONSUMER_RECORD_STRIDE = 0xC
+INDEXED_CALLBACK_CONSUMER_RECORD_GUARD_OFFSET = 0x4
+INDEXED_CALLBACK_CONSUMER_RECORD_TARGET_OFFSET = 0x8
 LOCAL_BRANCH_RE = re.compile(
     r"^\s*if\s*\((?P<condition>.+)\)\s+goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
 )
@@ -734,6 +741,195 @@ def recover_indexed_callback_table_provenance(
             for register_match in REGISTER_WRITE_RE.finditer(line):
                 aliases.discard(register_match.group("register"))
     return rows
+
+
+def recover_dynamic_indexed_callback_consumer_layout(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    classified: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Recover the bounded layout used by the indexed callback consumer.
+
+    This is intentionally separate from ``recover_indexed_callback_table_provenance``.
+    The BSS root at ``0x00361360`` is an allocation/record family, while the
+    consumer at ``0x0026E70A`` obtains its container from an object field.  The
+    generated source does not, by itself, prove that those pointers alias.  The
+    helper therefore records the consumer's object-field loads, index scaling,
+    guard field and target field without merging the two structures or naming a
+    runtime callback.
+    """
+    consumer_rows = [
+        row
+        for row in classified
+        if row.get("classification") == "dynamic-indexed-record-target"
+        and _address(row.get("function", 0)) == INDEXED_CALLBACK_CONSUMER_FUNCTION
+    ]
+    if not consumer_rows:
+        return {
+            "status": "no-indexed-callback-consumer-observed",
+            "function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+            "call_sites": [],
+            "table_root_link_status": "not-assessed",
+        }
+
+    function_by_name = {
+        str(function.get("name", "")): function
+        for function in functions
+        if _address(function.get("start", 0)) == INDEXED_CALLBACK_CONSUMER_FUNCTION
+    }
+    target_names = {
+        str(row.get("function_name", ""))
+        for row in consumer_rows
+        if row.get("function_name")
+    }
+    if not target_names:
+        target_names = set(function_by_name)
+
+    call_sites = sorted(
+        {
+            _address(row["call_site"])
+            for row in consumer_rows
+            if row.get("call_site") is not None
+        }
+    )
+    object_loads: list[dict[str, Any]] = []
+    container_field_loads: list[dict[str, Any]] = []
+    index_field_loads: list[dict[str, Any]] = []
+    index_scale_rows: list[dict[str, Any]] = []
+    guard_field_rows: list[dict[str, Any]] = []
+    target_rows: list[dict[str, Any]] = []
+    source_function = ""
+
+    scale_re = re.compile(
+        r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+        r"(?P=register)\s*\+\s*(?P=register)\s*\*\s*2;"
+    )
+    guard_re = re.compile(
+        r"MEM32\(ebx\s*\+\s*esi\s*\*\s*4\s*\+\s*0x4\)"
+    )
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current_name = ""
+        current_address: int | None = None
+        function_lines: list[tuple[int, str]] = []
+
+        def inspect_function() -> None:
+            nonlocal source_function
+            if current_name not in target_names or not function_lines:
+                return
+            source_function = source_path.name
+            object_registers: set[str] = set()
+            for line_number, body_line in function_lines:
+                object_load = DYNAMIC_CALLBACK_OBJECT_LOAD_RE.match(body_line)
+                if object_load is not None:
+                    object_registers.add(object_load.group("register"))
+                    object_loads.append(
+                        {
+                            "source": f"{source_path.name}:{line_number}",
+                            "expression": body_line.strip(),
+                            "register": object_load.group("register"),
+                        }
+                    )
+
+                field_load = DYNAMIC_CALLBACK_FIELD_LOAD_RE.match(body_line)
+                if field_load is not None and field_load.group("object") in object_registers:
+                    offset = int(field_load.group("offset"), 0)
+                    if offset == INDEXED_CALLBACK_CONSUMER_OBJECT_TABLE_OFFSET:
+                        container_field_loads.append(
+                            {
+                                "source": f"{source_path.name}:{line_number}",
+                                "expression": body_line.strip(),
+                                "object_register": field_load.group("object"),
+                                "loaded_register": field_load.group("register"),
+                                "field_offset": f"0x{offset:X}",
+                            }
+                        )
+                    elif offset == INDEXED_CALLBACK_CONSUMER_OBJECT_INDEX_OFFSET:
+                        index_field_loads.append(
+                            {
+                                "source": f"{source_path.name}:{line_number}",
+                                "expression": body_line.strip(),
+                                "object_register": field_load.group("object"),
+                                "loaded_register": field_load.group("register"),
+                                "field_offset": f"0x{offset:X}",
+                            }
+                        )
+
+                scale_match = scale_re.match(body_line)
+                if scale_match is not None:
+                    index_scale_rows.append(
+                        {
+                            "source": f"{source_path.name}:{line_number}",
+                            "expression": body_line.strip(),
+                            "register": scale_match.group("register"),
+                            "multiplier": 3,
+                        }
+                    )
+                if guard_re.search(body_line) is not None:
+                    guard_field_rows.append(
+                        {
+                            "source": f"{source_path.name}:{line_number}",
+                            "expression": body_line.strip(),
+                            "field_offset": f"0x{INDEXED_CALLBACK_CONSUMER_RECORD_GUARD_OFFSET:X}",
+                        }
+                    )
+                call = INDIRECT_CALL_RE.search(body_line)
+                if call is not None and int(call.group("site"), 16) in call_sites:
+                    target_rows.append(
+                        {
+                            "source": f"{source_path.name}:{line_number}",
+                            "expression": body_line.strip(),
+                            "call_site": f"0x{int(call.group('site'), 16):08X}",
+                            "target_expression": call.group("expression").strip(),
+                        }
+                    )
+
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match is not None:
+                inspect_function()
+                current_name = symbol_match.group(1)
+                current_address = (
+                    _address(function_by_name[current_name]["start"])
+                    if current_name in function_by_name
+                    else None
+                )
+                function_lines = [(line_number, line)]
+                continue
+            if current_address == INDEXED_CALLBACK_CONSUMER_FUNCTION:
+                function_lines.append((line_number, line))
+        inspect_function()
+
+    required = (
+        bool(object_loads)
+        and bool(container_field_loads)
+        and bool(index_field_loads)
+        and bool(index_scale_rows)
+        and bool(target_rows)
+    )
+    return {
+        "status": (
+            "verified-indexed-callback-consumer-layout"
+            if required
+            else "incomplete-indexed-callback-consumer-layout"
+        ),
+        "function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+        "function_name": sorted(target_names)[0] if target_names else "",
+        "source_file": source_function,
+        "call_sites": [f"0x{site:08X}" for site in call_sites],
+        "object_loads": object_loads,
+        "container_field_loads": container_field_loads,
+        "index_field_loads": index_field_loads,
+        "index_scale": index_scale_rows,
+        "guard_field_reads": guard_field_rows,
+        "target_reads": target_rows,
+        "record_stride_bytes": INDEXED_CALLBACK_CONSUMER_RECORD_STRIDE,
+        "record_guard_field_offset": f"0x{INDEXED_CALLBACK_CONSUMER_RECORD_GUARD_OFFSET:X}",
+        "record_target_field_offset": f"0x{INDEXED_CALLBACK_CONSUMER_RECORD_TARGET_OFFSET:X}",
+        "record_target_shape": "MEM32(ebx + esi * 4 + 8)",
+        "table_root_link_status": "not-proven-from-consumer-body",
+    }
 
 
 def recover_indirect_call_skip_branches(
@@ -3347,6 +3543,11 @@ def audit(
         kernel_resolver_cases,
         dynamic_target_writers,
     )
+    dynamic_indexed_callback_consumer_layout = (
+        recover_dynamic_indexed_callback_consumer_layout(
+            generated_dir, functions, classified
+        )
+    )
     dynamic_source_provenance = recover_dynamic_source_provenance(
         generated_dir, classified
     )
@@ -4500,6 +4701,22 @@ def audit(
         "dynamic_indexed_callback_table_all_record_write_sites": len(
             all_indexed_callback_table_provenance["indexed_record_writes"]
         ),
+        "dynamic_indexed_callback_consumer_layout_status": (
+            dynamic_indexed_callback_consumer_layout.get(
+                "status", "no-indexed-callback-consumer-observed"
+            )
+        ),
+        "dynamic_indexed_callback_consumer_layout_call_sites": len(
+            dynamic_indexed_callback_consumer_layout.get("call_sites", [])
+        ),
+        "dynamic_indexed_callback_consumer_layout_record_stride_bytes": (
+            dynamic_indexed_callback_consumer_layout.get("record_stride_bytes")
+        ),
+        "dynamic_indexed_callback_consumer_layout_table_root_link_status": (
+            dynamic_indexed_callback_consumer_layout.get(
+                "table_root_link_status", "not-assessed"
+            )
+        ),
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_conditional_nonzero_guard_sites": len(
@@ -4785,6 +5002,9 @@ def audit(
         "dynamic_indexed_callback_table_provenance": indexed_callback_table_provenance,
         "dynamic_indexed_callback_table_all_provenance": (
             all_indexed_callback_table_provenance
+        ),
+        "dynamic_indexed_callback_consumer_layout": (
+            dynamic_indexed_callback_consumer_layout
         ),
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,

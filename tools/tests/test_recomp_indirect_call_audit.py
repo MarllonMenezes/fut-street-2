@@ -25,6 +25,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     classify_kernel_bridge_implementation_delegation,
     classify_kernel_bridge_argument_use,
     recover_indexed_callback_table_provenance,
+    recover_dynamic_indexed_callback_consumer_layout,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -976,6 +977,47 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["capacity_writes"]), 1)
         self.assertEqual(len(evidence["indexed_record_writes"]), 1)
         self.assertEqual(evidence["capacity_writes"][0]["value"], "0x00000020")
+
+    def test_separates_indexed_callback_consumer_layout_from_bss_root(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_0026E70A(void)\n"
+                "{\n"
+                "    eax = MEM32(esp + 0x20);\n"
+                "    ebx = MEM32(eax + 8);\n"
+                "    esi = MEM32(eax + 0xC);\n"
+                "    esi = esi + esi * 2;\n"
+                "    _fa = (uint32_t)(MEM32(ebx + esi * 4 + 4));\n"
+                "    eax = MEM32(ebx + esi * 4 + 8);\n"
+                "    { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); "
+                "PUSH32(esp, 0x0026E762u); "
+                "RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0026E75Eu); }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_dynamic_indexed_callback_consumer_layout(
+                generated,
+                [{"name": "sub_0026E70A", "start": "0x0026E70A"}],
+                [
+                    {
+                        "classification": "dynamic-indexed-record-target",
+                        "function": "0x0026E70A",
+                        "function_name": "sub_0026E70A",
+                        "call_site": "0x0026E75E",
+                    }
+                ],
+            )
+
+        self.assertEqual(evidence["status"], "verified-indexed-callback-consumer-layout")
+        self.assertEqual(evidence["record_stride_bytes"], 0xC)
+        self.assertEqual(evidence["record_target_field_offset"], "0x8")
+        self.assertEqual(evidence["table_root_link_status"], "not-proven-from-consumer-body")
+        self.assertEqual(len(evidence["container_field_loads"]), 1)
+        self.assertEqual(len(evidence["index_field_loads"]), 1)
+        self.assertEqual(len(evidence["target_reads"]), 1)
 
     def test_counts_kernel_call_push_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
