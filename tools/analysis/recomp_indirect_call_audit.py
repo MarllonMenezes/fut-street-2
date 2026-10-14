@@ -87,6 +87,9 @@ SYMBOLIC_LINK_OBJECT_NAME_ASSIGNMENT_RE = re.compile(
 SYMBOLIC_LINK_HOST_TARGET_RE = re.compile(
     r'\bconst\s+char\s*\*\s*target\s*=\s*"(?P<target>[^"]+)";'
 )
+SYMBOLIC_LINK_BRIDGE_PATH_RE = re.compile(
+    r'\bstrcmp\(path,\s*"(?P<path>[^"]+)"\)\s*!=\s*0'
+)
 KERNEL_BRIDGE_FUNCTION_RE = re.compile(
     r"^\s*static\s+bridge_func_t\s+bridge_for_ordinal\s*\(ULONG\s+ordinal\)\s*$"
 )
@@ -1859,6 +1862,62 @@ def recover_symbolic_link_host_query_target(
     }
 
 
+def recover_symbolic_link_host_bridge_evidence(
+    kernel_source: Path,
+) -> dict[str, Any] | None:
+    """Recover narrow path/handle validation in the host bridge.
+
+    This records source-level evidence for the observed ``\\??\\D:`` link
+    only. It does not establish generic Object Manager behavior or runtime
+    execution of the bridge.
+    """
+    source_path = kernel_source.parent / "kernel_bridge.c"
+    if not source_path.exists():
+        return None
+    text = source_path.read_text(encoding="utf-8")
+    open_marker = "static void bridge_NtOpenSymbolicLinkObject(void)"
+    query_marker = "static void bridge_NtQuerySymbolicLinkObject(void)"
+    open_start = text.find(open_marker)
+    query_start = text.find(query_marker)
+    if open_start < 0 or query_start < 0 or query_start <= open_start:
+        return None
+    next_function = text.find("\nstatic void ", query_start + len(query_marker))
+    query_end = len(text) if next_function < 0 else next_function
+    open_text = text[open_start:query_start]
+    query_text = text[query_start:query_end]
+    path_match = SYMBOLIC_LINK_BRIDGE_PATH_RE.search(open_text)
+    token_match = re.search(
+        r"#define\s+BRIDGE_SYMBOLIC_LINK_HANDLE\s+"
+        r"(?P<token>0x[0-9A-Fa-f]+)u?",
+        text,
+    )
+    target_match = SYMBOLIC_LINK_HOST_TARGET_RE.search(query_text)
+    if (
+        path_match is None
+        or token_match is None
+        or target_match is None
+        or "bridge_get_xbox_path" not in open_text
+        or "handle != BRIDGE_SYMBOLIC_LINK_HANDLE" not in query_text
+        or "BRIDGE_MEM32(handle_va) = BRIDGE_SYMBOLIC_LINK_HANDLE" not in open_text
+    ):
+        return None
+    target_text = target_match.group("target").replace("\\\\", "\\")
+    return {
+        "status": "bridge-validates-observed-path-and-handle",
+        "observed_guest_path": path_match.group("path").replace("\\\\", "\\"),
+        "synthetic_handle": token_match.group("token").upper(),
+        "target_text": target_text,
+        "open_source": (
+            f"{source_path.relative_to(kernel_source.parent).as_posix()}:"
+            f"{text.count(chr(10), 0, open_start) + 1}"
+        ),
+        "query_source": (
+            f"{source_path.relative_to(kernel_source.parent).as_posix()}:"
+            f"{text.count(chr(10), 0, query_start) + 1}"
+        ),
+    }
+
+
 def audit(
     functions_path: Path,
     generated_dir: Path,
@@ -2123,6 +2182,11 @@ def audit(
         if kernel_source is None
         else recover_symbolic_link_host_query_target(kernel_source)
     )
+    symbolic_link_host_bridge_evidence = (
+        None
+        if kernel_source is None
+        else recover_symbolic_link_host_bridge_evidence(kernel_source)
+    )
     kernel_file_info_rows = [
         row
         for row in kernel_slots
@@ -2384,6 +2448,15 @@ def audit(
             if symbolic_link_host_query_target is None
             else symbolic_link_host_query_target["target_text"]
         ),
+        "kernel_symbolic_link_host_bridge_status": (
+            "not-supplied"
+            if kernel_source is None
+            else (
+                "bridge-path-and-handle-validation-observed"
+                if symbolic_link_host_bridge_evidence is not None
+                else "bridge-validation-not-observed"
+            )
+        ),
         "kernel_implementation_missing_targets": (
             None
             if kernel_implementation_evidence is None
@@ -2533,6 +2606,9 @@ def audit(
         "kernel_symbolic_link_lifecycle_evidence": symbolic_link_lifecycle_evidence,
         "kernel_symbolic_link_guest_path_evidence": symbolic_link_guest_path_evidence,
         "kernel_symbolic_link_host_query_target": symbolic_link_host_query_target or {},
+        "kernel_symbolic_link_host_bridge_evidence": (
+            symbolic_link_host_bridge_evidence or {}
+        ),
     }
 
 

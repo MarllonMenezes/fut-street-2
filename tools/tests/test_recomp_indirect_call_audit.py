@@ -24,6 +24,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_runtime_fixed_slot_initializers,
     recover_symbolic_link_open_query_close_sequences,
     recover_symbolic_link_guest_paths,
+    recover_symbolic_link_host_bridge_evidence,
     recover_symbolic_link_host_query_target,
 )
 
@@ -846,15 +847,35 @@ loc_00001010: ;
                 'const char* target = "\\\\Device\\\\CdRom0";\n',
                 encoding="utf-8",
             )
+            (root / "kernel_bridge.c").write_text(
+                "#define BRIDGE_SYMBOLIC_LINK_HANDLE 0xDEAD0001u\n"
+                "static void bridge_NtOpenSymbolicLinkObject(void) {\n"
+                "const char *path = bridge_get_xbox_path(obj);\n"
+                'if (strcmp(path, "\\\\??\\\\D:") != 0) return;\n'
+                "BRIDGE_MEM32(handle_va) = BRIDGE_SYMBOLIC_LINK_HANDLE;\n"
+                "}\n"
+                "static void bridge_NtQuerySymbolicLinkObject(void) {\n"
+                "uint32_t handle = STACK_ARG(0);\n"
+                'const char* target = "\\\\Device\\\\CdRom0";\n'
+                "if (handle != BRIDGE_SYMBOLIC_LINK_HANDLE) return;\n"
+                "}\n",
+                encoding="utf-8",
+            )
 
             guest_evidence = recover_symbolic_link_guest_paths(
                 generated, xbe, rows
             )
             host_evidence = recover_symbolic_link_host_query_target(kernel_source)
+            bridge_evidence = recover_symbolic_link_host_bridge_evidence(kernel_source)
 
         self.assertEqual(guest_evidence["0x00001008"]["path_text"], "\\??\\D:")
         self.assertEqual(guest_evidence["0x00001008"]["object_name_address"], "0x00010020")
         self.assertEqual(host_evidence["target_text"], "\\Device\\CdRom0")
+        self.assertEqual(
+            bridge_evidence["status"],
+            "bridge-validates-observed-path-and-handle",
+        )
+        self.assertEqual(bridge_evidence["observed_guest_path"], "\\??\\D:")
 
 
 if __name__ == "__main__":

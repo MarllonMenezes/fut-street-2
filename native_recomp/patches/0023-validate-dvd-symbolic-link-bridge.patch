@@ -1,0 +1,53 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -3637,21 +3637,38 @@ static void bridge_NtQueryDirectoryFile(void)
+ }
+ 
+ /* ── NtOpenSymbolicLinkObject (ordinal 203, 2 args = 8 bytes) */
++/*
++ * The direct FIFA Street 2 path opens the one guest DOS-device link that the
++ * static XBE evidence recovers: \??\D:.  Keep this bridge narrow.  A generic
++ * Object Manager link implementation would invent Xbox handle/name
++ * semantics that are not established by the current evidence.
++ */
++#define BRIDGE_SYMBOLIC_LINK_HANDLE 0xDEAD0001u
++
+ static void bridge_NtOpenSymbolicLinkObject(void)
+ {
+     uint32_t handle_va = STACK_ARG(0);
+-    /* arg1: POBJECT_ATTRIBUTES - ignored, we return a synthetic handle.
+-     * Written raw (untagged) so NtClose recognises it and skips it. */
+-    if (handle_va) BRIDGE_MEM32(handle_va) = 0xDEAD0001u;
++    uint32_t obj_attrs_va = STACK_ARG(1);
++    const char *path = bridge_get_xbox_path(obj_attrs_va);
++
++    if (!handle_va || !path) {
++        g_eax = STATUS_INVALID_PARAMETER;
++        return;
++    }
++    if (strcmp(path, "\\??\\D:") != 0) {
++        g_eax = STATUS_OBJECT_NAME_NOT_FOUND;
++        return;
++    }
++
++    /* Keep the raw token so NtClose recognises it as synthetic. */
++    BRIDGE_MEM32(handle_va) = BRIDGE_SYMBOLIC_LINK_HANDLE;
+     g_eax = STATUS_SUCCESS;
+ }
+ 
+ /* ── NtQuerySymbolicLinkObject (ordinal 215, 3 args = 12 bytes) */
+ static void bridge_NtQuerySymbolicLinkObject(void)
+ {
+-    /* uint32_t handle = STACK_ARG(0); */
++    uint32_t handle = STACK_ARG(0);
+     uint32_t target_va = STACK_ARG(1);
+     uint32_t retlen_va = STACK_ARG(2);
+     const char* target = "\\Device\\CdRom0";
+     USHORT len = (USHORT)strlen(target);
+ 
++    if (handle != BRIDGE_SYMBOLIC_LINK_HANDLE) {
++        g_eax = STATUS_INVALID_HANDLE;
++        return;
++    }
+     if (retlen_va) BRIDGE_MEM32(retlen_va) = (uint32_t)len;
