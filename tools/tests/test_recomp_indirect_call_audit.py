@@ -27,6 +27,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_register_constant_arguments,
     recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
+    recover_kernel_implementation_signature_evidence,
     recover_kernel_return_contract_evidence,
     recover_kernel_return_use_provenance,
     recover_prcb_cache_writes,
@@ -840,6 +841,25 @@ void xbe_entry_point(void)
             cases = recover_kernel_bridge_cases(source)
 
         self.assertEqual(cases, {66: "bridge_IoCreateFile"})
+
+    def test_recovers_kernel_implementation_parameter_count(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary)
+            source = source_root / "kernel_io.c"
+            source.write_text(
+                "NTSTATUS __stdcall xbox_Foo(ULONG first, PVOID second)\n"
+                "{\n"
+                "    return STATUS_SUCCESS;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_kernel_implementation_signature_evidence(
+                source_root, {"xbox_Foo": 2}
+            )
+
+        self.assertEqual(evidence["xbox_Foo"]["parameter_counts"], [2])
+        self.assertEqual(evidence["xbox_Foo"]["status"], "parameter-count-match")
 
     def test_recovers_kernel_bridge_body_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

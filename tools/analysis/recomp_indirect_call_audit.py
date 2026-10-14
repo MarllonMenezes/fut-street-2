@@ -78,6 +78,12 @@ KERNEL_FUNCTION_DEFINITION_RE = re.compile(
     r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
     r"(?P<name>xbox_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{"
 )
+KERNEL_FUNCTION_SIGNATURE_RE = re.compile(
+    r"(?ms)^\s*(?:(?:static|inline|__declspec\([^)]*\))\s+)*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
+    r"(?P<name>xbox_[A-Za-z0-9_]+)\s*"
+    r"\((?P<parameters>[^;{}]*)\)\s*\{"
+)
 KERNEL_IMPLEMENTATION_STUB_MARKER_RE = re.compile(
     r"(?i)\b(?:stub(?:bed)?|no-op)\b"
 )
@@ -953,6 +959,68 @@ def recover_kernel_implementation_evidence(
                     }
                     if marker_source not in evidence[target]["body_markers"]:
                         evidence[target]["body_markers"].append(marker_source)
+    return evidence
+
+
+def _count_c_parameters(parameters: str) -> int:
+    """Count top-level C parameters in a source signature."""
+    normalized = re.sub(r"/\*.*?\*/|//[^\r\n]*", "", parameters, flags=re.S)
+    if not normalized.strip() or normalized.strip() == "void":
+        return 0
+    depth = 0
+    count = 1
+    for character in normalized:
+        if character in "([{":
+            depth += 1
+        elif character in ")]}":
+            depth = max(0, depth - 1)
+        elif character == "," and depth == 0:
+            count += 1
+    return count
+
+
+def recover_kernel_implementation_signature_evidence(
+    source_root: Path,
+    target_expected_parameter_counts: dict[str, int],
+) -> dict[str, dict[str, Any]]:
+    """Compare host definition parameter counts with bridge expectations.
+
+    This is source-signature evidence only.  Matching counts do not prove
+    parameter types, pointer translation, calling-convention details, Xbox
+    semantics, or side effects.
+    """
+    evidence = {
+        target: {
+            "status": "missing-source-definition",
+            "sources": [],
+            "parameter_counts": [],
+            "expected_parameter_count": expected_count,
+        }
+        for target, expected_count in target_expected_parameter_counts.items()
+    }
+    for source_path in sorted(source_root.rglob("*.c")):
+        text = source_path.read_text(encoding="utf-8")
+        relative_source = source_path.relative_to(source_root).as_posix()
+        for match in KERNEL_FUNCTION_SIGNATURE_RE.finditer(text):
+            target = match.group("name")
+            item = evidence.get(target)
+            if item is None:
+                continue
+            source = f"{relative_source}:{text.count(chr(10), 0, match.start()) + 1}"
+            if source not in item["sources"]:
+                item["sources"].append(source)
+            parameter_count = _count_c_parameters(match.group("parameters"))
+            if parameter_count not in item["parameter_counts"]:
+                item["parameter_counts"].append(parameter_count)
+    for item in evidence.values():
+        item["sources"].sort()
+        item["parameter_counts"].sort()
+        if not item["sources"]:
+            item["status"] = "missing-source-definition"
+        elif item["expected_parameter_count"] in item["parameter_counts"]:
+            item["status"] = "parameter-count-match"
+        else:
+            item["status"] = "parameter-count-mismatch"
     return evidence
 
 
@@ -3193,6 +3261,22 @@ def audit(
             used_kernel_ordinals,
         )
     )
+    kernel_expected_parameter_counts = (
+        {}
+        if kernel_resolver_cases is None or kernel_stdcall_arg_bytes is None
+        else {
+            target: kernel_stdcall_arg_bytes[ordinal] // 4
+            for ordinal, target in used_kernel_cases.items()
+            if ordinal in kernel_stdcall_arg_bytes
+        }
+    )
+    kernel_implementation_signature_evidence = (
+        None
+        if kernel_source is None
+        else recover_kernel_implementation_signature_evidence(
+            kernel_source.parent, kernel_expected_parameter_counts
+        )
+    )
     kernel_implementation_evidence = (
         None
         if kernel_source is None
@@ -3256,6 +3340,13 @@ def audit(
                 row["host_implementation_sources"] = implementation["sources"]
                 row["host_implementation_body_markers"] = implementation[
                     "body_markers"
+                ]
+        if kernel_implementation_signature_evidence is not None and resolver_target:
+            signature = kernel_implementation_signature_evidence.get(resolver_target)
+            if signature is not None:
+                row["host_implementation_signature"] = signature
+                row["host_implementation_signature_status"] = signature[
+                    "status"
                 ]
         if kernel_return_contract_evidence is not None and resolver_target:
             contract = kernel_return_contract_evidence.get(resolver_target)
@@ -3473,6 +3564,18 @@ def audit(
             marker["kind"] == "status-not-implemented-token"
             for marker in row.get("host_implementation_body_markers", [])
         )
+    ]
+    kernel_implementation_signature_match_rows = [
+        row
+        for row in kernel_slots
+        if row.get("host_implementation_signature_status")
+        == "parameter-count-match"
+    ]
+    kernel_implementation_signature_mismatch_rows = [
+        row
+        for row in kernel_slots
+        if row.get("host_implementation_signature_status")
+        == "parameter-count-mismatch"
     ]
     symbolic_link_lifecycle_evidence = (
         recover_symbolic_link_open_query_close_sequences(classified)
@@ -3748,6 +3851,49 @@ def audit(
                 )
                 else "missing-source-definitions"
             )
+        ),
+        "kernel_implementation_signature_status": (
+            "not-supplied"
+            if kernel_implementation_signature_evidence is None
+            else (
+                "verified-source-signature-parameter-counts"
+                if all(
+                    item["status"] == "parameter-count-match"
+                    for item in kernel_implementation_signature_evidence.values()
+                )
+                else "source-signature-parameter-count-mismatch-or-incomplete"
+            )
+        ),
+        "kernel_implementation_signature_targets": (
+            None
+            if kernel_implementation_signature_evidence is None
+            else len(kernel_implementation_signature_evidence)
+        ),
+        "kernel_implementation_signature_match_targets": (
+            None
+            if kernel_implementation_signature_evidence is None
+            else sum(
+                item["status"] == "parameter-count-match"
+                for item in kernel_implementation_signature_evidence.values()
+            )
+        ),
+        "kernel_implementation_signature_mismatch_targets": (
+            None
+            if kernel_implementation_signature_evidence is None
+            else sum(
+                item["status"] == "parameter-count-mismatch"
+                for item in kernel_implementation_signature_evidence.values()
+            )
+        ),
+        "kernel_implementation_signature_match_sites": (
+            None
+            if kernel_implementation_signature_evidence is None
+            else len(kernel_implementation_signature_match_rows)
+        ),
+        "kernel_implementation_signature_mismatch_sites": (
+            None
+            if kernel_implementation_signature_evidence is None
+            else len(kernel_implementation_signature_mismatch_rows)
         ),
         "kernel_implementation_targets": (
             None
@@ -4275,6 +4421,9 @@ def audit(
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
+        "kernel_implementation_signature_evidence": (
+            kernel_implementation_signature_evidence or {}
+        ),
         "kernel_return_contract_evidence": kernel_return_contract_evidence or {},
         "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
