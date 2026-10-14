@@ -948,6 +948,100 @@ def recover_kernel_implementation_evidence(
     return evidence
 
 
+def _kernel_return_expression_kind(expression: str | None) -> str:
+    if expression is None or not expression.strip():
+        return "bare-return"
+    normalized = " ".join(expression.strip().split())
+    if "STATUS_NOT_IMPLEMENTED" in normalized:
+        return "status-not-implemented"
+    if normalized == "STATUS_SUCCESS" or normalized in {"0", "0u", "0UL"}:
+        return "status-success-or-zero"
+    if normalized.startswith("STATUS_"):
+        return "status-symbol"
+    if re.fullmatch(r"(?:0x[0-9A-Fa-f]+|[0-9]+)(?:u|U|ul|UL)?", normalized):
+        return "constant"
+    if "xbox_" in normalized or "bridge_" in normalized:
+        return "delegated-expression"
+    return "expression"
+
+
+def recover_kernel_return_contract_evidence(
+    resolver_source: Path,
+    resolver_cases: dict[int, str],
+) -> dict[str, dict[str, Any]]:
+    """Collect textual return expressions for resolver-selected host targets.
+
+    This is source-shape evidence only.  It does not prove that a return value
+    has Xbox-compatible status bits, pointer ownership, side effects, or ABI.
+    """
+    target_names = sorted(
+        {
+            target.strip().lstrip("&")
+            for target in resolver_cases.values()
+            if target.strip().lstrip("&").startswith("xbox_")
+        }
+    )
+    evidence = {
+        target: {
+            "status": "missing-source-definition",
+            "sources": [],
+            "returns": [],
+        }
+        for target in target_names
+    }
+    source_root = resolver_source.parent
+    return_re = re.compile(
+        r"(?m)^\s*return(?:\s+(?P<expression>[^;\r\n{}]+))?;"
+    )
+    for source_path in sorted(source_root.rglob("*.c")):
+        text = source_path.read_text(encoding="utf-8")
+        for match in KERNEL_FUNCTION_DEFINITION_RE.finditer(text):
+            target = match.group("name")
+            if target not in evidence:
+                continue
+            body_start = match.end() - 1
+            depth = 0
+            body_end: int | None = None
+            for index in range(body_start, len(text)):
+                character = text[index]
+                if character == "{":
+                    depth += 1
+                elif character == "}":
+                    depth -= 1
+                    if depth == 0:
+                        body_end = index
+                        break
+            if body_end is None:
+                continue
+            relative_source = source_path.relative_to(source_root).as_posix()
+            function_line = text.count("\n", 0, match.start()) + 1
+            source_text = f"{relative_source}:{function_line}"
+            if source_text not in evidence[target]["sources"]:
+                evidence[target]["sources"].append(source_text)
+            evidence[target]["status"] = "source-definition-found"
+            for return_match in return_re.finditer(
+                text, body_start, body_end + 1
+            ):
+                expression = return_match.group("expression")
+                return_source = (
+                    f"{relative_source}:"
+                    f"{text.count(chr(10), 0, return_match.start()) + 1}"
+                )
+                row = {
+                    "source": return_source,
+                    "expression": (
+                        None if expression is None else " ".join(expression.split())
+                    ),
+                    "kind": _kernel_return_expression_kind(expression),
+                }
+                if row not in evidence[target]["returns"]:
+                    evidence[target]["returns"].append(row)
+    for item in evidence.values():
+        item["sources"].sort()
+        item["returns"].sort(key=lambda row: (row["source"], row["kind"]))
+    return evidence
+
+
 def recover_kernel_file_information_evidence(
     source_root: Path,
 ) -> dict[str, Any]:
@@ -2976,6 +3070,13 @@ def audit(
             kernel_source, used_kernel_cases
         )
     )
+    kernel_return_contract_evidence = (
+        None
+        if kernel_source is None
+        else recover_kernel_return_contract_evidence(
+            kernel_source, used_kernel_cases
+        )
+    )
     kernel_file_information_evidence = (
         None
         if kernel_source is None
@@ -3026,6 +3127,10 @@ def audit(
                 row["host_implementation_body_markers"] = implementation[
                     "body_markers"
                 ]
+        if kernel_return_contract_evidence is not None and resolver_target:
+            contract = kernel_return_contract_evidence.get(resolver_target)
+            if contract is not None:
+                row["host_return_contract"] = contract
         ordinal = row.get("kernel_ordinal")
         if kernel_bridge_cases is not None and ordinal is not None:
             bridge_target = kernel_bridge_cases.get(int(ordinal))
@@ -3360,6 +3465,50 @@ def audit(
                 }
                 for row in kernel_implementation_explicit_stub_rows
             ]
+        ),
+        "kernel_return_contract_status": (
+            "not-supplied"
+            if kernel_return_contract_evidence is None
+            else (
+                "verified-source-return-shapes"
+                if all(
+                    item["status"] == "source-definition-found"
+                    for item in kernel_return_contract_evidence.values()
+                )
+                else "missing-source-return-shapes"
+            )
+        ),
+        "kernel_return_contract_targets": (
+            None
+            if kernel_return_contract_evidence is None
+            else len(kernel_return_contract_evidence)
+        ),
+        "kernel_return_contract_defined_targets": (
+            None
+            if kernel_return_contract_evidence is None
+            else sum(
+                item["status"] == "source-definition-found"
+                for item in kernel_return_contract_evidence.values()
+            )
+        ),
+        "kernel_return_contract_sites": (
+            None
+            if kernel_return_contract_evidence is None
+            else sum(
+                len(item["returns"])
+                for item in kernel_return_contract_evidence.values()
+            )
+        ),
+        "kernel_return_contract_kind_counts": (
+            None
+            if kernel_return_contract_evidence is None
+            else dict(
+                Counter(
+                    return_row["kind"]
+                    for item in kernel_return_contract_evidence.values()
+                    for return_row in item["returns"]
+                )
+            )
         ),
         "kernel_implementation_status_not_implemented_token_target_count": (
             None
@@ -3770,6 +3919,7 @@ def audit(
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
+        "kernel_return_contract_evidence": kernel_return_contract_evidence or {},
         "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
         "kernel_call_argument_counts": kernel_call_argument_counts,

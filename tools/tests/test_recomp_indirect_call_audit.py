@@ -26,6 +26,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_register_constant_arguments,
     recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
+    recover_kernel_return_contract_evidence,
     recover_kernel_return_use_provenance,
     recover_prcb_cache_writes,
     recover_prcb_callback_cache_provenance,
@@ -778,6 +779,41 @@ void xbe_entry_point(void)
         )
         self.assertEqual(evidence["xbox_Missing"]["status"], "missing-source-definition")
         self.assertEqual(evidence["xbox_Missing"]["body_markers"], [])
+
+    def test_recovers_kernel_return_contract_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            resolver = root / "kernel_thunks.c"
+            resolver.write_text(
+                "case 66: return (ULONG_PTR)xbox_Foo;\n"
+                "case 67: return (ULONG_PTR)xbox_Bar;\n",
+                encoding="utf-8",
+            )
+            (root / "kernel_impl.c").write_text(
+                "NTSTATUS __stdcall xbox_Foo(void)\n"
+                "{\n"
+                "    if (ready) {\n"
+                "        return STATUS_SUCCESS;\n"
+                "    }\n"
+                "    return STATUS_NOT_IMPLEMENTED;\n"
+                "}\n"
+                "ULONG __stdcall xbox_Bar(void)\n"
+                "{\n"
+                "    return 0x22u;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_kernel_return_contract_evidence(
+                resolver, {66: "xbox_Foo", 67: "xbox_Bar"}
+            )
+
+        self.assertEqual(evidence["xbox_Foo"]["status"], "source-definition-found")
+        self.assertEqual(
+            [row["kind"] for row in evidence["xbox_Foo"]["returns"]],
+            ["status-success-or-zero", "status-not-implemented"],
+        )
+        self.assertEqual(evidence["xbox_Bar"]["returns"][0]["kind"], "constant")
 
     def test_reads_only_kernel_bridge_resolver_cases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
