@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
+    recover_dynamic_callback_caller_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
@@ -230,6 +231,63 @@ void xbe_entry_point(void)
         self.assertIn(
             "eax = MEM32(esp + 0x20);",
             {item["expression"] for item in evidence["0x00001009"]["assignments"]},
+        )
+
+    def test_recovers_direct_caller_push_shape(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "sub_00001000",
+                "calls_to": [],
+            },
+            {
+                "start": "0x2000",
+                "end": "0x2010",
+                "name": "sub_00002000",
+                "calls_to": ["0x1000"],
+            },
+        ]
+        generated_source = """
+void sub_00002000(void)
+{
+    eax = ebp + -16;
+loc_00002004: ;
+    PUSH32(esp, 0xFFFFFFFFu);
+    PUSH32(esp, eax);
+    PUSH32(esp, 0x0000200Au); RECOMP_ABI_CALL(0x00001000u, sub_00001000); /* call */
+}
+void sub_00001000(void)
+{
+    { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); PUSH32(esp, 0x0000100Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Fu); }
+}
+"""
+        rows = [
+            {
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "dynamic-indexed-record-target",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_dynamic_callback_caller_provenance(
+                generated, rows, functions, {0x1000, 0x2000}
+            )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["caller_name"], "sub_00002000")
+        self.assertEqual(
+            [item["operand"] for item in evidence[0]["pushes"]],
+            ["0xFFFFFFFFu", "eax"],
+        )
+        self.assertEqual(
+            evidence[0]["pushes"][1]["source_assignment"]["rhs"],
+            "ebp + -16",
         )
 
     def test_resolves_proven_bss_slot_initializer(self) -> None:

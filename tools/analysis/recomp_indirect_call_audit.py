@@ -42,6 +42,10 @@ INDIRECT_CALL_RE = re.compile(
     r"_icall_target\s*=\s*(?P<expression>[^;]+);.*?"
     r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*0x(?P<site>[0-9A-Fa-f]{8})u\)"
 )
+DIRECT_ABI_CALL_RE = re.compile(
+    r"RECOMP_ABI_CALL\(0x(?P<target>[0-9A-Fa-f]{8})u,\s*"
+    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\)"
+)
 FIXED_SLOT_RE = re.compile(r"MEM32\(0x(?P<address>[0-9A-Fa-f]{1,8})\)")
 FIXED_SLOT_WRITE_RE = re.compile(
     r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
@@ -1755,6 +1759,125 @@ def recover_dynamic_source_provenance(
     return evidence
 
 
+def recover_dynamic_callback_caller_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int] | None,
+) -> list[dict[str, Any]]:
+    """Recover direct-call push shapes into functions containing dynamic sites.
+
+    This is caller-side stack evidence only.  It does not assign parameter
+    types, identify an object class, or prove that a pushed pointer reaches a
+    particular callback table at runtime.
+    """
+    dynamic_function_addresses = {
+        _address(row["function"])
+        for row in classified
+        if row.get("classification")
+        in {
+            "dynamic-register-or-object-target",
+            "dynamic-memory-target",
+            "dynamic-object-field-target",
+            "dynamic-indexed-record-target",
+            "prcb-guarded-dynamic-callback",
+        }
+    }
+    if not dynamic_function_addresses:
+        return []
+    function_addresses = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    target_names = {
+        address: next(
+            (
+                str(row.get("function_name", ""))
+                for row in classified
+                if _address(row["function"]) == address
+            ),
+            "",
+        )
+        for address in dynamic_function_addresses
+    }
+    results: list[dict[str, Any]] = []
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current_name = ""
+        current_address: int | None = None
+        function_start_line = 0
+        register_assignments: dict[str, list[dict[str, Any]]] = {}
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current_name = symbol_match.group(1)
+                current_address = function_addresses.get(current_name)
+                function_start_line = line_number
+                register_assignments = {}
+            if current_address is None:
+                continue
+
+            call_match = DIRECT_ABI_CALL_RE.search(line)
+            if call_match is not None:
+                target_address = int(call_match.group("target"), 16)
+                if (
+                    target_address in dynamic_function_addresses
+                    and (
+                        directly_reachable is None
+                        or current_address in directly_reachable
+                    )
+                ):
+                    pushes: list[dict[str, Any]] = []
+                    for prior_index in range(line_number - 2, function_start_line - 2, -1):
+                        prior_line = lines[prior_index]
+                        if LOCAL_LABEL_RE.match(prior_line) is not None:
+                            break
+                        if (
+                            DIRECT_ABI_CALL_RE.search(prior_line) is not None
+                            or INDIRECT_CALL_RE.search(prior_line) is not None
+                        ):
+                            break
+                        push_match = PUSH32_RE.match(prior_line)
+                        if push_match is None:
+                            continue
+                        operand = push_match.group("operand").strip()
+                        push: dict[str, Any] = {
+                            "source": f"{source_path.name}:{prior_index + 1}",
+                            "operand": operand,
+                        }
+                        if REGISTER_NAME_RE.fullmatch(operand) is not None:
+                            history = register_assignments.get(operand, [])
+                            if history:
+                                push["source_assignment"] = history[-1]
+                        pushes.append(push)
+                    pushes.reverse()
+                    results.append(
+                        {
+                            "caller": f"0x{current_address:08X}",
+                            "caller_name": current_name,
+                            "source": f"{source_path.name}:{line_number}",
+                            "target": f"0x{target_address:08X}",
+                            "target_name": target_names[target_address],
+                            "pushes": pushes,
+                            "status": "direct-call-push-shape-observed",
+                        }
+                    )
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match is not None:
+                register = assignment_match.group("register")
+                register_assignments.setdefault(register, []).append(
+                    {
+                        "register": register,
+                        "rhs": assignment_match.group("rhs").strip(),
+                        "expression": line.strip(),
+                        "source": f"{source_path.name}:{line_number}",
+                    }
+                )
+    return results
+
+
 def classify_sites(
     sites: list[dict[str, Any]],
     xbe: dict[str, Any],
@@ -2133,6 +2256,9 @@ def audit(
     )
     dynamic_source_provenance = recover_dynamic_source_provenance(
         generated_dir, classified
+    )
+    dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
+        generated_dir, classified, functions, directly_reachable
     )
     for row in classified:
         provenance = dynamic_source_provenance.get(str(row["call_site"]))
@@ -2694,6 +2820,14 @@ def audit(
         "dynamic_source_provenance_missing_sites": (
             len(dynamic_stack_rows) - len(dynamic_provenance_rows)
         ),
+        "dynamic_callback_caller_provenance_sites": len(
+            dynamic_callback_caller_provenance
+        ),
+        "dynamic_callback_caller_provenance_status": (
+            "direct-call-push-shape-observed"
+            if dynamic_callback_caller_provenance
+            else "no-direct-caller-push-shape-observed"
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -2757,6 +2891,7 @@ def audit(
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_source_provenance": dynamic_source_provenance,
+        "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,

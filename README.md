@@ -20,19 +20,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 1.98
+## Estado verificável — release 1.99
 
-O release 1.98 adiciona proveniência linear limitada para os sete callbacks
-dinâmicos: `dynamic_source_provenance_sites=7`, `dynamic_source_provenance_complete_sites=7`
-e `dynamic_source_provenance_missing_sites=0`. O relatório agora preserva,
-sem resolver destinos, as atribuições locais observadas antes de cada chamada:
-`FS:[0x20] -> +0x250` nos quatro callbacks PRCB, `ebp+8 -> +0x584` no campo
-de objeto, `esp+0x20 -> +8/+0xC -> índice*12+8` na tabela e a cadeia do slot
-`0x0030BC94–0x0030BC98`. A coleta respeita a ordem das atribuições e cadeias
-de autoatualização, mas continua deliberadamente sem prova de identidade de
-objeto, fluxo completo, ABI, destino de callback ou execução. A suíte Python
-passou `85/85`; a prontidão segue `NOT_READY` e a estimativa conservadora do
-PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
+O release 1.99 mantém a proveniência local completa dos sete callbacks
+dinâmicos e acrescenta `dynamic_callback_caller_provenance_sites=9`: nove
+chamadas diretas, dentro do subgrafo alcançável, para funções que contêm esses
+callbacks agora preservam a forma dos `PUSH32` e a atribuição linear observada
+quando o operando é um registrador. Isso ajuda a distinguir contêineres locais,
+ponteiros recebidos e argumentos de stack, mas continua deliberadamente sem
+prova de tipo, identidade de objeto, fluxo completo, ABI ou destino de callback.
+O piloto read-only do REA também foi verificado: o MCP local respondeu com
+`170/170` ferramentas e `6/6` prompts, mas não há Hopper, Ghidra ou IDA local;
+ao receber o `default.xbe`, o comando `rea analyze` retornou
+`target_unavailable / unsupported binary format`. Portanto o REA não acrescenta
+evidência ao XBE neste release e não foi usado para criar bindings. A suíte
+Python passou `86/86`; a prontidão segue `NOT_READY` e a estimativa conservadora
+do PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
 
 ## Histórico verificável
 
