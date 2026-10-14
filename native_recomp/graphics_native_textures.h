@@ -8,7 +8,8 @@ typedef struct {
     ID3D11SamplerState *sampler;
     FutGraphicsTexturePlan plan;
     FutGraphicsTextureState sampling_state;
-    int valid, sampling_ready;
+    uint32_t texel_or,texel_and; /* All uploaded texels, excluding pitch padding. */
+    int valid, sampling_ready,zero_rgb_candidate;
 } FutNativeTexture;
 /* Refresh from guest including CPU writes. Caller must first write back any
  * overlapping GPU render targets. Failure preserves the existing resources. */
@@ -20,6 +21,12 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
  * Failure preserves objects but sets sampling_ready=0: do not use old sampler. */
 HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTextureState *state);
+/* Partial evaluation, NOT a quincunx sampler: all uploaded RGB must be0,
+ * exact observed convolution/clamp state and bounded finite q=1 geometry.
+ * Alpha remains unimplemented. Fragment compilation MUST prove the candidate
+ * texture resource disappears before creating an executable PS. */
+HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
+    const FutGraphicsTextureState *state,int coordinates_verified);
 void fut_native_texture_destroy(FutNativeTexture *native);
 /* Projected texel-space coordinates for this LINEAR 2D storage, level zero.
  * Only valid with an approved sampler; not an original fragment program. */

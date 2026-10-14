@@ -25,6 +25,11 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     HRESULT hr = E_FAIL;
     FutNativeTexture next = {0};
     if (!read(context, plan->address, bytes, plan->span)) goto done;
+    next.texel_and=UINT32_MAX;
+    for(unsigned y=0;y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
+        uint32_t word;memcpy(&word,bytes+(size_t)y*plan->pitch+x*4,4);
+        next.texel_or|=word;next.texel_and&=word;
+    }
     D3D11_TEXTURE2D_DESC desc = {0};
     desc.Width=plan->width; desc.Height=plan->height;
     desc.MipLevels=1; desc.ArraySize=1; desc.SampleDesc.Count=1;
@@ -46,6 +51,7 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
 {
     if (!native) return E_INVALIDARG;
     native->sampling_ready=0;
+    native->zero_rgb_candidate=0;
     if (!device || !state || !native->valid || (state->valid & 0x2C) != 0x2C) return E_INVALIDARG;
     unsigned min=(state->filter>>16)&255, mag=(state->filter>>24)&15;
     /* Fixed LOD zero is faithful here only for one level and matching filters.
@@ -82,6 +88,21 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
         native->sampler=sampler; native->sampling_ready=1; native->sampling_state=*state;
     }
     return hr;
+}
+HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
+    const FutGraphicsTextureState *state,int coordinates_verified)
+{
+    if(!native) return E_INVALIDARG;
+    native->zero_rgb_candidate=0;
+    native->sampling_ready=0;
+    if(!state || !native->valid || !native->texture || !native->view) return E_INVALIDARG;
+    if(coordinates_verified!=1 || (native->texel_or&0xFFFFFFu) ||
+        state->filter!=0x04072000u || state->address!=0x10303u || state->control0!=0x4003FFC0u ||
+        (state->valid&0xBF)!=0xBF || state->format!=(0x11228u|native->plan.dma_context) ||
+        state->image_rect!=((native->plan.width<<16)|native->plan.height) ||
+        state->control1!=(native->plan.pitch<<16)) return E_NOTIMPL;
+    native->zero_rgb_candidate=1;native->sampling_state=*state;
+    return S_OK;
 }
 const char *fut_native_texture_hlsl(void)
 {

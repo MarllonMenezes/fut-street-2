@@ -10,7 +10,11 @@ typedef struct {ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count;} 
 HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *device,
     ID3D11DeviceContext *context,ID3DBlob *vertex_bytecode,const FutGraphicsImmediate *batch,uint16_t required);
 void fut_native_immediate_destroy(FutNativeImmediate *native);
-typedef struct {float clip[4],screen[4];} FutNativePosition;
+typedef struct {float clip[4],screen[4],texture[4][4];} FutNativePosition;
+/* Stage mask for the conservative constant-RGB specialization domain:
+ * screen/clip W=1, bounded finite positions and finite UV with q=1.
+ * Not a generic projective/interpolation or sampler fidelity certificate. */
+unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count);
 /* Execute VS only with SO_NO_RASTERIZED_STREAM, query, copy and validate.
  * Positive finite screen W [2^-64,2^64] only. No pixels, batch consumption,
  * guest marker or original submission completion. Output unchanged on failure.

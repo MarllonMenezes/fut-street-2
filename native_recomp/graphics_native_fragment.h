@@ -2,9 +2,11 @@
 #define FUT_GRAPHICS_NATIVE_FRAGMENT_H
 #include <d3dcompiler.h>
 #include "graphics_native_textures.h"
-/* Produces a native shader only for supported combiner equations AND current
- * approved texture samplers. Does not translate geometry, RDI, dithering or
- * unsupported filters. Bytecode compilation is not proof of an original draw. */
+/* Supported combiner equations with current approved samplers OR a validated
+ * zero-RGB snapshot candidate whose unknown-alpha texture resource is proven
+ * absent from the compiled bytecode. Residual candidate reads are refused.
+ * Does not implement generic quincunx, RDI or dithering. Compilation and
+ * synthetic GPU pixels are not proof of an original rasterized draw. */
 HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvinState *state,
     const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode);
 #endif

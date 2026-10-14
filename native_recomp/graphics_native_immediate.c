@@ -54,14 +54,16 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
         occupied=1;ID3D11Buffer_Release(targets[i]);
     }
     if(occupied) return E_NOTIMPL;
-    D3D11_SO_DECLARATION_ENTRY decl[]={{0,"SV_POSITION",0,0,4,0},{0,"TEXCOORD",6,0,4,0}};
+    D3D11_SO_DECLARATION_ENTRY decl[]={{0,"SV_POSITION",0,0,4,0},{0,"TEXCOORD",6,0,4,0},
+        {0,"TEXCOORD",0,0,4,0},{0,"TEXCOORD",1,0,4,0},
+        {0,"TEXCOORD",2,0,4,0},{0,"TEXCOORD",3,0,4,0}};
     UINT stride=sizeof(FutNativePosition),offset=0;ID3D11GeometryShader *stream=NULL;
     HRESULT hr=ID3D11Device_CreateGeometryShaderWithStreamOutput(device,
         ID3D10Blob_GetBufferPointer(bytecode),ID3D10Blob_GetBufferSize(bytecode),
-        decl,2,&stride,1,D3D11_SO_NO_RASTERIZED_STREAM,NULL,&stream);
+        decl,6,&stride,1,D3D11_SO_NO_RASTERIZED_STREAM,NULL,&stream);
     ID3D11Buffer *output=NULL,*staging=NULL;
-    uint32_t sentinel[FUT_IMMEDIATE_CAPACITY*8];
-    for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*8;++i) sentinel[i]=0x7FC00000;
+    uint32_t sentinel[FUT_IMMEDIATE_CAPACITY*sizeof(FutNativePosition)/sizeof(uint32_t)];
+    for(unsigned i=0;i<sizeof(sentinel)/sizeof(*sentinel);++i) sentinel[i]=0x7FC00000;
     D3D11_BUFFER_DESC desc={0};desc.ByteWidth=native->count*stride;
     desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_STREAM_OUTPUT;
     D3D11_SUBRESOURCE_DATA initial={sentinel,0,0};
@@ -96,4 +98,21 @@ done:
     if(output) ID3D11Buffer_Release(output);
     if(stream) ID3D11GeometryShader_Release(stream);
     return hr;
+}
+unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
+{
+    if(!positions || !count || count>FUT_IMMEDIATE_CAPACITY || count%3) return 0;
+    unsigned mask=15;
+    for(unsigned i=0;i<count;++i) {
+        const FutNativePosition *p=&positions[i];
+        if(p->screen[3]!=1 || p->clip[3]!=1) return 0;
+        for(unsigned c=0;c<4;++c) if(!isfinite(p->screen[c]) || !isfinite(p->clip[c]) ||
+            (c<2 && (fabsf(p->screen[c])>0x1p20f || fabsf(p->clip[c])>0x1p16f))) return 0;
+        for(unsigned stage=0;stage<4;++stage) {
+            for(unsigned c=0;c<4;++c) if(!isfinite(p->texture[stage][c]) ||
+                fabsf(p->texture[stage][c])>0x1p20f) mask&=~(1u<<stage);
+            if(p->texture[stage][3]!=1) mask&=~(1u<<stage);
+        }
+    }
+    return mask;
 }

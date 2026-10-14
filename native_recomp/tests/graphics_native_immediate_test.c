@@ -50,10 +50,22 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
         float x=(float)(int)(p[0]*16)/16,y=(float)(int)(p[1]*16)/16;
         float expected[4]={(x/64*2-1)*p[3],(1-y/32*2)*p[3],p[2]/16777215*p[3],p[3]};
         CHECK(!memcmp(positions[i].screen,p,16),36);
+        CHECK(!memcmp(positions[i].texture[0],batch.vertices[i][9],16) &&
+            positions[i].texture[1][3]==1 && positions[i].texture[2][3]==1 && positions[i].texture[3][3]==1,52);
         for(unsigned c=0;c<4;++c) CHECK(fabsf(positions[i].clip[c]-expected[c])<0.000002f,37);
         CHECK(fabsf((positions[i].clip[0]/p[3]+1)*32-x)<0.00002f &&
             fabsf((1-positions[i].clip[1]/p[3])*16-y)<0.00002f,38);
     }
+    CHECK(!fut_native_immediate_constant_coordinates(positions,3),53); /* W2/.5 outside specialization domain. */
+    FutNativePosition domain[3];memcpy(domain,positions,sizeof(domain));
+    for(unsigned i=0;i<3;++i) domain[i].screen[3]=domain[i].clip[3]=1;
+    CHECK(fut_native_immediate_constant_coordinates(domain,3)==15,54);
+    domain[1].texture[0][3]=0;
+    CHECK(fut_native_immediate_constant_coordinates(domain,3)==14,55);
+    domain[2].texture[2][0]=NAN;
+    CHECK(fut_native_immediate_constant_coordinates(domain,3)==10,56);
+    domain[0].clip[0]=INFINITY;
+    CHECK(!fut_native_immediate_constant_coordinates(domain,3),57);
     ID3D11GeometryShader *bound=NULL;ID3D11Buffer *target=NULL;
     ID3D11DeviceContext_GSGetShader(context,&bound,NULL,NULL);
     ID3D11DeviceContext_SOGetTargets(context,1,&target);

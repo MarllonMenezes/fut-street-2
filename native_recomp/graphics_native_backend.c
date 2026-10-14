@@ -81,6 +81,7 @@ typedef struct {
     FutGraphicsSoftwareState software;
     FutGraphicsImmediate immediate;
     FutNativeImmediate native_immediate;
+    unsigned constant_coordinates;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
@@ -173,6 +174,7 @@ static int native_prepare_textures(NativeGraphicsState *state)
         const FutGraphicsTextureState *texture=&state->kelvin.textures[stage];
         if (!(texture->control0 & 0x40000000u)) {
             state->textures[stage].sampling_ready=0;
+            state->textures[stage].zero_rgb_candidate=0;
             ID3D11ShaderResourceView *empty_view=NULL;
             ID3D11SamplerState *empty_sampler=NULL;
             ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&empty_view);
@@ -200,13 +202,23 @@ static int native_prepare_textures(NativeGraphicsState *state)
             fprintf(stderr,"[GRAPHICS] texture upload failed: stage=%u HRESULT=%08lX\n",stage,hr);
             return 0;
         }
-        fprintf(stderr,"[GRAPHICS] native texture uploaded: stage=%u size=%ux%u pitch=%u source=%08X; no sample/draw\n",
-            stage,plan.width,plan.height,plan.pitch,plan.address);
+        fprintf(stderr,"[GRAPHICS] native texture uploaded: stage=%u size=%ux%u pitch=%u source=%08X OR=%08X AND=%08X; no sample/draw\n",
+            stage,plan.width,plan.height,plan.pitch,plan.address,state->textures[stage].texel_or,state->textures[stage].texel_and);
         hr=fut_native_texture_sampler(&state->textures[stage],state->device,texture);
+        if(FAILED(hr) && state->immediate.ready && !state->immediate.active &&
+            (state->constant_coordinates&(1u<<stage)))
+            hr=fut_native_texture_zero_rgb_candidate(&state->textures[stage],texture,1);
         if (FAILED(hr)) {
             fprintf(stderr,"[GRAPHICS] texture sampling translation pending: stage=%u filter=%08X address=%08X control=%08X HRESULT=%08lX\n",
                 stage,texture->filter,texture->address,texture->control0,hr);
             return 0;
+        }
+        if(state->textures[stage].zero_rgb_candidate) {
+            ID3D11ShaderResourceView *empty_view=NULL;ID3D11SamplerState *empty_sampler=NULL;
+            ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&empty_view);
+            ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&empty_sampler);
+            fprintf(stderr,"[GRAPHICS] zero-RGB snapshot candidate: stage=%u finite unit-q coordinates proven; alpha/residual sample still unimplemented\n",stage);
+            continue;
         }
         ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&state->textures[stage].view);
         ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&state->textures[stage].sampler);
@@ -256,15 +268,24 @@ static int object_memory_read(void *context, uint32_t address, void *data, size_
 static int native_prepare_draw(NativeGraphicsState *state)
 {
     if (!native_prepare_surfaces(state) || !native_prepare_textures(state)) return 0;
+    unsigned candidates=0;
+    for(unsigned stage=0;stage<4;++stage) if(state->textures[stage].zero_rgb_candidate) candidates|=1u<<stage;
+    if(candidates) {
+        if(!native_prepare_fragment(state)) return 0;
+        fprintf(stderr,"[GRAPHICS] zero-RGB specialization compiled: stages=%X; no candidate texture/alpha resources remain; generic quincunx unsupported\n",candidates);
+    }
     if (!fut_graphics_software_draw_ready(&state->software)) {
-        fprintf(stderr,"[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
+        fprintf(stderr,"[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation; sample_valid=%u alpha=%08X RDI=%08X:%08X,%08X:%08X registers_valid=%X reg400094=%08X reg400B80=%08X\n",
+            state->software.sample_valid,state->software.sample_alpha,state->software.rdi_index[0],state->software.rdi_value[0],
+            state->software.rdi_index[1],state->software.rdi_value[1],state->software.register_valid,
+            state->software.register_words[0],state->software.register_words[1]);
         return 0;
     }
     if ((state->kelvin.program_mode & 3u)!=2u) {
         fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
         return 0;
     }
-    if (!native_prepare_vertex(state) || !native_prepare_fragment(state)) return 0;
+    if (!native_prepare_vertex(state) || (!candidates && !native_prepare_fragment(state))) return 0;
     if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
         fprintf(stderr,"[GRAPHICS] incomplete native draw state at use\n");
         return 0;
@@ -281,6 +302,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
 
 static int native_prepare_immediate(NativeGraphicsState *state)
 {
+    state->constant_coordinates=0;
     if(!native_prepare_surfaces(state)) return 0;
     HRESULT hr=fut_native_vertex_surface_prepare(&state->vertex_surface,state->device,state->context,
         &state->native_surfaces.plan);
@@ -314,6 +336,7 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     if(FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] vertex-only execution/readback failed: HRESULT=%08lX\n",hr);return 0;
     }
+    state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
     fprintf(stderr,"[GRAPHICS] original vertex program executed with no rasterized stream: vertices=%u; no pixels/submission completion\n",
         state->native_immediate.count);
     for(unsigned i=0;i<state->native_immediate.count && i<3;++i) fprintf(stderr,

@@ -114,6 +114,64 @@ static int verify_sampling(ID3D11Device *device,ID3D11DeviceContext *context,Fut
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);
     return good?0:78;
 }
+/* Exercise the actual specialized PS, not only its math helper. No texture
+ * or sampler is bound: compilation must have removed the unknown alpha Load.
+ * Synthetic output only; not a game draw or NV2A raster precision oracle. */
+static int verify_zero_rgb_pixel_shader(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion,ID3D11PixelShader *pixel_shader)
+{
+    ID3D11DeviceContext_ClearState(context);
+    const char *source="struct O{float4 p:SV_POSITION;float4 c:COLOR0;};"
+        "O main(uint i:SV_VertexID){O o;float2 v=float2((i<<1)&2,i&2);"
+        "o.p=float4(v*float2(2,-2)+float2(-1,1),.5,1);o.c=float4(.25,.5,.75,.5);return o;}";
+    ID3DBlob *blob=NULL;ID3D11VertexShader *vertex=NULL;
+    CHECK(SUCCEEDED(D3DCompile(source,strlen(source),"zero_rgb_synthetic_vs",NULL,NULL,"main","vs_5_0",0,0,&blob,NULL)),100);
+    CHECK(SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(blob),ID3D10Blob_GetBufferSize(blob),NULL,&vertex)),101);
+    uint32_t windows[9][4]={{0,0,3,2}};windows[8][0]=windows[8][1]=1;
+    D3D11_BUFFER_DESC buffer_desc={0};buffer_desc.ByteWidth=sizeof(windows);
+    buffer_desc.Usage=D3D11_USAGE_IMMUTABLE;buffer_desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_SUBRESOURCE_DATA data={windows,0,0};ID3D11Buffer *window_buffer=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&buffer_desc,&data,&window_buffer)),102);
+    D3D11_TEXTURE2D_DESC desc={0};desc.Width=4;desc.Height=3;desc.MipLevels=desc.ArraySize=desc.SampleDesc.Count=1;
+    desc.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D *output=NULL,*staging=NULL;ID3D11RenderTargetView *target=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&output)) &&
+        SUCCEEDED(ID3D11Device_CreateRenderTargetView(device,(ID3D11Resource*)output,NULL,&target)),103);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),104);
+    D3D11_RASTERIZER_DESC raster={0};raster.FillMode=D3D11_FILL_SOLID;raster.CullMode=D3D11_CULL_NONE;raster.DepthClipEnable=TRUE;
+    ID3D11RasterizerState *raster_state=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateRasterizerState(device,&raster,&raster_state)),105);
+    D3D11_DEPTH_STENCIL_DESC depth={0};depth.DepthFunc=D3D11_COMPARISON_ALWAYS;
+    depth.FrontFace.StencilFunc=D3D11_COMPARISON_ALWAYS;
+    depth.FrontFace.StencilFailOp=depth.FrontFace.StencilDepthFailOp=depth.FrontFace.StencilPassOp=D3D11_STENCIL_OP_KEEP;
+    depth.BackFace=depth.FrontFace;ID3D11DepthStencilState *depth_state=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateDepthStencilState(device,&depth,&depth_state)),106);
+    const float red[4]={1,0,0,1};ID3D11DeviceContext_ClearRenderTargetView(context,target,red);
+    D3D11_VIEWPORT viewport={0,0,4,3,0,1};
+    ID3D11DeviceContext_RSSetViewports(context,1,&viewport);ID3D11DeviceContext_RSSetState(context,raster_state);
+    ID3D11DeviceContext_OMSetRenderTargets(context,1,&target,NULL);
+    ID3D11DeviceContext_OMSetDepthStencilState(context,depth_state,0);
+    ID3D11DeviceContext_PSSetShader(context,pixel_shader,NULL,0);
+    ID3D11DeviceContext_PSSetConstantBuffers(context,2,1,&window_buffer);
+    ID3D11DeviceContext_VSSetShader(context,vertex,NULL,0);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_Draw(context,3,0);
+    ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)output);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),107);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped)),108);
+    const float expected[4]={0,0,0,.5f};
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x)
+        CHECK(!memcmp((uint8_t*)mapped.pData+y*mapped.RowPitch+x*16,expected,16),109);
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
+    ID3D11DeviceContext_ClearState(context);
+    ID3D11RasterizerState_Release(raster_state);ID3D11DepthStencilState_Release(depth_state);
+    ID3D11RenderTargetView_Release(target);ID3D11Texture2D_Release(staging);ID3D11Texture2D_Release(output);
+    ID3D11Buffer_Release(window_buffer);ID3D11VertexShader_Release(vertex);ID3D10Blob_Release(blob);
+    return 0;
+}
 int main(void)
 {
     FutGraphicsKelvinState kelvin={0};FutGraphicsDmaView dma={0x80000000,0x4000};
@@ -198,8 +256,43 @@ int main(void)
         verify_upload(device,context,&completion,&native,&memory)==0 && !native.sampling_ready && !native.sampler,26);
     ID3D11Texture2D *saved=native.texture;memory.fail=1;
     CHECK(FAILED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) && native.texture==saved && native.valid,27);
+    /* All REAL texels RGB0, varied alpha. Nonzero pitch padding must not
+     * invalidate the proof, nor may the first pixel alone establish it. */
+    memory.fail=0;memset(memory.bytes,0xCD,sizeof(memory.bytes));
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) {
+        uint32_t color=(128u+x+y*4)<<24;memcpy(memory.bytes+y*20+x*4,&color,4);
+    }
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) &&
+        !(native.texel_or&0xFFFFFFu) && !(native.texel_and&0xFFFFFFu) && !native.zero_rgb_candidate,36);
+    state->filter=0x04072000;state->address=0x10303;
+    CHECK(fut_native_texture_sampler(&native,device,state)==E_NOTIMPL &&
+        fut_native_texture_zero_rgb_candidate(&native,state,0)==E_NOTIMPL && !native.zero_rgb_candidate,37);
+    CHECK(SUCCEEDED(fut_native_texture_zero_rgb_candidate(&native,state,1)) && native.zero_rgb_candidate &&
+        !native.sampling_ready && !native.sampler,38);
+    approved[0]=native;
+    CHECK(SUCCEEDED(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)),39);
+    CHECK(verify_zero_rgb_pixel_shader(device,context,&completion,pixel_shader)==0,40);
+    ID3D11PixelShader_Release(pixel_shader);ID3D10Blob_Release(pixel_blob);
+    /* Unknown alpha used as output alpha or RGB MUST remain blocked. */
+    CHECK(fut_graphics_kelvin_state(&kelvin,0x260,0x18200000)==FUT_KELVIN_APPLIED,41);
+    CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL && !pixel_shader && !pixel_blob,42);
+    CHECK(fut_graphics_kelvin_state(&kelvin,0x260,0x14200000)==FUT_KELVIN_APPLIED &&
+        fut_graphics_kelvin_state(&kelvin,0xAC0,0x18200000)==FUT_KELVIN_APPLIED,43);
+    CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL && !pixel_shader && !pixel_blob,44);
+    CHECK(fut_graphics_kelvin_state(&kelvin,0xAC0,0x08200000)==FUT_KELVIN_APPLIED,45);
+    state->address=0x10404;
+    CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL &&
+        fut_native_texture_zero_rgb_candidate(&native,state,1)==E_NOTIMPL && !native.zero_rgb_candidate,46);
+    state->address=0x10303;state->filter=0x04074000;
+    CHECK(fut_native_texture_zero_rgb_candidate(&native,state,1)==E_NOTIMPL,47);
+    state->filter=0x04072000;
+    CHECK(SUCCEEDED(fut_native_texture_zero_rgb_candidate(&native,state,1)),48);
+    memory.bytes[2*20+3*4]=1; /* Last real pixel, not the first or padding. */
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) &&
+        !native.zero_rgb_candidate && (native.texel_or&0xFFFFFFu)==1 &&
+        fut_native_texture_zero_rgb_candidate(&native,state,1)==E_NOTIMPL,49);
     fut_native_texture_destroy(&native);fut_native_constants_destroy(&completion);
     ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
-    puts("Linear texture storage: exact upload/readback, projected point/linear samples, range checks and convolution refusal OK; no original draw");
+    puts("Texture upload/samplers and zero-RGB snapshot specialization verified: actual PS pixels, varied unknown alpha, padding ignored, changed last texel/state and live-alpha dependencies refused; generic convolution unsupported");
     return 0;
 }

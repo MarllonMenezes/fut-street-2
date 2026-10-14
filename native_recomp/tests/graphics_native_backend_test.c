@@ -137,6 +137,22 @@ int main(void)
         !state.textures[0].sampling_ready && !native_finish(&state),47);
     CHECK(!native_method(&state,0,0x17FC,5,0) && state.immediate.count==3 &&
         !native_method(&state,0,0x110,0,0) && !native_method(&state,0,0x1D70,8,0),48);
+    /* Test-only alternate texture snapshot/state after the failed receiver
+     * call. It remains pending: preparing a PS must NOT bypass the SW gate. */
+    const uint32_t fragment[][2]={{0x1E60,1},{0x1E70,1},{0xAC0,0x08200000},
+        {0x260,0x14200000},{0x1E40,0xC00},{0xAA0,0xC00},{0x288,0xC},{0x28C,0x1C80}};
+    for(unsigned i=0;i<sizeof(fragment)/sizeof(fragment[0]);++i)
+        CHECK(fut_graphics_kelvin_state(&state.kelvin,fragment[i][0],fragment[i][1])==FUT_KELVIN_APPLIED,49);
+    uint32_t black=0xFF000000;
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) memcpy(guest_memory+0x4000+y*16+x*4,&black,4);
+    state.software.sample_valid=1;
+    CHECK(!native_prepare_draw(&state) && state.textures[0].zero_rgb_candidate &&
+        !state.textures[0].sampling_ready && state.pixel_shader && state.pixel_bytecode &&
+        !native_finish(&state) && state.immediate.ready,50);
+    guest_memory[0x4000+2*16+3*4]=1;
+    CHECK(!native_prepare_draw(&state) && !state.textures[0].zero_rgb_candidate &&
+        state.textures[0].texel_or==0xFF000001 && !state.textures[0].sampling_ready &&
+        !native_finish(&state) && state.immediate.ready,51);
     fut_native_immediate_destroy(&state.native_immediate);
     fut_native_vertex_surface_destroy(&state.vertex_surface);
     for(unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);

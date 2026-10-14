@@ -175,7 +175,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
     target_link_libraries(fut_street_2_recompiled_app PRIVATE
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel
-        ${RECOMP_HOST_LIBRARIES})
+        ${RECOMP_HOST_LIBRARIES} dxguid)
 
     add_executable(no_emulation_kernel_file_contract_test
         tests/no_emulation_kernel_file_contract_test.c)
@@ -199,17 +199,17 @@ if(FUT_STREET2_BUILD_HOST_APP)
             "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
             "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
         target_compile_definitions(graphics_native_backend_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
-        target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_backend COMMAND graphics_native_backend_test)
         set_tests_properties(graphics_native_backend PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_fragment_test tests/graphics_native_fragment_test.c graphics_native_fragment.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_constants.c)
         target_include_directories(graphics_native_fragment_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-        target_link_libraries(graphics_native_fragment_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        target_link_libraries(graphics_native_fragment_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_fragment COMMAND graphics_native_fragment_test)
         set_tests_properties(graphics_native_fragment PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_textures_test tests/graphics_native_textures_test.c graphics_native_textures.c graphics_native_constants.c graphics_native_fragment.c graphics_native_pipeline.c)
         target_include_directories(graphics_native_textures_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-        target_link_libraries(graphics_native_textures_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        target_link_libraries(graphics_native_textures_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_textures COMMAND graphics_native_textures_test)
         set_tests_properties(graphics_native_textures PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_pipeline_test tests/graphics_native_pipeline_test.c graphics_native_pipeline.c graphics_native_constants.c)
