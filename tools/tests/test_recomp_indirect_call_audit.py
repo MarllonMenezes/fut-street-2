@@ -23,6 +23,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_bridge_cases,
     recover_kernel_bridge_body_provenance,
     classify_kernel_bridge_implementation_delegation,
+    classify_kernel_bridge_argument_use,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -925,6 +926,28 @@ void xbe_entry_point(void)
                 [{"kind": "explicit-stub-or-no-op"}],
             ),
             "bridge-local-adaptation-over-host-stub",
+        )
+
+    def test_classifies_kernel_bridge_argument_use(self) -> None:
+        self.assertEqual(
+            classify_kernel_bridge_argument_use(2, [0, 1]),
+            "all-expected-arguments-read",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_argument_use(3, [0, 2]),
+            "partial-expected-arguments-read",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_argument_use(0, []),
+            "zero-argument-bridge",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_argument_use(3, [], explicit_stub=True),
+            "explicit-stub-without-argument-read",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_argument_use(2, [2]),
+            "stack-arg-index-outside-expected-count",
         )
 
     def test_counts_kernel_call_push_arguments(self) -> None:

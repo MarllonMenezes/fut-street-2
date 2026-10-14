@@ -1395,6 +1395,34 @@ def recover_kernel_stdcall_arg_bytes(source_path: Path) -> dict[int, int]:
     return cases
 
 
+def classify_kernel_bridge_argument_use(
+    expected_arg_count: int | None,
+    stack_arg_indices: list[int],
+    explicit_stub: bool = False,
+) -> str:
+    """Classify which expected caller arguments a bridge reads.
+
+    ``STACK_ARG`` use is only source-shape evidence.  A partial read may be
+    intentional when the bridge supplies host-side defaults, and does not
+    establish Xbox parameter types or semantics.
+    """
+    if expected_arg_count is None:
+        return "missing-expected-count"
+    if any(index < 0 or index >= expected_arg_count for index in stack_arg_indices):
+        return "stack-arg-index-outside-expected-count"
+    if expected_arg_count == 0:
+        return "zero-argument-bridge" if not stack_arg_indices else "stack-arg-index-outside-expected-count"
+    if not stack_arg_indices:
+        return (
+            "explicit-stub-without-argument-read"
+            if explicit_stub
+            else "no-observed-argument-read"
+        )
+    if len(set(stack_arg_indices)) == expected_arg_count:
+        return "all-expected-arguments-read"
+    return "partial-expected-arguments-read"
+
+
 def recover_kernel_call_argument_counts(
     generated_dir: Path,
     sites: list[dict[str, Any]],
@@ -3461,6 +3489,23 @@ def audit(
                     row["kernel_bridge_body_stack_arg_status"] = (
                         "indices-within-expected-and-observed-window"
                     )
+                row["kernel_bridge_argument_use_status"] = (
+                    "missing-source-body"
+                    if bridge_body["status"] != "source-body-found"
+                    else classify_kernel_bridge_argument_use(
+                        expected_arg_count,
+                        stack_arg_indices,
+                        explicit_stub=bool(
+                            bridge_body["explicit_no_op_markers"]
+                            and any(
+                                marker["kind"] == "explicit-stub-or-no-op"
+                                for marker in row.get(
+                                    "host_implementation_body_markers", []
+                                )
+                            )
+                        ),
+                    )
+                )
         if kernel_file_information_evidence is not None and ordinal is not None:
             file_operation = kernel_file_operations.get(int(ordinal))
             if file_operation is not None:
@@ -3583,6 +3628,25 @@ def audit(
     bridge_delegation_target_counts = Counter(
         next(iter(statuses))
         for statuses in bridge_delegation_target_statuses.values()
+        if len(statuses) == 1
+    )
+    bridge_argument_use_target_statuses: dict[str, set[str]] = {}
+    for row in kernel_slots:
+        bridge_target = row.get("host_bridge_target")
+        argument_use_status = row.get("kernel_bridge_argument_use_status")
+        if bridge_target is None or argument_use_status is None:
+            continue
+        bridge_argument_use_target_statuses.setdefault(bridge_target, set()).add(
+            argument_use_status
+        )
+    bridge_argument_use_inconsistent_targets = [
+        target
+        for target, statuses in bridge_argument_use_target_statuses.items()
+        if len(statuses) != 1
+    ]
+    bridge_argument_use_target_counts = Counter(
+        next(iter(statuses))
+        for statuses in bridge_argument_use_target_statuses.values()
         if len(statuses) == 1
     )
     abi_count_sites = [
@@ -3885,6 +3949,61 @@ def audit(
             else bridge_delegation_target_counts[
                 "bridge-local-adaptation-over-host-stub"
             ]
+        ),
+        "kernel_bridge_argument_use_status": (
+            "not-supplied"
+            if kernel_bridge_body_provenance is None
+            else (
+                "verified-source-argument-read-classification"
+                if len(bridge_argument_use_inconsistent_targets) == 0
+                and len(bridge_argument_use_target_statuses)
+                == len(kernel_bridge_body_provenance)
+                else "incomplete-or-inconsistent-argument-read-classification"
+            )
+        ),
+        "kernel_bridge_argument_use_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_argument_use_target_statuses)
+        ),
+        "kernel_bridge_all_expected_arguments_read_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts[
+                "all-expected-arguments-read"
+            ]
+        ),
+        "kernel_bridge_partial_expected_arguments_read_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts[
+                "partial-expected-arguments-read"
+            ]
+        ),
+        "kernel_bridge_zero_argument_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts["zero-argument-bridge"]
+        ),
+        "kernel_bridge_explicit_stub_without_argument_read_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts[
+                "explicit-stub-without-argument-read"
+            ]
+        ),
+        "kernel_bridge_argument_use_outside_expected_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts[
+                "stack-arg-index-outside-expected-count"
+            ]
+        ),
+        "kernel_bridge_argument_use_missing_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_argument_use_target_counts["missing-source-body"]
+            + bridge_argument_use_target_counts["missing-expected-count"]
         ),
         "kernel_bridge_body_g_eax_assignment_targets": (
             None
@@ -4517,6 +4636,10 @@ def audit(
         "kernel_bridge_delegation_evidence": {
             target: {"statuses": sorted(statuses)}
             for target, statuses in bridge_delegation_target_statuses.items()
+        },
+        "kernel_bridge_argument_use_evidence": {
+            target: {"statuses": sorted(statuses)}
+            for target, statuses in bridge_argument_use_target_statuses.items()
         },
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
