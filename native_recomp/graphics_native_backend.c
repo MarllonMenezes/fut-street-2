@@ -13,6 +13,7 @@
 #include "graphics_native_constants.h"
 #include "graphics_native_vertex.h"
 #include "graphics_native_surfaces.h"
+#include "graphics_native_pipeline.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -57,6 +58,7 @@ typedef struct {
     FutGraphicsKelvinState kelvin;
     FutGraphicsSurfaceState surfaces;
     FutNativeSurfaces native_surfaces;
+    FutNativePipeline pipeline;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
@@ -128,6 +130,16 @@ static int native_finish(NativeGraphicsState *state)
 {
     if (!native_prepare_surfaces(state)) return 0;
     if (!native_prepare_vertex(state)) return 0;
+    if (state->native_surfaces.valid && state->kelvin.draw.dirty && fut_graphics_draw_ready(&state->kelvin.draw)) {
+        HRESULT hr = fut_native_pipeline_apply(&state->pipeline, state->device, state->context,
+            &state->kelvin, &state->native_surfaces.plan);
+        if (FAILED(hr)) {
+            fprintf(stderr, "[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n", hr);
+            return 0;
+        }
+        state->kelvin.draw.dirty = 0;
+        fprintf(stderr, "[GRAPHICS] native blend/depth/stencil/raster states bound; window constants ready; no draw\n");
+    }
     if (!fut_native_constants_finish(&state->native_constants,
         state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
         return 0;
@@ -299,6 +311,7 @@ static DWORD WINAPI native_worker(void *unused)
     }
     fut_native_constants_destroy(&state.native_constants);
     fut_native_surfaces_destroy(&state.native_surfaces);
+    fut_native_pipeline_destroy(&state.pipeline);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     ID3D11DeviceContext_Release(context);

@@ -14,6 +14,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.67
+
+A segunda submissão agora ultrapassa o clipping e configura os estados
+nativos de blend, depth/stencil e rasterização. O programa recompilado chegou
+ao offset `1.416`, onde interrompe no método `0x0100`, valor `0x28`: uma
+notificação software não nula, não um NOP vazio. Nenhum draw/clear original
+ou frame foi produzido, e o marcador `7`/DMA GET da segunda submissão não
+foi avançado.
+
+`graphics_draw_state.c` valida os estados observados e mantém os oito
+retângulos de window clipping. Uma escrita de retângulo também inicializa
+os slots seguintes; seus extremos de 12 bits são inclusivos. Os modos
+inclusivo/exclusivo usam a união dos retângulos ou seu complemento. Essas
+regras foram conferidas com os [handlers de estado](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/pgraph.c)
+e com a [conversão de clipping para fragmentos](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/glsl/psh.c).
+Combiner factors e outros controles são retidos para os programas posteriores,
+não declarados executados por um pixel shader original.
+
+`graphics_native_pipeline.c` cria e vincula estados D3D11, incluindo
+[fatores de blend](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ne-d3d11-d3d11_blend),
+máscaras de cor, [depth/stencil](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_depth_stencil_desc),
+face/cull/fill e scissor de superfície. Exporta um predicado HLSL de clipping
+e envia os retângulos em PS `b2`, com escala do armazenamento de amostras.
+O predicado ainda precisa ser incorporado ao pixel shader original recompilado;
+não há shader de teste substituindo o jogo. Alpha test ativo, stipple,
+operações lógicas e outras formas sem tradução validada são recusados.
+
+O teste D3D11 WARP usa um desenho **sintético** e lê os pixels de cor e
+profundidade/stencil de volta. Confirma dois retângulos inclusivos e seu
+complemento, armazenamento 2×2 de amostras, blend SRC_ALPHA/INV_SRC_ALPHA,
+preservação do canal verde pela máscara, escrita de stencil e rejeição de um
+segundo desenho com depth igual pelo teste LESS. Também verifica os descritores
+e que falhas não substituem os estados já vinculados. Isso valida esse caso,
+não a rasterização MSAA ou a fidelidade completa do jogo.
+
+Build Release e CTest passaram `15/15`; testes públicos passaram `161/161`.
+Build .NET passou sem avisos/erros e o self-test passou `105/105` (somente o
+protótipo). ISO intacta e novas saídas controláveis no D:. A execução encerrou
+com diagnóstico `3` antes do limite de cinco segundos. Próximo: traduzir a
+notificação software `0x28`, preservando os efeitos do handler original;
+depois integrar os programas de fragmento e clears/draws. `NOT_READY` permanece.
+
 ## Estado verificável — release 2.66
 
 O programa recompilado criou os recursos nativos de cor e profundidade com

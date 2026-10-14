@@ -58,6 +58,7 @@ add_library(fut_street_2_no_emulation_runtime_support STATIC
     graphics_kelvin_state.c
     graphics_vertex_program.c
     graphics_surfaces.c
+    graphics_draw_state.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -151,7 +152,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -176,6 +177,11 @@ if(FUT_STREET2_BUILD_HOST_APP)
         ${RECOMP_HOST_LIBRARIES})
 
     if(BUILD_TESTING)
+        add_executable(graphics_native_pipeline_test tests/graphics_native_pipeline_test.c graphics_native_pipeline.c graphics_native_constants.c)
+        target_include_directories(graphics_native_pipeline_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_pipeline_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        add_test(NAME graphics_native_pipeline COMMAND graphics_native_pipeline_test)
+        set_tests_properties(graphics_native_pipeline PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_surfaces_test tests/graphics_native_surfaces_test.c graphics_native_surfaces.c graphics_native_constants.c)
         target_include_directories(graphics_native_surfaces_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_surfaces_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11)

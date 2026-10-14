@@ -38,7 +38,7 @@ int main(void)
     for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i)
         if (fut_graphics_kelvin_state(&state, rejected[i][0], rejected[i][1]) != FUT_KELVIN_REJECTED ||
             memcmp(&before, &state, sizeof(state))) return 12;
-    if (fut_graphics_kelvin_state(&state, 0x2B4, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
+    if (fut_graphics_kelvin_state(&state, 0x314, 0) != FUT_KELVIN_NOT_HANDLED ||
         memcmp(&before, &state, sizeof(state))) return 13;
     if (fut_graphics_kelvin_state(&state, 0x194C, 0xFF804000u) != FUT_KELVIN_APPLIED ||
         state.attributes[3][0] != 0 || state.attributes[3][1] != 64.0f/255.0f ||
@@ -74,6 +74,22 @@ int main(void)
     if (fut_graphics_kelvin_state(&state, 0x30C, 2) != FUT_KELVIN_REJECTED ||
         fut_graphics_kelvin_state(&state, 0x32C, 2) != FUT_KELVIN_REJECTED ||
         memcmp(&before, &state, sizeof(state))) return 24;
+    if (fut_graphics_kelvin_state(&state, 0x2C0, 0x00020001) != FUT_KELVIN_APPLIED ||
+        fut_graphics_kelvin_state(&state, 0x2E0, 0x00040003) != FUT_KELVIN_APPLIED) return 25;
+    for (unsigned i = 0; i < 8; ++i)
+        if (state.draw.window_x[i] != 0x00020001 || state.draw.window_y[i] != 0x00040003) return 26;
+    if (fut_graphics_kelvin_state(&state, 0x2CC, 0x00060005) != FUT_KELVIN_APPLIED ||
+        state.draw.window_x[2] != 0x00020001 || state.draw.window_x[3] != 0x00060005 ||
+        state.draw.window_x[7] != 0x00060005 || !fut_graphics_window_contains(&state.draw, 2, 4) ||
+        !fut_graphics_window_contains(&state.draw, 6, 3) || fut_graphics_window_contains(&state.draw, 3, 3)) return 27;
+    if (fut_graphics_kelvin_state(&state, 0x2B4, 1) != FUT_KELVIN_APPLIED ||
+        fut_graphics_window_contains(&state.draw, 2, 4) || !fut_graphics_window_contains(&state.draw, 3, 3)) return 28;
+    before = state;
+    const uint32_t invalid_draw[][2] = {{0x2B4,2},{0x354,0x208},{0x344,0x999},{0x370,0x1E04},
+        {0x39C,0x406},{0x38C,0x1B03},{0x3A0,0x902},{0x1D84,4},{0x1D78,0x20},{0x300,2}};
+    for (unsigned i = 0; i < sizeof(invalid_draw)/sizeof(invalid_draw[0]); ++i)
+        if (fut_graphics_kelvin_state(&state, invalid_draw[i][0], invalid_draw[i][1]) != FUT_KELVIN_REJECTED ||
+            memcmp(&before, &state, sizeof(state))) return 29;
     puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
     return 0;
 }

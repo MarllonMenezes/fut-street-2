@@ -2,8 +2,10 @@
 #define FUT_GRAPHICS_KELVIN_STATE_H
 
 #include <stdint.h>
+#include "graphics_draw_state.h"
 
 typedef struct {
+    FutGraphicsDrawState draw;
     uint32_t constants[192][4];
     uint32_t program[136][4];
     uint8_t program_valid[136];
