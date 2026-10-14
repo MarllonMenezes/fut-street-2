@@ -2042,6 +2042,7 @@ def recover_fixed_callback_consumer_provenance(
 def recover_callback_return_use_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
+    target_classes: set[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Record the bounded first use of unresolved callback return values.
 
@@ -2049,7 +2050,7 @@ def recover_callback_return_use_provenance(
     reports the generated C shape immediately following the indirect call.
     It does not infer a C type, signedness, ABI, or callback implementation.
     """
-    callback_classes = {
+    callback_classes = target_classes or {
         "dynamic-register-or-object-target",
         "dynamic-memory-target",
         "dynamic-object-field-target",
@@ -2151,6 +2152,16 @@ def recover_callback_return_use_provenance(
                 "return_compare_source": return_compare_source,
             }
     return results
+
+
+def recover_kernel_return_use_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Record the bounded first use of kernel-thunk return values."""
+    return recover_callback_return_use_provenance(
+        generated_dir, classified, {"kernel-thunk-slot"}
+    )
 
 
 def recover_dynamic_callback_container_field_provenance(
@@ -2890,6 +2901,9 @@ def audit(
     callback_return_use_provenance = recover_callback_return_use_provenance(
         generated_dir, classified
     )
+    kernel_return_use_provenance = recover_kernel_return_use_provenance(
+        generated_dir, classified
+    )
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
     )
@@ -2940,6 +2954,11 @@ def audit(
         )
         if return_provenance is not None:
             row["callback_return_use_provenance"] = return_provenance
+        kernel_return_provenance = kernel_return_use_provenance.get(
+            str(row["call_site"])
+        )
+        if kernel_return_provenance is not None:
+            row["kernel_return_use_provenance"] = kernel_return_provenance
     used_kernel_cases = (
         {}
         if kernel_resolver_cases is None
@@ -3543,6 +3562,28 @@ def audit(
             if callback_return_use_provenance
             else "no-callback-return-use-observed"
         ),
+        "kernel_return_use_provenance_sites": len(kernel_return_use_provenance),
+        "kernel_return_use_compared_sites": sum(
+            row["status"] == "callback-return-compared-after-call"
+            for row in kernel_return_use_provenance.values()
+        ),
+        "kernel_return_use_read_sites": sum(
+            row["status"] == "callback-return-read-after-call"
+            for row in kernel_return_use_provenance.values()
+        ),
+        "kernel_return_use_overwritten_sites": sum(
+            row["status"] == "callback-return-overwritten-before-observation"
+            for row in kernel_return_use_provenance.values()
+        ),
+        "kernel_return_use_unobserved_sites": sum(
+            row["status"] == "callback-return-not-observed-before-control-transfer"
+            for row in kernel_return_use_provenance.values()
+        ),
+        "kernel_return_use_status": (
+            "bounded-first-post-call-use-observed"
+            if kernel_return_use_provenance
+            else "no-kernel-return-use-observed"
+        ),
         "dynamic_callback_caller_provenance_sites": len(
             dynamic_callback_caller_provenance
         ),
@@ -3704,6 +3745,7 @@ def audit(
         "dynamic_source_provenance": dynamic_source_provenance,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,
+        "kernel_return_use_provenance": kernel_return_use_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "dynamic_callback_all_caller_provenance": (
             dynamic_callback_all_caller_provenance

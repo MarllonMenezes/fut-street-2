@@ -26,6 +26,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_register_constant_arguments,
     recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
+    recover_kernel_return_use_provenance,
     recover_prcb_cache_writes,
     recover_prcb_callback_cache_provenance,
     recover_runtime_fixed_slot_initializers,
@@ -448,6 +449,39 @@ loc_0000200F: ;
         )
         self.assertEqual(
             evidence["0x0000200F"]["status"],
+            "callback-return-overwritten-before-observation",
+        )
+
+    def test_recovers_kernel_return_use_shape(self) -> None:
+        generated_source = """
+void sub_00001000(void)
+{
+    { uint32_t _icall_target = MEM32(0x00011010); PUSH32(esp, 0x0000100Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Fu); }
+loc_0000100F: ;
+    eax = MEM32(0x00001020);
+}
+"""
+        classified = [
+            {
+                "call_site": "0x0000100F",
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "kernel-thunk-slot",
+                "target_expression": "MEM32(0x00011010)",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_kernel_return_use_provenance(
+                generated, classified
+            )
+
+        self.assertEqual(
+            evidence["0x0000100F"]["status"],
             "callback-return-overwritten-before-observation",
         )
 
