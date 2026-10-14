@@ -3593,6 +3593,16 @@ def audit(
             generated_dir, classified, dynamic_callback_caller_provenance
         )
     )
+    dynamic_callback_container_field_all_provenance = (
+        recover_dynamic_callback_container_field_provenance(
+            generated_dir, classified, dynamic_callback_all_caller_provenance
+        )
+    )
+    dynamic_callback_container_field_outside_direct_provenance = [
+        row
+        for row in dynamic_callback_container_field_all_provenance
+        if _address(row["caller"]) not in directly_reachable
+    ]
     dynamic_callback_object_field_provenance = (
         recover_dynamic_callback_object_field_provenance(
             generated_dir, classified, dynamic_callback_caller_provenance
@@ -4891,6 +4901,22 @@ def audit(
             if dynamic_callback_container_field_provenance
             else "no-indexed-callback-container-provenance"
         ),
+        "dynamic_callback_container_field_all_provenance_sites": len(
+            dynamic_callback_container_field_all_provenance
+        ),
+        "dynamic_callback_container_field_all_write_sites": sum(
+            len(field["writes"])
+            for row in dynamic_callback_container_field_all_provenance
+            for field in row["container_fields"]
+        ),
+        "dynamic_callback_container_field_outside_direct_provenance_sites": len(
+            dynamic_callback_container_field_outside_direct_provenance
+        ),
+        "dynamic_callback_container_field_outside_direct_write_sites": sum(
+            len(field["writes"])
+            for row in dynamic_callback_container_field_outside_direct_provenance
+            for field in row["container_fields"]
+        ),
         "dynamic_callback_object_field_provenance_sites": len(
             dynamic_callback_object_field_provenance
         ),
@@ -4994,6 +5020,12 @@ def audit(
         ),
         "dynamic_callback_container_field_provenance": (
             dynamic_callback_container_field_provenance
+        ),
+        "dynamic_callback_container_field_all_provenance": (
+            dynamic_callback_container_field_all_provenance
+        ),
+        "dynamic_callback_container_field_outside_direct_provenance": (
+            dynamic_callback_container_field_outside_direct_provenance
         ),
         "dynamic_callback_object_field_provenance": (
             dynamic_callback_object_field_provenance

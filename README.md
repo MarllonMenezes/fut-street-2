@@ -20,9 +20,9 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.15
+## Estado verificável — release 2.16
 
-O release 2.15 mantém a proveniência local completa dos sete callbacks
+O release 2.16 mantém a proveniência local completa dos sete callbacks
 dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
 inventaria todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
 dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
@@ -147,7 +147,7 @@ contêiner recebido pelo consumidor `sub_0026E70A`; os valores vêm de
 registradores e não permitem recuperar com segurança os callbacks finais ou
 sua identidade runtime.
 
-A release 2.15 separa explicitamente o layout do consumidor indexado da raiz
+A release 2.16 separa explicitamente o layout do consumidor indexado da raiz
 BSS: `dynamic_indexed_callback_consumer_layout_status=verified-indexed-callback-consumer-layout`.
 Em `sub_0026E70A`, o objeto é carregado de `esp+0x20`, o contêiner é lido de
 `objeto+8`, o índice de `objeto+0xC` é transformado por `i = i + i*2`, e o
@@ -158,6 +158,17 @@ do consumidor (`dynamic_indexed_callback_consumer_layout_table_root_link_status=
 portanto os writers da raiz não são contados como inicializadores provados do
 callback dinâmico. Essa distinção reduz uma hipótese anterior sem resolver o
 ponteiro runtime.
+
+Nesta release, a mesma correlação de campos foi aplicada a todos os seis
+chamadores observados de `sub_0026E70A`, não apenas aos dois dentro do
+subgrafo direto: `dynamic_callback_container_field_all_provenance_sites=6` e
+`dynamic_callback_container_field_all_write_sites=5`. Quatro chamadores ficam
+fora do subgrafo e fornecem três dessas escritas; nas quatro chamadas com
+ponteiro local `ebp-0x10`, não há write local provado para o campo `+8`, e as
+cinco escritas encontradas no campo `+0xC` vêm de três registradores e duas
+constantes. As duas chamadas restantes têm expressões de objeto não resolvidas
+(`MEM32(ebp+0xC)` e `0`), portanto essa ampliação não prova identidade de
+objeto, preenchimento do contêiner ou callback final.
 
 A checagem do callback indexado continua em
 `dynamic_callback_container_field_provenance_sites=2`: nos dois chamadores do
