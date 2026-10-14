@@ -73,6 +73,13 @@ if(BUILD_TESTING)
         "${RECOMP_GENERATED_DIR}")
     add_test(NAME recomp_packed_word_ops
         COMMAND recomp_packed_word_ops_test)
+
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    add_test(NAME recomp_generated_dispatch_table
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
+            -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/verify-generated-dispatch.ps1"
+            "${RECOMP_GENERATED_DIR}")
 endif()
 
 if(FUT_STREET2_BUILD_HOST_APP)

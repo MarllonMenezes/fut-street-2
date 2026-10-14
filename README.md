@@ -20,7 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.17
+## Estado verificável — release 2.18
+
+O release 2.18 fecha uma lacuna de verificação do despacho indireto: os testes
+de suporte continuam exercitando apenas a barreira de segurança com lookup
+ausente, mas agora há também um gate que lê a tabela C gerada real. Sem
+executar qualquer função traduzida, ele confirma as `15.600` entradas exatas,
+um VA de início conhecido, a ausência de um VA interno sem entrada e a
+ausência de um VA arbitrário. Isso valida estaticamente a tabela usada pela
+rota `VA guest -> função traduzida` de `RECOMP_ICALL_SAFE_AT`; não prova que
+callbacks dinâmicos reais sejam inicializados ou alcançados em runtime.
+
+O release 2.18 mantém a proveniência local completa dos sete callbacks
+dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria continua
+inventariando todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
+dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
+explicitamente separados do caminho iniciado em `0x0024D8BE`.
+
+O teste Python passou `100/100`; a nova suíte CMake soma `3/3` na biblioteca e
+`6/6` no host. A prontidão segue `NOT_READY` e a estimativa conservadora do
+PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
+
+### Release 2.17 — proveniência do writer de `objeto+0x584`
 
 O release 2.17 mantém a proveniência local completa dos sete callbacks
 dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
