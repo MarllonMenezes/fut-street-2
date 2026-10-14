@@ -1,7 +1,7 @@
 diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
 --- a/src/kernel/kernel_bridge.c
 +++ b/src/kernel/kernel_bridge.c
-@@ -3637,21 +3637,38 @@ static void bridge_NtQueryDirectoryFile(void)
+@@ -3637,22 +3637,45 @@ static void bridge_NtQueryDirectoryFile(void)
  }
  
  /* ── NtOpenSymbolicLinkObject (ordinal 203, 2 args = 8 bytes) */

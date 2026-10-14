@@ -14,6 +14,34 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.39
+
+O release 2.39 valida a pilha completa de `23` patches do XboxRecomp em uma
+cópia limpa, em ordem sequencial, incluindo a correção do cabeçalho do hunk
+do patch `0023` (`NtOpenSymbolicLinkObject`/`NtQuerySymbolicLinkObject`). A
+ponte continua sendo apenas uma validação estática e de compilação para o
+link simbólico de `D:`; isso não prova montagem de DVD, acesso a assets ou
+execução do jogo.
+
+Na geração limpa, foram emitidas `15.600/15.600` funções, sem falhas, em `61`
+unidades e `1.775.809` linhas de C. Permanecem somente `4` instruções não
+implementadas (`daa`, `out`, `sgdt` e `sti`), fora de uma afirmação de
+completude. O build nativo Release da biblioteca passou, o CTest passou em
+`3/3` e o alvo `xbox_kernel` compilou `23/23` objetos. A suíte de regressão
+Python passou em `118/118`; o build .NET terminou com `0` warnings e `0`
+errors, e o self-test do produto passou em `105/105`.
+
+A auditoria estática continua encontrando `62` sites indiretos, dos quais
+`48` são thunks de kernel, `7` callbacks dinâmicos sem destino provado e `4`
+callbacks protegidos pelo PRCB com disposição de retorno classificada em
+`4/4` (`2` sem observação antes da transferência e `2` sobrescritos antes da
+observação). Esses números não provam ABI, valores de runtime, semântica
+Xbox, fidelidade de rendering/gameplay/áudio ou boot do executável.
+
+A prontidão permanece `NOT_READY` e a estimativa conservadora do PoC jogável
+continua em aproximadamente `31% concluído / 69% restante`. Todo o trabalho
+de recompilação e auditoria permanece estático; o XBE não é executado.
+
 ## Estado verificável — release 2.38
 
 O release 2.38 separa, dentro dos `4` callbacks protegidos pelo PRCB, a
