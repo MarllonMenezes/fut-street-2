@@ -14,6 +14,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.54
+
+O release 2.54 adiciona
+`tools/analysis/recomp_unimplemented_context_control.py`, um gate estático
+para os dois opcodes que ainda permanecem sem lowering no artefato 25f. O
+controle confirma `OUT DX,AL` em `0x00298030` dentro de `sub_00297F04`, com
+`DX=0x80C0`, `AL` vindo de `BL` e duas chamadas indiretas logo depois; também
+confirma `SGDT [esp+6]` em `0x00253FD8` dentro de `sub_00253FD0`, seguido pelo
+trecho observado `CLI`/`XCHG`/`STI`/`LJMP`.
+
+Isso registra contexto de instruções e ownership de função, mas não atribui
+semântica ao hardware, ao encoder, à GDT ou ao salto de segmento. Os dois
+sites continuam deliberadamente sem lowering, o XBE não é executado e a
+estimativa conservadora do PoC jogável permanece em aproximadamente `31%
+concluído / 69% restante`.
+
 ## Estado verificável — release 2.53
 
 O release 2.53 adiciona
@@ -1047,6 +1063,16 @@ python tools/analysis/eagl_selector_helper_effect_control.py `
 ```
 
 O gate verifica somente formas estáticas e não executa o XBE.
+
+O contexto dos dois opcodes ainda não traduzidos pode ser conferido com:
+
+```powershell
+python tools/analysis/recomp_unimplemented_context_control.py `
+  --asm-dir C:/caminho/local/disasm/asm
+```
+
+O gate exige os owners, instruções e fragmentos locais observados, mas
+mantém `hardware_semantics=not-proven` e os dois sites sem lowering.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os
