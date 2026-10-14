@@ -3207,6 +3207,147 @@ def recover_dynamic_object_field_writer_context(
     return contexts
 
 
+def recover_dynamic_object_field_writer_overlap_provenance(
+    writers: list[dict[str, Any]],
+    functions: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Group object-field writer sites by overlapping function metadata.
+
+    The disassembly can expose tail-jump aliases or interior labels as
+    function entries. This report keeps every writer site, then groups the
+    corresponding function intervals when they overlap. It is a metadata
+    de-duplication aid only: overlapping intervals do not prove that entries
+    are aliases at runtime or that any writer reaches the callback object.
+    """
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    writer_by_function: dict[int, list[dict[str, Any]]] = {}
+    for writer in writers:
+        if not writer.get("function"):
+            continue
+        address = _address(writer["function"])
+        writer_by_function.setdefault(address, []).append(writer)
+
+    function_rows: list[dict[str, Any]] = []
+    unresolved_functions = 0
+    for address, site_rows in sorted(writer_by_function.items()):
+        metadata = function_by_address.get(address)
+        if metadata is None or metadata.get("end") is None:
+            unresolved_functions += 1
+            function_rows.append(
+                {
+                    "function": f"0x{address:08X}",
+                    "function_name": str(site_rows[0].get("function_name", "")),
+                    "metadata_status": "function-interval-unresolved",
+                    "writer_sites": site_rows,
+                }
+            )
+            continue
+        start = address
+        end = _address(metadata["end"])
+        function_rows.append(
+            {
+                "function": f"0x{address:08X}",
+                "function_name": str(metadata.get("name", "")),
+                "interval_start": f"0x{start:08X}",
+                "interval_end": f"0x{end:08X}",
+                "size": metadata.get("size"),
+                "detection_method": metadata.get("detection_method"),
+                "metadata_status": "function-interval-observed",
+                "writer_sites": site_rows,
+            }
+        )
+
+    indexed_rows = [
+        row
+        for row in function_rows
+        if row.get("metadata_status") == "function-interval-observed"
+    ]
+    adjacency: dict[int, set[int]] = {
+        index: set() for index in range(len(indexed_rows))
+    }
+    for left_index, left in enumerate(indexed_rows):
+        left_start = _address(left["interval_start"])
+        left_end = _address(left["interval_end"])
+        for right_index in range(left_index + 1, len(indexed_rows)):
+            right = indexed_rows[right_index]
+            right_start = _address(right["interval_start"])
+            right_end = _address(right["interval_end"])
+            if left_start < right_end and right_start < left_end:
+                adjacency[left_index].add(right_index)
+                adjacency[right_index].add(left_index)
+
+    components: list[list[int]] = []
+    seen: set[int] = set()
+    for index in range(len(indexed_rows)):
+        if index in seen:
+            continue
+        pending = [index]
+        seen.add(index)
+        component: list[int] = []
+        while pending:
+            current = pending.pop()
+            component.append(current)
+            for neighbor in sorted(adjacency[current]):
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    pending.append(neighbor)
+        components.append(sorted(component))
+
+    overlap_groups: list[dict[str, Any]] = []
+    overlap_group_by_index: dict[int, int] = {}
+    overlap_components = [component for component in components if len(component) > 1]
+    for group_id, component in enumerate(overlap_components):
+        for index in component:
+            overlap_group_by_index[index] = group_id
+        members = [indexed_rows[index] for index in component]
+        overlap_groups.append(
+            {
+                "group": group_id,
+                "members": [
+                    {
+                        "function": member["function"],
+                        "function_name": member["function_name"],
+                        "interval_start": member["interval_start"],
+                        "interval_end": member["interval_end"],
+                        "detection_method": member["detection_method"],
+                        "writer_site_count": len(member["writer_sites"]),
+                    }
+                    for member in members
+                ],
+                "union_start": f"0x{min(_address(member['interval_start']) for member in members):08X}",
+                "union_end": f"0x{max(_address(member['interval_end']) for member in members):08X}",
+            }
+        )
+
+    for index, row in enumerate(indexed_rows):
+        row["overlap_group"] = overlap_group_by_index.get(index)
+
+    overlapping_writer_functions = sum(
+        len(component) for component in overlap_components
+    )
+    return {
+        "status": (
+            "incomplete-writer-function-overlap-provenance"
+            if unresolved_functions
+            else (
+                "overlapping-writer-function-intervals-observed"
+                if overlap_groups
+                else "verified-no-overlapping-writer-function-intervals"
+            )
+        ),
+        "writer_sites": len(writers),
+        "writer_functions": len(writer_by_function),
+        "metadata_resolved_writer_functions": len(indexed_rows),
+        "overlap_group_count": len(overlap_groups),
+        "overlapping_writer_functions": overlapping_writer_functions,
+        "unresolved_function_intervals": unresolved_functions,
+        "overlap_groups": overlap_groups,
+        "functions": function_rows,
+    }
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -4845,6 +4986,12 @@ def audit(
         recover_dynamic_object_field_writer_context(
             generated_dir,
             all_dynamic_target_writers.get("dynamic-object-field-target", []),
+        )
+    )
+    dynamic_object_field_writer_overlap_provenance = (
+        recover_dynamic_object_field_writer_overlap_provenance(
+            all_dynamic_target_writers.get("dynamic-object-field-target", []),
+            functions,
         )
     )
     dynamic_target_outside_direct_writers = {
@@ -6500,6 +6647,26 @@ def audit(
                 else "no-object-field-callback-provenance"
             )
         ),
+        "dynamic_object_field_writer_overlap_status": (
+            dynamic_object_field_writer_overlap_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_object_field_writer_overlap_groups": (
+            dynamic_object_field_writer_overlap_provenance.get(
+                "overlap_group_count", 0
+            )
+        ),
+        "dynamic_object_field_writer_overlap_functions": (
+            dynamic_object_field_writer_overlap_provenance.get(
+                "overlapping_writer_functions", 0
+            )
+        ),
+        "dynamic_object_field_writer_metadata_functions": (
+            dynamic_object_field_writer_overlap_provenance.get(
+                "metadata_resolved_writer_functions", 0
+            )
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -6576,6 +6743,9 @@ def audit(
             dynamic_indexed_writer_root_link_provenance
         ),
         "dynamic_object_field_writer_context": dynamic_object_field_writer_context,
+        "dynamic_object_field_writer_overlap_provenance": (
+            dynamic_object_field_writer_overlap_provenance
+        ),
         "dynamic_source_provenance": dynamic_source_provenance,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,

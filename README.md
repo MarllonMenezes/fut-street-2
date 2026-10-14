@@ -20,6 +20,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.28
+
+O release 2.28 audita a multiplicidade dos writers do campo de objeto
+`+0x584`. A varredura completa encontrou `8` sites em `8` entradas de função;
+há `1` grupo de intervalos sobrepostos com `3` entradas:
+`0x00252107` (`sub_00252107`), `0x00252148` (`sub_00252148`) e
+`0x00252156` (`sub_00252156`). Todas terminam em `0x0025252B`, e as duas
+últimas aparecem na metadata como `tail_jump_alias`. A evidência correta,
+portanto, é “três entradas sobrepostas no mesmo intervalo”, não três
+implementações independentes confirmadas.
+
+Esse agrupamento é uma normalização da metadata e dos sites gerados; não prova
+que as entradas sejam aliases idênticos em runtime, que qualquer writer seja
+alcançado, que o endereço-base seja a mesma instância usada pelo callback em
+`0x002512A4`, ou que os valores escritos sejam funções válidas. O subgrafo
+direto ainda tem `0` writer provado para o campo, e os sete callbacks
+dinâmicos continuam sem destino final provado.
+
+A suíte Python passou `109/109`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.27
 
 O release 2.27 cruza os seeds empilhados pelos chamadores com os slots

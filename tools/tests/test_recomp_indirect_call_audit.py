@@ -14,6 +14,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
     recover_dynamic_object_field_writer_context,
+    recover_dynamic_object_field_writer_overlap_provenance,
     recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
@@ -1768,6 +1769,59 @@ void xbe_entry_point(void)
             writers["dynamic-indexed-record-target"][0]["address_expression"],
             "ebx + esi * 4 + 8",
         )
+
+    def test_groups_overlapping_dynamic_object_writer_function_metadata(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1100",
+                "name": "sub_00001000",
+                "detection_method": "call_target",
+            },
+            {
+                "start": "0x1050",
+                "end": "0x1100",
+                "name": "sub_00001050",
+                "detection_method": "tail_jump_alias",
+            },
+            {
+                "start": "0x2000",
+                "end": "0x2100",
+                "name": "sub_00002000",
+                "detection_method": "call_target",
+            },
+        ]
+        writers = [
+            {
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "source": "recomp_0000.c:10",
+            },
+            {
+                "function": "0x00001050",
+                "function_name": "sub_00001050",
+                "source": "recomp_0000.c:20",
+            },
+            {
+                "function": "0x00002000",
+                "function_name": "sub_00002000",
+                "source": "recomp_0000.c:30",
+            },
+        ]
+
+        evidence = recover_dynamic_object_field_writer_overlap_provenance(
+            writers, functions
+        )
+
+        self.assertEqual(
+            evidence["status"],
+            "overlapping-writer-function-intervals-observed",
+        )
+        self.assertEqual(evidence["writer_sites"], 3)
+        self.assertEqual(evidence["writer_functions"], 3)
+        self.assertEqual(evidence["overlap_group_count"], 1)
+        self.assertEqual(evidence["overlapping_writer_functions"], 2)
+        self.assertEqual(len(evidence["overlap_groups"][0]["members"]), 2)
 
     def test_can_inventory_fixed_slot_writers_outside_direct_path(self) -> None:
         functions = [
