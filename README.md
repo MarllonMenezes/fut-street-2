@@ -14,6 +14,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.51
+
+O release 2.51 fecha mais uma fronteira estática do seletor EAGL: todas as
+`31` funções que contêm os `33` consumidores também referenciam diretamente
+os dois anchors globais usados pelo helper (`0x003458D0` e `0x003458D4`). O
+gate exige `consumer_anchor_counts=33/33` para os dois endereços e falha se
+uma função perder qualquer anchor. Isso preserva a correlação do seletor com
+o envelope de estado observado no ASM, sem chamar esse padrão de buffer GPU
+ou afirmar um dataflow completo em runtime.
+
+O resultado ainda é estático: não prova alias entre os anchors e objetos em
+runtime, escolha de buffer, instalação de shader, submissão de draw ou
+equivalência de GPU. O XBE não é executado; a prontidão permanece `NOT_READY`
+e a estimativa conservadora do PoC jogável continua em aproximadamente `31%
+concluído / 69% restante`.
+
 ## Estado verificável — release 2.50
 
 O release 2.50 amplia o gate do seletor EAGL para preservar o envelope dos
@@ -985,6 +1001,8 @@ O resultado mantém `writer_sites=5`, `consumer_sites=33`,
 apenas impede assumir que `0x00345BCC` seja constante ou ignorar seus
 consumidores estáticos conhecidos. No release 2.50, a saída adicional inclui
 `consumer_function_count=31` e `consumer_function_envelope=0x001A3E00-0x001A4B40`.
+No release 2.51, ela também inclui
+`consumer_anchor_counts=0x3458d0:33,0x3458d4:33`.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os

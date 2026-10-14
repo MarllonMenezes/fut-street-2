@@ -117,6 +117,7 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
                     "source": "synthetic.asm:1",
                     "function": function,
                     "function_calls": EXPECTED_CONSUMER_CALLS[function],
+                    "function_references": ("0x3458d0", "0x3458d4"),
                 }
             )
 
@@ -176,11 +177,34 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
                     "source": "synthetic.asm:1",
                     "function": function,
                     "function_calls": EXPECTED_CONSUMER_CALLS[function],
+                    "function_references": ("0x3458d0", "0x3458d4"),
                 }
             )
         rows[0]["function_calls"] = ("sub_001A0000",)
 
         with self.assertRaisesRegex(ValueError, "consumer-call-family mismatch"):
+            classify_consumers(rows, require_function_envelope=True)
+
+    def test_rejects_consumer_anchor_drift(self) -> None:
+        rows = []
+        for address, form in EXPECTED_CONSUMERS.items():
+            function = EXPECTED_CONSUMER_FUNCTIONS[address]
+            rows.append(
+                {
+                    "address": address,
+                    "destination": "eax",
+                    "mnemonic": "imul"
+                    if form == "scaled-selector-consumer"
+                    else "mov",
+                    "source": "synthetic.asm:1",
+                    "function": function,
+                    "function_calls": EXPECTED_CONSUMER_CALLS[function],
+                    "function_references": ("0x3458d0", "0x3458d4"),
+                }
+            )
+        rows[0]["function_references"] = ("0x3458d0",)
+
+        with self.assertRaisesRegex(ValueError, "consumer-anchor mismatch"):
             classify_consumers(rows, require_function_envelope=True)
 
     def test_does_not_silently_ignore_an_unsupported_selector_read(self) -> None:

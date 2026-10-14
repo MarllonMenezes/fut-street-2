@@ -250,13 +250,17 @@ def recover_function_blocks(asm_path: Path) -> list[dict[str, Any]]:
         if current is not None and "start" in current and "end" in current:
             blocks.append(current.copy())
 
-    for line in asm_path.read_text(encoding="utf-8").splitlines():
+    lines = asm_path.read_text(encoding="utf-8").splitlines()
+    for line_number, line in enumerate(lines, 1):
         function_match = FUNCTION_RE.match(line)
         if function_match is not None:
+            if current is not None:
+                current["line_end"] = line_number - 1
             finish()
             current = {
                 "name": function_match.group("name"),
                 "calls": [],
+                "line_start": line_number,
             }
             continue
         if current is None:
@@ -272,7 +276,14 @@ def recover_function_blocks(asm_path: Path) -> list[dict[str, Any]]:
             current["calls"] = [] if calls in ("", "none") else tuple(
                 item.strip() for item in calls.split(",")
             )
+    if current is not None:
+        current["line_end"] = len(lines)
     finish()
+    for block in blocks:
+        body = "\n".join(lines[block["line_start"] - 1 : block["line_end"]]).lower()
+        block["references"] = tuple(
+            token for token in ("0x3458d0", "0x3458d4") if token in body
+        )
     return blocks
 
 
@@ -308,6 +319,7 @@ def recover_consumer_rows(asm_path: Path) -> list[dict[str, Any]]:
             "source": f"{asm_path.name}:{line_number}",
             "function": function["name"] if function is not None else None,
             "function_calls": function["calls"] if function is not None else (),
+            "function_references": function["references"] if function is not None else (),
         }
         rows.append(row)
     return rows
@@ -350,6 +362,13 @@ def classify_consumers(
                     f"selector consumer-call-family mismatch at {row['address']}: "
                     f"expected={expected_calls!r}, observed={observed_calls!r}"
                 )
+            expected_references = ("0x3458d0", "0x3458d4")
+            observed_references = tuple(row.get("function_references", ()))
+            if observed_references != expected_references:
+                raise ValueError(
+                    f"selector consumer-anchor mismatch at {row['address']}: "
+                    f"expected={expected_references!r}, observed={observed_references!r}"
+                )
         calls = tuple(row.get("function_calls", ()))
         call_family = "no-direct-call" if not calls else "direct:" + "+".join(calls)
         classified.append({**row, "form": expected_form, "call_family": call_family})
@@ -379,6 +398,10 @@ def audit(asm_path: Path, xbe_path: Path) -> dict[str, Any]:
     for row in consumer_rows:
         family = row["call_family"]
         consumer_call_family_counts[family] = consumer_call_family_counts.get(family, 0) + 1
+    consumer_anchor_counts = {
+        anchor: sum(anchor in row["function_references"] for row in consumer_rows)
+        for anchor in ("0x3458d0", "0x3458d4")
+    }
 
     return {
         "summary": {
@@ -393,6 +416,8 @@ def audit(asm_path: Path, xbe_path: Path) -> dict[str, Any]:
             "consumer_function_count": len({row["function"] for row in consumer_rows}),
             "consumer_call_family_counts": consumer_call_family_counts,
             "consumer_function_envelope": "0x001A3E00-0x001A4B40",
+            "consumer_anchor_counts": consumer_anchor_counts,
+            "consumer_anchor_envelope": "selector-with-3458d4-and-3458d0-anchors",
             "selector_constant": False,
             "runtime_selected_buffer": "not-proven",
             "rendering_binding": "not-proven",
