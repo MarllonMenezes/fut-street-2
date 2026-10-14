@@ -79,7 +79,7 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     HRESULT hr=ID3D11Device_CreateSamplerState(device,&desc,&sampler);
     if (SUCCEEDED(hr)) {
         if (native->sampler) ID3D11SamplerState_Release(native->sampler);
-        native->sampler=sampler; native->sampling_ready=1;
+        native->sampler=sampler; native->sampling_ready=1; native->sampling_state=*state;
     }
     return hr;
 }

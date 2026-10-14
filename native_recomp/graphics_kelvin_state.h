@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "graphics_draw_state.h"
+#include "graphics_fragment_program.h"
 
 typedef struct {
     uint32_t control0, border_color, color_key, bump_env[6], texgen[4];
@@ -11,6 +12,7 @@ typedef struct {
 } FutGraphicsTextureState;
 typedef struct {
     FutGraphicsDrawState draw;
+    FutGraphicsFragmentState fragment;
     FutGraphicsTextureState textures[4];
     uint32_t constants[192][4];
     uint32_t program[136][4];
@@ -21,6 +23,8 @@ typedef struct {
     uint32_t clip_min, clip_max;
     uint32_t control0, line_width, anti_aliasing_control;
     unsigned depth_test, stencil_test;
+    unsigned point_params_enable, point_smooth;
+    uint32_t point_size;
     unsigned constant_load;
     int constants_dirty;
     unsigned provoking_first, edge_flag, compress_depth;

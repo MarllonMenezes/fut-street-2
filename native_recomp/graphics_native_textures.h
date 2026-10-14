@@ -7,6 +7,7 @@ typedef struct {
     ID3D11ShaderResourceView *view;
     ID3D11SamplerState *sampler;
     FutGraphicsTexturePlan plan;
+    FutGraphicsTextureState sampling_state;
     int valid, sampling_ready;
 } FutNativeTexture;
 /* Refresh from guest including CPU writes. Caller must first write back any

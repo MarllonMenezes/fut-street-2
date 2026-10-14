@@ -113,6 +113,11 @@ int main(void)
     state.draw.front_mode=0x1B02; surface.logical_width=0;
     CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_INVALIDARG && pipeline.blend==saved,24);
     surface.logical_width=8;
+    state.point_params_enable=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,26);
+    state.point_params_enable=0;state.point_smooth=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,27);
+    state.point_smooth=0;
     ID3D11BlendState *bound=NULL; float blend_factor[4]; UINT sample_mask;
     ID3D11DeviceContext_OMGetBlendState(context,&bound,blend_factor,&sample_mask);
     CHECK(bound==saved,25); ID3D11BlendState_Release(bound);

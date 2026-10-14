@@ -117,6 +117,12 @@ int main(void)
     before=state;
     if(fut_graphics_kelvin_state(&state,0x1B18,0)!=FUT_KELVIN_NOT_HANDLED ||
         fut_graphics_kelvin_state(&state,0x1B01,0)!=FUT_KELVIN_REJECTED || memcmp(&before,&state,sizeof(state))) return 36;
+    if(fut_graphics_kelvin_state(&state,0x318,1)!=FUT_KELVIN_APPLIED || !state.point_params_enable ||
+        fut_graphics_kelvin_state(&state,0x31C,1)!=FUT_KELVIN_APPLIED || !state.point_smooth ||
+        fut_graphics_kelvin_state(&state,0x43C,8)!=FUT_KELVIN_APPLIED || state.point_size!=8) return 37;
+    before=state;
+    if(fut_graphics_kelvin_state(&state,0x318,2)!=FUT_KELVIN_REJECTED ||
+        fut_graphics_kelvin_state(&state,0x31C,2)!=FUT_KELVIN_REJECTED || memcmp(&before,&state,sizeof(state))) return 38;
     puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
     return 0;
 }

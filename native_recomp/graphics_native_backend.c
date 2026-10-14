@@ -15,6 +15,7 @@
 #include "graphics_native_vertex.h"
 #include "graphics_native_surfaces.h"
 #include "graphics_native_textures.h"
+#include "graphics_native_fragment.h"
 #include "graphics_native_pipeline.h"
 #include "graphics_software_state.h"
 
@@ -66,6 +67,8 @@ typedef struct {
     FutNativeConstants native_constants;
     ID3D11VertexShader *vertex_shader;
     ID3DBlob *vertex_bytecode;
+    ID3D11PixelShader *pixel_shader;
+    ID3DBlob *pixel_bytecode;
     FutGraphicsBindings bindings;
     FutGraphicsKelvinState kelvin;
     FutGraphicsSurfaceState surfaces;
@@ -218,6 +221,23 @@ static int native_finish(NativeGraphicsState *state)
     return 1;
 }
 
+static int native_prepare_fragment(NativeGraphicsState *state)
+{
+    ID3D11PixelShader *shader=NULL;ID3DBlob *bytecode=NULL;
+    HRESULT hr=fut_native_fragment_compile(state->device,&state->kelvin,state->textures,&shader,&bytecode);
+    if(FAILED(hr)) {
+        fprintf(stderr,"[GRAPHICS] fragment-program translation pending/failed: control=%08X HRESULT=%08lX\n",
+            state->kelvin.fragment.control,hr);
+        return 0;
+    }
+    if(state->pixel_shader) ID3D11PixelShader_Release(state->pixel_shader);
+    if(state->pixel_bytecode) ID3D10Blob_Release(state->pixel_bytecode);
+    state->pixel_shader=shader;state->pixel_bytecode=bytecode;state->kelvin.fragment.dirty=0;
+    ID3D11DeviceContext_PSSetShader(state->context,shader,NULL,0);
+    fprintf(stderr,"[GRAPHICS] register-combiner equations compiled to native pixel shader; no draw\n");
+    return 1;
+}
+
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size)
 {
     (void)context;
@@ -285,6 +305,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 return 0;
             }
             if (!native_prepare_vertex(state)) return 0;
+            if (!native_prepare_fragment(state)) return 0;
             if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
                 fprintf(stderr, "[GRAPHICS] incomplete native draw state at use\n");
                 return 0;
@@ -424,6 +445,8 @@ static DWORD WINAPI native_worker(void *unused)
     fut_native_pipeline_destroy(&state.pipeline);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
+    if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
+    if (state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     ID3D11DeviceContext_Release(context);
     ID3D11Device_Release(device);
     return 0;

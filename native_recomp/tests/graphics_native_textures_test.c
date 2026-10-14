@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_textures.h"
 #include "graphics_native_constants.h"
+#include "graphics_native_fragment.h"
 #include <d3dcompiler.h>
 #include <math.h>
 #include <stdio.h>
@@ -158,6 +159,16 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) && native.valid && native.view && !native.sampling_ready,16);
     CHECK(verify_upload(device,context,&completion,&native,&memory)==0 && !memcmp(memory.bytes,before.bytes,64),17);
     CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)),18);
+    const uint32_t fragment_commands[][2]={{0x1E60,1},{0x1E70,1},{0xAC0,0x08200000},
+        {0x260,0x14200000},{0x1E40,0xC00},{0xAA0,0xC00},{0x288,0},{0x28C,0x1C80}};
+    for(unsigned i=0;i<sizeof(fragment_commands)/sizeof(fragment_commands[0]);++i)
+        CHECK(fut_graphics_kelvin_state(&kelvin,fragment_commands[i][0],fragment_commands[i][1])==FUT_KELVIN_APPLIED,33);
+    FutNativeTexture approved[4]={native};ID3D11PixelShader *pixel_shader=NULL;ID3DBlob *pixel_blob=NULL;
+    CHECK(SUCCEEDED(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)) && pixel_shader && pixel_blob,34);
+    ID3D11PixelShader_Release(pixel_shader);ID3D10Blob_Release(pixel_blob);
+    state->filter=0x04072000; /* Mutating state must not reuse an old approved sampler. */
+    CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL && !pixel_shader && !pixel_blob,35);
+    state->filter=0x01010000;
     CHECK(verify_sampling(device,context,&completion,&native,&memory,0,3)==0,19);
     state->filter=0x02020000;
     CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)) && verify_sampling(device,context,&completion,&native,&memory,1,3)==0,20);

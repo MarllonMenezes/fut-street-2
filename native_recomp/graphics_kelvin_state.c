@@ -9,6 +9,12 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
 {
     if (!state || (method & 3u))
         return FUT_KELVIN_REJECTED;
+    FutFragmentStatus fragment=fut_graphics_fragment_state(&state->fragment,method,value);
+    if(fragment==FUT_FRAGMENT_APPLIED) {
+        if(method>=0xA60 && method<0xAA0) fut_graphics_draw_state(&state->draw,method,value);
+        return FUT_KELVIN_APPLIED;
+    }
+    if(fragment==FUT_FRAGMENT_REJECTED) return FUT_KELVIN_REJECTED;
     FutGraphicsDrawStatus draw = fut_graphics_draw_state(&state->draw, method, value);
     if (draw == FUT_DRAW_STATE_APPLIED) return FUT_KELVIN_APPLIED;
     if (draw == FUT_DRAW_STATE_REJECTED) return FUT_KELVIN_REJECTED;
@@ -105,6 +111,13 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         if (value > 1) return FUT_KELVIN_REJECTED;
         state->stencil_test = value; state->draw.dirty = 1; break;
     case 0x380: state->line_width = value; break;
+    case 0x318:
+        if (value > 1) return FUT_KELVIN_REJECTED;
+        state->point_params_enable=value; state->draw.dirty=1; break;
+    case 0x31C:
+        if (value > 1) return FUT_KELVIN_REJECTED;
+        state->point_smooth=value; state->draw.dirty=1; break;
+    case 0x43C: state->point_size=value; state->draw.dirty=1; break;
     case 0x1D7C: state->anti_aliasing_control = value; break;
     case 0x1E94:
         if ((value & 3u) > 2 || value > 7) return FUT_KELVIN_REJECTED;

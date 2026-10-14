@@ -14,46 +14,47 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.70
+## Estado verificável — release 2.71
 
-A descrição de textura que bloqueava a terceira submissão agora é retida,
-com os campos originais e bits de presença separados nos quatro estágios:
-offset, formato, endereço, controle/pitch, filtro, dimensões e palette.
-Esses setters não fazem upload antecipado nem executam uma amostragem.
+A execução recompilada passou do offset `588` ao `848` da terceira submissão.
+Os controles de parâmetros/suavização de pontos e seu tamanho agora são
+preservados. Valores booleanos inválidos são recusados; controles de pontos
+ativados continuam sem implementação de rasterização e bloqueiam o pipeline.
 
-`graphics_textures.c` valida a forma observada: textura linear 2D A8R8G8B8,
-um mip, seleção exata do contexto DMA A/B e limites de memória/pitch.
-`graphics_native_textures.c` importa os pixels para textura/SRV D3D11 e
-renova o upload após escritas da CPU. No uso por draw, o backend primeiro
-grava na memória guest qualquer superfície alterada pela GPU usada como fonte.
-Falha de leitura/criação preserva o recurso existente.
+`graphics_fragment_program.c` traduz as operações dos register combiners para
+HLSL: até oito estágios, operações multiply/dot/add, os oito mapeamentos de
+entrada, bias/scale e escrita paralela de cor e alpha. Os registradores são
+validados por componente: ler scratch não inicializado, perder configurações
+necessárias ou escrever destinos conflitantes não gera um shader parcial.
+As equações seguem o modelo de [NV_register_combiners](https://registry.khronos.org/OpenGL/extensions/NV/NV_register_combiners.txt),
+com layout de palavras conferido no mapa NV097. MUX, blue-to-alpha, pseudo
+registradores finais SUM/EF, fog e modos dependentes ainda são recusados.
 
-A amostragem nativa implementada cobre filtros MIN/MAG iguais point ou linear,
-nível zero e coordenadas projetadas em espaço de texels, com wrap, mirror,
-clamp-to-edge e border. **O filtro original `0x04072000` continua pendente**:
-ele exige convolução quincunx, não linear comum. Não foi substituído por outro
-filtro; a [referência consultada](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/glsl/psh.c)
-também marca quincunx como incompleto. Signed channels, alpha kill, color key,
-filtros mistos e formas de armazenamento ainda não traduzidas são recusados
-no uso, sem liberar um draw dependente.
+`graphics_native_fragment.c` gera e compila o pixel shader nativo para as formas
+suportadas, integrando o clipping de janelas e a amostragem projetada já
+implementados. Um snapshot da descrição aprovada impede reutilizar um sampler
+antigo após mudanças de estado. O filtro original quincunx `0x04072000`
+continua pendente e impede compilar o caminho dependente; não foi aproximado
+por linear. **HLSL float32 não comprova equivalência com a precisão e os
+arredondamentos internos da NV2A.**
 
-Build Release e CTest passaram `18/18`. Os testes WARP conferem todos os
-pixels importados, preservação de padding, refresh de memória, limites e
-falhas sem descarte. Amostras point/linear, projeção e endereçamento são
-comparados com cálculo independente; o receiver real verifica os contextos
-DMA A/B com bases distintas e writeback GPU → guest → textura.
-**Esses testes usam dados/shader sintéticos, não o fragment program do jogo.**
+Build Release e CTest passaram `19/19`. Testes WARP executam as equações
+geradas e conferem RGBA por readback: cor/alpha paralelos, mapeamentos,
+bias/scale, dot, fatores compartilhados/por estágio e cadeia de oito estágios.
+As palavras do primeiro combiner capturado também foram testadas, mas com
+entradas de textura/cor sintéticas. O adaptador compila bytecode PS para
+configurações suportadas e recusa samplers ausentes ou desatualizados.
+**Isso não é execução do fragment program completo nem um draw do jogo.**
 
-A execução recompilada, limitada a cinco segundos, passou do offset `304`
-ao `588` da terceira submissão. O bloqueio atual é `0x0318`, valor zero,
-controle de parâmetros de pontos sem handler. Os dois clears originais e
-as duas primeiras submissões continuam concluídos, com marcador `7`.
-A terceira submissão não foi concluída, não chegou ao primeiro draw e ainda
-não exercitou o upload de textura no jogo. ISO intacta; novas saídas no D:.
+A execução nativa limitada a cinco segundos terminou por diagnóstico, sem
+timeout, no método `0x02A4`, valor zero: controle de fog ainda sem handler.
+Os dois clears originais, as duas primeiras submissões e o marcador `7`
+continuam concluídos. A terceira submissão não foi concluída e ainda não
+chegou ao primeiro draw. ISO intacta; novas saídas no D:.
 
-Próximo alvo: controles e tradução do fragment program exigidos pelo primeiro
-draw, incluindo a convolução observada. SAMPLEALPHA/RDI, geometria, demais
-shaders, apresentação de frame, gameplay e áudio continuam pendentes.
+Próximo alvo: estados de fog/transformação exigidos antes do draw e a tradução
+da convolução observada. SAMPLEALPHA/RDI, geometria, precisão gráfica,
+apresentação de frame, gameplay e áudio continuam pendentes.
 `NOT_READY` permanece.
 
 ## Abordagem
