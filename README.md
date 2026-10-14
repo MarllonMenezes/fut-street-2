@@ -14,6 +14,41 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.63
+
+O primeiro binding gráfico deixou de bloquear a execução. O backend resolve
+handles exatos na RAMHT construída pelo próprio código recompilado, filtrando
+entradas válidas e o canal correto, preservando os quatro words do descritor
+e recusando resultados ambíguos. `0x0D` foi confirmado como classe `0x97` tanto
+pelo registro original do jogo quanto pelo descritor observado em runtime.
+
+A primeira submissão agora associa cinco objetos: classes `0x97`, `0x39`,
+`0x9F`, `0x62` e `0x44`. As referências de contexto/DMA são resolvidas com
+checagem de tipo, incluindo os contextos nulos opcionais do blit; a operação
+de blit permanece como estado diferido. As associações seguem as referências
+de [blit](https://github.com/envytools/envytools/blob/master/rnndb/graph/nv1_blit.xml),
+[M2MF](https://github.com/envytools/envytools/blob/master/rnndb/graph/nv_m2mf.xml)
+e [contextos 2D](https://github.com/envytools/envytools/blob/master/rnndb/graph/nv1_ctxobj.xml)
+do Envytools. Isso prepara os recursos que os handlers de desenho/cópia
+usarão; não declara essas operações executadas.
+
+O formato DMA linear/unified-RAM observado é convertido em uma view limitada
+ao mapeamento de 64 MiB. Formatos ou faixas não suportados são rejeitados. O
+destino do semáforo foi resolvido para `0x82801000`, sem realizar release ou
+alterar seu contador. O processo chega ao método `0x09FC`, valor `1`, offset
+`164` da submissão, e encerra com diagnóstico `3` antes do timeout.
+Esse método seleciona o vértice que fornece os atributos de flat shading:
+é o próximo alvo na implementação dos estados de desenho, não um comando
+de fog. A semântica de interpolação precisa ser preservada pelo renderer.
+
+Build Release e testes do host passaram `10/10`; os testes incluem lookup
+por canal, duplicatas, descritores ilegíveis, tipos incompatíveis, preservação
+do estado após erro e limites de views DMA. Os testes públicos passaram
+`161/161`; build e self-test do protótipo .NET passaram (`105` testes, somente
+seus próprios componentes). A ISO manteve o SHA-256 original. Os insumos,
+capturas, builds, logs e temporários desta etapa permaneceram no D:.
+`NOT_READY` permanece: nenhum draw, primeiro frame ou PoC jogável aprovado.
+
 ## Estado verificável — release 2.62
 
 O host agora inicia um dispositivo D3D11 nativo no caminho `--launch` e possui

@@ -56,6 +56,8 @@
 !/native_recomp/graphics_command_stream.h
 !/native_recomp/graphics_native_backend.c
 !/native_recomp/graphics_native_backend.h
+!/native_recomp/graphics_objects.c
+!/native_recomp/graphics_objects.h
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c

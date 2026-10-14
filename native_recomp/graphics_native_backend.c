@@ -8,6 +8,7 @@
 #include "xbox_memory_layout.h"
 #include "graphics_command_stream.h"
 #include "graphics_native_backend.h"
+#include "graphics_objects.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -42,13 +43,57 @@ static void fail_backend(const char *reason)
     _Exit(3);
 }
 
+typedef struct {
+    ID3D11DeviceContext *context;
+    FutGraphicsBindings bindings;
+    uint32_t semaphore_offset;
+    FutGraphicsDmaView semaphore_view;
+} NativeGraphicsState;
+
+static int object_memory_read(void *context, uint32_t address, void *data, size_t size)
+{
+    (void)context;
+    return read_guest(address, data, size);
+}
+
 static int native_method(void *context, unsigned subchannel, uint32_t method,
                          uint32_t value, size_t offset)
 {
-    (void)context;
-    /* Until the object/resource mapping is implemented, no command may
-     * authorize progress. This is the renderer dispatch boundary, not a
-     * successful no-op implementation of every missing method. */
+    NativeGraphicsState *state = context;
+    FutGraphicsBindingStatus binding = fut_graphics_apply_binding(&state->bindings,
+        subchannel, method, value);
+    if (binding == FUT_BINDING_APPLIED) {
+        if (method == 0) {
+            const FutGraphicsObject *object = &state->bindings.objects[subchannel];
+            fprintf(stderr, "[GRAPHICS] bound sub=%u handle=%08X class=%02X instance=%08X\n",
+                    subchannel, value, (unsigned)(object->words[0] & 0xFFu), object->instance);
+        } else {
+            fprintf(stderr, "[GRAPHICS] binding state sub=%u method=%04X value=%08X\n",
+                    subchannel, method, value);
+        }
+        return 1;
+    }
+    if (binding == FUT_BINDING_REJECTED) {
+        fprintf(stderr, "[GRAPHICS] invalid object/context binding: sub=%u method=%04X value=%08X\n",
+                subchannel, method, value);
+        return 0;
+    }
+    if (subchannel == 0 && method == 0x1D6Cu &&
+        (state->bindings.objects[0].words[0] & 0xFFu) == 0x97u &&
+        (state->bindings.reference_masks[0] & (1u << 9))) {
+        FutGraphicsDmaView view;
+        if ((value & 3u) || !fut_graphics_dma_view(
+                &state->bindings.references[0][9], &view) ||
+            value > view.size || view.size - value < 4) {
+            fprintf(stderr, "[GRAPHICS] unsupported semaphore descriptor/offset=%08X\n", value);
+            return 0;
+        }
+        state->semaphore_offset = value;
+        state->semaphore_view = view;
+        fprintf(stderr, "[GRAPHICS] semaphore destination=%08X size=%u; no release performed\n",
+                view.guest_address + value, view.size);
+        return 1;
+    }
     fprintf(stderr, "[GRAPHICS] native handler missing: sub=%u method=%04X "
             "value=%08X offset=%zu\n", subchannel, method, value, offset);
     return 0;
@@ -71,6 +116,9 @@ static DWORD WINAPI native_worker(void *unused)
         fail_backend("native D3D11 device initialization failed");
     fprintf(stderr, "[GRAPHICS] native D3D11 device initialized: feature_level=%04X\n",
             (unsigned)feature_level);
+    NativeGraphicsState state = {0};
+    state.context = context;
+    state.bindings.read = object_memory_read;
 
     uint32_t ring_start = 0, ring_end = 0, channel = 0, cursor = 0;
     while (WaitForSingleObject(backend_stop, 5) == WAIT_TIMEOUT) {
@@ -110,7 +158,7 @@ static DWORD WINAPI native_worker(void *unused)
             fail_backend("submission capture exceeds native decoder bounds");
         FutGraphicsDecodeResult decoded;
         FutGraphicsDecodeStatus status = fut_graphics_decode(bytes, size,
-            native_method, context, &decoded);
+            native_method, &state, &decoded);
         if (status != FUT_GRAPHICS_DECODED) {
             FILE *capture = fopen("graphics-rejected.bin", "wb");
             if (capture) { fwrite(bytes, 1, size, capture); fclose(capture); }

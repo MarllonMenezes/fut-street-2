@@ -54,6 +54,7 @@ target_include_directories(fut_street_2_recompiled_code PUBLIC
 
 add_library(fut_street_2_no_emulation_runtime_support STATIC
     graphics_command_stream.c
+    graphics_objects.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -61,6 +62,10 @@ target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 if(BUILD_TESTING)
+    add_executable(graphics_objects_test tests/graphics_objects_test.c)
+    target_include_directories(graphics_objects_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(graphics_objects_test PRIVATE fut_street_2_no_emulation_runtime_support)
+    add_test(NAME graphics_objects COMMAND graphics_objects_test)
     add_executable(graphics_command_stream_test tests/graphics_command_stream_test.c)
     target_include_directories(graphics_command_stream_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(graphics_command_stream_test PRIVATE fut_street_2_no_emulation_runtime_support)
