@@ -20,6 +20,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_memory_callback_range_provenance,
     recover_dynamic_object_field_writer_overlap_provenance,
     recover_callback_return_use_provenance,
+    classify_prcb_callback_return_disposition,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_dynamic_indexed_writer_root_link_provenance,
@@ -126,6 +127,15 @@ void sub_00001020(void)
         self.assertEqual(
             summary["prcb_callback_cache_provenance_status"],
             "prcb-cache-callback-field-shape-observed",
+        )
+        self.assertEqual(
+            summary["prcb_callback_return_disposition_status"],
+            "verified-bounded-prcb-callback-return-disposition",
+        )
+        self.assertEqual(summary["prcb_callback_return_disposition_sites"], 1)
+        self.assertEqual(
+            summary["prcb_callback_return_disposition_counts"],
+            {"callback-return-not-observed-before-control-transfer": 1},
         )
         self.assertEqual(summary["unresolved_dynamic_sites"], 2)
         self.assertEqual(summary["dynamic_call_stack_shape_sites"], 0)
@@ -710,6 +720,59 @@ loc_0000200F: ;
             evidence["0x0000200F"]["status"],
             "callback-return-overwritten-before-observation",
         )
+
+    def test_classifies_prcb_callback_return_disposition(self) -> None:
+        classified = [
+            {
+                "call_site": "0x0000100F",
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "prcb-guarded-dynamic-callback",
+            },
+            {
+                "call_site": "0x0000200F",
+                "function": "0x00002000",
+                "function_name": "sub_00002000",
+                "classification": "prcb-guarded-dynamic-callback",
+            },
+            {
+                "call_site": "0x0000300F",
+                "function": "0x00003000",
+                "function_name": "sub_00003000",
+                "classification": "prcb-guarded-dynamic-callback",
+            },
+        ]
+        result = classify_prcb_callback_return_disposition(
+            classified,
+            {
+                "0x0000100F": {
+                    "status": "callback-return-not-observed-before-control-transfer",
+                    "first_effect": None,
+                },
+                "0x0000200F": {
+                    "status": "callback-return-overwritten-before-observation",
+                    "first_effect": {"kind": "return-overwritten-before-observation"},
+                },
+                "0x0000300F": {"status": "unexpected-status"},
+            },
+        )
+
+        self.assertEqual(
+            result["status"],
+            "incomplete-bounded-prcb-callback-return-disposition",
+        )
+        self.assertEqual(result["site_count"], 3)
+        self.assertEqual(result["observed_sites"], 2)
+        self.assertEqual(result["unclassified_sites"], 1)
+        self.assertEqual(
+            result["disposition_counts"],
+            {
+                "callback-return-not-observed-before-control-transfer": 1,
+                "callback-return-overwritten-before-observation": 1,
+                "unclassified": 1,
+            },
+        )
+        self.assertEqual(result["semantics"], "not-claimed")
 
     def test_recovers_kernel_return_use_shape(self) -> None:
         generated_source = """

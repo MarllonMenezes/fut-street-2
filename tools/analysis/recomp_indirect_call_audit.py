@@ -5049,6 +5049,80 @@ def recover_callback_return_use_provenance(
     return results
 
 
+def classify_prcb_callback_return_disposition(
+    classified: list[dict[str, Any]],
+    callback_return_use_provenance: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    """Summarize the bounded return disposition for PRCB callbacks.
+
+    This joins the PRCB callback class with the already bounded post-call
+    window.  It records only whether the generated C observes, overwrites, or
+    fails to observe the return before the next local control transfer.  It
+    does not infer a callback ABI, a return type, or Xbox PRCB semantics.
+    """
+    known_statuses = {
+        "callback-return-compared-after-call",
+        "callback-return-read-after-call",
+        "callback-return-overwritten-before-observation",
+        "callback-return-not-observed-before-control-transfer",
+    }
+    prcb_rows = [
+        row
+        for row in classified
+        if row.get("classification") == "prcb-guarded-dynamic-callback"
+    ]
+    site_rows: list[dict[str, Any]] = []
+    disposition_counts: Counter[str] = Counter()
+    for row in sorted(prcb_rows, key=lambda item: _address(item["call_site"])):
+        call_site = str(row["call_site"])
+        return_provenance = callback_return_use_provenance.get(call_site, {})
+        return_status = return_provenance.get("status")
+        disposition = (
+            return_status if return_status in known_statuses else "unclassified"
+        )
+        disposition_counts[disposition] += 1
+        site_rows.append(
+            {
+                "call_site": call_site,
+                "function": row["function"],
+                "function_name": row.get("function_name", ""),
+                "classification": row["classification"],
+                "return_status": return_status,
+                "disposition": disposition,
+                "first_effect": return_provenance.get("first_effect"),
+                "return_read_sources": return_provenance.get(
+                    "return_read_sources", []
+                ),
+                "return_compare_source": return_provenance.get(
+                    "return_compare_source"
+                ),
+            }
+        )
+
+    unclassified_sites = disposition_counts["unclassified"]
+    site_count = len(prcb_rows)
+    observed_sites = sum(
+        count
+        for status, count in disposition_counts.items()
+        if status != "unclassified"
+    )
+    if site_count == 0:
+        status = "no-prcb-guarded-callback-sites"
+    elif observed_sites == site_count and unclassified_sites == 0:
+        status = "verified-bounded-prcb-callback-return-disposition"
+    else:
+        status = "incomplete-bounded-prcb-callback-return-disposition"
+    return {
+        "status": status,
+        "site_count": site_count,
+        "observed_sites": observed_sites,
+        "unclassified_sites": unclassified_sites,
+        "disposition_counts": dict(disposition_counts),
+        "semantics": "not-claimed",
+        "sites": site_rows,
+    }
+
+
 def recover_kernel_return_use_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -5848,6 +5922,9 @@ def audit(
     callback_return_use_provenance = recover_callback_return_use_provenance(
         generated_dir, classified
     )
+    prcb_callback_return_disposition = classify_prcb_callback_return_disposition(
+        classified, callback_return_use_provenance
+    )
     kernel_return_use_provenance = recover_kernel_return_use_provenance(
         generated_dir, classified
     )
@@ -5925,6 +6002,10 @@ def audit(
             generated_dir, classified, dynamic_callback_caller_provenance
         )
     )
+    prcb_callback_return_disposition_by_site = {
+        item["call_site"]: item
+        for item in prcb_callback_return_disposition["sites"]
+    }
     for row in classified:
         provenance = dynamic_source_provenance.get(str(row["call_site"]))
         if provenance is not None:
@@ -5937,6 +6018,11 @@ def audit(
         )
         if return_provenance is not None:
             row["callback_return_use_provenance"] = return_provenance
+        prcb_return_disposition = prcb_callback_return_disposition_by_site.get(
+            str(row["call_site"])
+        )
+        if prcb_return_disposition is not None:
+            row["prcb_callback_return_disposition"] = prcb_return_disposition
         kernel_return_provenance = kernel_return_use_provenance.get(
             str(row["call_site"])
         )
@@ -7523,6 +7609,24 @@ def audit(
             if callback_return_use_provenance
             else "no-callback-return-use-observed"
         ),
+        "prcb_callback_return_disposition_status": (
+            prcb_callback_return_disposition["status"]
+        ),
+        "prcb_callback_return_disposition_sites": (
+            prcb_callback_return_disposition["site_count"]
+        ),
+        "prcb_callback_return_disposition_observed_sites": (
+            prcb_callback_return_disposition["observed_sites"]
+        ),
+        "prcb_callback_return_disposition_unclassified_sites": (
+            prcb_callback_return_disposition["unclassified_sites"]
+        ),
+        "prcb_callback_return_disposition_counts": (
+            prcb_callback_return_disposition["disposition_counts"]
+        ),
+        "prcb_callback_return_disposition_semantics": (
+            prcb_callback_return_disposition["semantics"]
+        ),
         "kernel_return_use_provenance_sites": len(kernel_return_use_provenance),
         "kernel_return_use_compared_sites": sum(
             row["status"] == "callback-return-compared-after-call"
@@ -7767,6 +7871,7 @@ def audit(
         "dynamic_callback_producer_boundary": dynamic_callback_producer_boundary,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,
+        "prcb_callback_return_disposition": prcb_callback_return_disposition,
         "kernel_return_use_provenance": kernel_return_use_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "dynamic_callback_all_caller_provenance": (

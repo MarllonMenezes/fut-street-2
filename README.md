@@ -14,6 +14,23 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.38
+
+O release 2.38 separa, dentro dos `4` callbacks protegidos pelo PRCB, a
+disposição limitada do valor retornado pela chamada indireta. Em `2` sites o
+retorno não é observado antes da próxima transferência de controle local; nos
+outros `2`, o registrador `eax` é sobrescrito antes de qualquer observação.
+Esse resultado vem somente da janela sintática já auditada no C gerado.
+
+O gate confirma `prcb_callback_return_disposition_sites=4`,
+`prcb_callback_return_disposition_unclassified_sites=0` e
+`semantics=not-claimed`. Ele não prova tipo, ABI, implementação do callback,
+valor do PRCB no runtime ou semântica Xbox, e não resolve nenhum dos `7`
+callbacks dinâmicos. A suíte Python passou em `118/118`, a prontidão permanece
+`NOT_READY` e a estimativa conservadora do PoC jogável continua em aproximadamente
+`31% concluído / 69% restante`. A análise permanece estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.37
 
 O release 2.37 fecha um gate de forma para o callback de memória em
