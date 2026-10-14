@@ -1,0 +1,149 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -16,7 +16,7 @@ from typing import Dict, List, Optional, Set, Tuple
+ from . import config
+ from .engine import DisasmEngine, Instruction
+ from .loader import BinaryImage, SectionInfo
+-from .xrefs import XRefTracker
++from .xrefs import XRefTracker, XRefType
+ from .labels import LabelManager, Label, LabelType
+ 
+ 
+@@ -450,6 +450,19 @@ class FunctionDetector:
+                     if found_ret:
+                         next_addr = va_start + i
+                         if next_addr in self.engine.instructions:
++                            # A printable, NUL-terminated object immediately
++                            # after int3 padding can look like a function when
++                            # a linear sweep decodes its bytes. If code passes
++                            # that address as data, and no control-flow xref
++                            # enters it, the data reference is stronger
++                            # evidence than the padding heuristic. FIFA Street
++                            # 2's XPP section has this exact shape for
++                            # "\\Device\\MU_0" and "\\Device\\MU_x"; the
++                            # spurious function emitted ARPL instructions from
++                            # the string bytes.
++                            if self._is_referenced_ascii_data(next_addr):
++                                i += 1
++                                continue
+                             self._add_candidate(
+                                 next_addr,
+                                 config.CONFIDENCE_CC_BOUNDARY,
+@@ -458,6 +471,30 @@ class FunctionDetector:
+             else:
+                 i += 1
+ 
++    def _is_referenced_ascii_data(self, addr: int) -> bool:
++        """Reject a CC-boundary candidate proven to be referenced string data.
++
++        This is intentionally narrow: an exact DATA_IMM reference plus a
++        printable NUL-terminated byte run is required, and any direct control
++        flow reference keeps the function candidate. It only vetoes the weak
++        CC-padding heuristic; call/jump/seed candidates use their own evidence.
++        """
++        refs = self.xrefs.get_refs_to(addr)
++        if not any(ref.xref_type == XRefType.DATA_IMM for ref in refs):
++            return False
++        if any(ref.xref_type in (XRefType.CALL, XRefType.JUMP,
++                                 XRefType.COND_JUMP) for ref in refs):
++            return False
++
++        data = self.image.read_bytes_at_va(addr, 128)
++        if not data:
++            return False
++        end = data.find(b"\0")
++        if end < 8:
++            return False
++        return all(0x20 <= byte < 0x7F or byte in (0x09, 0x0A, 0x0D)
++                   for byte in data[:end])
++
+     def _pass_call_targets(self, sections: List[SectionInfo]) -> None:
+         """
+         Pass 4: Add destinations of direct call instructions as function starts.
+
+diff --git a/tools/disasm/test_cc_boundary.py b/tools/disasm/test_cc_boundary.py
+--- a/tools/disasm/test_cc_boundary.py
++++ b/tools/disasm/test_cc_boundary.py
+@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+ 
+ from tools.disasm import config  # noqa: E402
+ from tools.disasm.functions import FunctionDetector  # noqa: E402
++from tools.disasm.xrefs import XRef, XRefType  # noqa: E402
+ 
+ 
+ class _Insn:
+@@ -47,6 +48,18 @@ class _Image:
+     def get_section_data(self, section):
+         return self.data
+ 
++    def read_bytes_at_va(self, addr, size):
++        start = addr - _Section.virtual_addr
++        return self.data[start:start + size]
++
++
++class _XRefs:
++    def __init__(self, refs=()):
++        self.refs = refs
++
++    def get_refs_to(self, addr):
++        return [ref for ref in self.refs if ref.to_addr == addr]
++
+ 
+ class _Engine:
+     def __init__(self, insns):
+@@ -56,7 +69,8 @@ class _Engine:
+         return self.instructions.get(addr)
+ 
+ 
+-def _run(terminator_mnemonic, terminator_size, is_ret, is_jump):
++def _run(terminator_mnemonic, terminator_size, is_ret, is_jump,
++         data_refs=(), payload=None):
+     """Lay out <filler><terminator><int3 padding><next function> and detect."""
+     base = _Section.virtual_addr
+     term_at = 0x30
+@@ -66,6 +80,8 @@ def _run(terminator_mnemonic, terminator_size, is_ret, is_jump):
+     data = bytearray(b"\x90" * 0x60)
+     for i in range(pad_at, next_at):
+         data[i] = config.CC_PADDING
++    if payload is not None:
++        data[next_at:next_at + len(payload)] = payload
+ 
+     insns = [
+         _Insn(base + term_at, terminator_size, terminator_mnemonic,
+@@ -76,6 +92,7 @@ def _run(terminator_mnemonic, terminator_size, is_ret, is_jump):
+     det = FunctionDetector.__new__(FunctionDetector)
+     det.engine = _Engine(insns)
+     det.image = _Image(bytes(data))
++    det.xrefs = _XRefs(data_refs)
+     found = []
+     det._add_candidate = lambda addr, conf, why: found.append(addr)
+     det._pass_cc_boundaries(_Section())
+@@ -104,3 +121,26 @@ def test_padding_after_ordinary_code_is_not_a_boundary():
+     # next function starts; accepting it would split functions at random.
+     found, expected = _run("mov", 4, is_ret=False, is_jump=False)
+     assert expected not in found, "split a function at non-terminating padding"
++
++
++def test_referenced_ascii_string_after_padding_is_not_a_function():
++    base = _Section.virtual_addr
++    target = base + 0x40
++    data_ref = XRef(base + 0x20, target, XRefType.DATA_IMM)
++    found, expected = _run(
++        "ret", 1, is_ret=True, is_jump=False, data_refs=(data_ref,),
++        payload=b"\\Device\\MU_0\0")
++    assert expected not in found, "string bytes promoted by the CC heuristic"
++
++
++def test_control_flow_reference_keeps_ascii_boundary_candidate():
++    base = _Section.virtual_addr
++    target = base + 0x40
++    refs = (
++        XRef(base + 0x10, target, XRefType.DATA_IMM),
++        XRef(base + 0x20, target, XRefType.CALL),
++    )
++    found, expected = _run(
++        "ret", 1, is_ret=True, is_jump=False, data_refs=refs,
++        payload=b"\\Device\\MU_0\0")
++    assert expected in found, "direct call evidence must beat the string heuristic"
+

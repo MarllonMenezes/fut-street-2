@@ -204,3 +204,20 @@ gameplay/render/audio gate is validated.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0011-lift-aaa-aas-with-af-guard.patch'
 ```
+
+Patch `0012-ignore-referenced-ascii-cc-boundary.patch` follows patches
+0001–0011. The function detector now rejects a weak `CC`-padding boundary when
+the candidate is an exact `DATA_IMM` target, has no direct control-flow xref, and
+the bytes form a printable NUL-terminated ASCII run of at least eight bytes.
+This prevents the XPP strings `\Device\MU_0` and `\Device\MU_x` from being
+misidentified as functions while preserving candidates with direct control-
+flow evidence. Tests cover both cases. On the pinned v0.13.1 source, the clean
+patch stack passes 539 tests (38 skipped); generation removes one false
+function, two call stubs, and two unsupported instruction sites. The generated
+host still builds in Release and CTest passes 4/4; no game boot or fidelity gate
+is claimed.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0012-ignore-referenced-ascii-cc-boundary.patch'
+```
