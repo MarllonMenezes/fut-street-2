@@ -14,6 +14,25 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.43
+
+O release 2.43 transforma o link do host opcional em um gate reproduzível por
+`tools/build-host-link-gate.ps1`. Contra o artefato completo 25f e uma cópia
+limpa da pilha XboxRecomp 0001–0024, o host foi configurado em Release,
+compilou as `62` unidades C geradas e o kernel bridge, e foi ligado contra as
+bibliotecas seletivas de D3D8/video/input fornecidas por `-HostLibrary`, sem
+símbolos não resolvidos.
+O CTest seguro passou em `6/6`: runtime support, packed-word ops, dispatch,
+`--help` e as duas recusas de preflight. O gate não executa o XBE.
+
+Esse marco prova a integração de compilação/link do host, não a execução do
+jogo nem a fidelidade do runtime. Os dois opcodes `SGDT`/`OUT` continuam sem
+lowering, os callbacks dinâmicos e a semântica completa dos serviços Xbox ainda
+não estão aprovados, e os gates de boot, rendering, assets, gameplay, animação
+e áudio continuam pendentes. A prontidão permanece `NOT_READY`, a estimativa
+conservadora do PoC jogável continua em aproximadamente `31% concluído / 69%
+restante`.
+
 ## Estado verificável — release 2.42
 
 O release 2.42 adiciona um gate estático de evidência para as instruções que
