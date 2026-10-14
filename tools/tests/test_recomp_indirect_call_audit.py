@@ -315,7 +315,13 @@ void xbe_entry_point(void)
         self.assertEqual(evidence["xbox_IoCreateFile"]["sources"], ["kernel_file.c:1"])
         self.assertEqual(
             evidence["xbox_IoCreateFile"]["body_markers"],
-            [{"marker": "no-op", "source": "kernel_file.c:4"}],
+            [
+                {
+                    "kind": "explicit-stub-or-no-op",
+                    "marker": "no-op",
+                    "source": "kernel_file.c:4",
+                }
+            ],
         )
         self.assertEqual(evidence["xbox_Missing"]["status"], "missing-source-definition")
         self.assertEqual(evidence["xbox_Missing"]["body_markers"], [])

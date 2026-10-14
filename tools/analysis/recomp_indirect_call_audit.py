@@ -74,8 +74,11 @@ KERNEL_FUNCTION_DEFINITION_RE = re.compile(
     r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
     r"(?P<name>xbox_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{"
 )
-KERNEL_IMPLEMENTATION_BODY_MARKER_RE = re.compile(
-    r"(?i)\b(?:stub(?:bed)?|no-op|STATUS_NOT_IMPLEMENTED)\b"
+KERNEL_IMPLEMENTATION_STUB_MARKER_RE = re.compile(
+    r"(?i)\b(?:stub(?:bed)?|no-op)\b"
+)
+KERNEL_IMPLEMENTATION_STATUS_MARKER_RE = re.compile(
+    r"\bSTATUS_NOT_IMPLEMENTED\b"
 )
 KERNEL_BRIDGE_FUNCTION_RE = re.compile(
     r"^\s*static\s+bridge_func_t\s+bridge_for_ordinal\s*\(ULONG\s+ordinal\)\s*$"
@@ -886,19 +889,30 @@ def recover_kernel_implementation_evidence(
                         break
             if body_end is None:
                 continue
-            for marker_match in KERNEL_IMPLEMENTATION_BODY_MARKER_RE.finditer(
-                text, body_start, body_end + 1
+            for marker_re, marker_kind in (
+                (
+                    KERNEL_IMPLEMENTATION_STUB_MARKER_RE,
+                    "explicit-stub-or-no-op",
+                ),
+                (
+                    KERNEL_IMPLEMENTATION_STATUS_MARKER_RE,
+                    "status-not-implemented-token",
+                ),
             ):
-                marker = marker_match.group(0)
-                marker_source = {
-                    "marker": marker,
-                    "source": (
-                        f"{relative_source}:"
-                        f"{text.count(chr(10), 0, marker_match.start()) + 1}"
-                    ),
-                }
-                if marker_source not in evidence[target]["body_markers"]:
-                    evidence[target]["body_markers"].append(marker_source)
+                for marker_match in marker_re.finditer(
+                    text, body_start, body_end + 1
+                ):
+                    marker = marker_match.group(0)
+                    marker_source = {
+                        "kind": marker_kind,
+                        "marker": marker,
+                        "source": (
+                            f"{relative_source}:"
+                            f"{text.count(chr(10), 0, marker_match.start()) + 1}"
+                        ),
+                    }
+                    if marker_source not in evidence[target]["body_markers"]:
+                        evidence[target]["body_markers"].append(marker_source)
     return evidence
 
 
@@ -1930,6 +1944,28 @@ def audit(
             if kernel_implementation_evidence is None
             else sum(
                 bool(item["body_markers"])
+                for item in kernel_implementation_evidence.values()
+            )
+        ),
+        "kernel_implementation_explicit_stub_or_noop_target_count": (
+            None
+            if kernel_implementation_evidence is None
+            else sum(
+                any(
+                    marker["kind"] == "explicit-stub-or-no-op"
+                    for marker in item["body_markers"]
+                )
+                for item in kernel_implementation_evidence.values()
+            )
+        ),
+        "kernel_implementation_status_not_implemented_token_target_count": (
+            None
+            if kernel_implementation_evidence is None
+            else sum(
+                any(
+                    marker["kind"] == "status-not-implemented-token"
+                    for marker in item["body_markers"]
+                )
                 for item in kernel_implementation_evidence.values()
             )
         ),
