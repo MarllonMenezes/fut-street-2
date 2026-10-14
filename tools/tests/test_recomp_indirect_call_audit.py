@@ -37,6 +37,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_return_contract_evidence,
     recover_kernel_return_use_provenance,
     recover_prcb_cache_writes,
+    recover_prcb_host_layout_evidence,
     recover_prcb_callback_cache_provenance,
     recover_runtime_fixed_slot_initializers,
     recover_symbolic_link_open_query_close_sequences,
@@ -353,6 +354,23 @@ void xbe_entry_point(void)
         self.assertEqual(row["callback_register"], "eax")
         self.assertTrue(row["guarded"])
         self.assertEqual(row["status"], "prcb-cache-callback-field-shape-observed")
+
+    def test_verifies_zeroed_prcb_host_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source_root = Path(temporary)
+            (source_root / "xbox_memory_layout.c").write_text(
+                "#define FAKE_PRCB_VA 0x00761000\n"
+                "memset(XBOX_VA(FAKE_PRCB_VA), 0, 0x400);\n"
+                "MEM32_INIT(XBOX_FS_BASE + 0x20, FAKE_PRCB_VA);\n",
+                encoding="utf-8",
+            )
+            evidence = recover_prcb_host_layout_evidence(source_root)
+
+        self.assertEqual(
+            evidence["status"], "verified-zeroed-fake-prcb-cache-layout"
+        )
+        self.assertEqual(evidence["fake_prcb_va"], "0x00761000")
+        self.assertEqual(evidence["zero_block_bytes"], 0x400)
 
     def test_recovers_direct_caller_push_shape(self) -> None:
         functions = [

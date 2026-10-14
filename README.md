@@ -20,7 +20,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.19
+## Estado verificável — release 2.20
+
+O release 2.20 audita a dependência de layout que mantém os quatro callbacks
+protegidos pelo PRCB fora do preflight. Contra a fonte pinned
+`xbox_memory_layout.c`, a auditoria verifica `FAKE_PRCB_VA=0x00761000`, um
+bloco zerado de `0x400` bytes e a atribuição de `FS:[0x20]` para esse bloco.
+Combinada com a proveniência dos quatro loads
+`FS:[0x20] -> +0x250 -> +0x14`, os `0` writers diretos e os guards locais,
+essa evidência mostra que os quatro sites começam quiescentes no host
+preflight. Ela não resolve os ponteiros dos callbacks, não afirma que um
+kernel Xbox real inicialize o campo da mesma forma e não executa código guest.
+
+O relatório continua conservador: `unresolved_dynamic_sites=7`; o novo gate
+apenas torna explícita a condição inicial do host. A suíte Python passou
+`102/102`, a prontidão continua `NOT_READY` e a estimativa do PoC jogável
+permanece em aproximadamente `31% concluído / 69% restante`.
+
+### Release 2.19 — auditoria da tabela `RECOMP_ITAIL`
 
 O release 2.19 fecha uma lacuna de auditoria dos saltos indiretos de cauda.
 No subgrafo diretamente alcançável pela entrada `0x0024D8BE`, há `1`

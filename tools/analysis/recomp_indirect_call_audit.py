@@ -83,6 +83,15 @@ PRCB_CACHE_WRITE_RE = re.compile(
 PRCB_CACHE_ADDRESS_ALIAS_RE = re.compile(
     r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250$"
 )
+PRCB_HOST_FAKE_ADDRESS_RE = re.compile(
+    r"#define\s+FAKE_PRCB_VA\s+0x(?P<address>[0-9A-Fa-f]+)"
+)
+PRCB_HOST_ZERO_BLOCK_RE = re.compile(
+    r"memset\(XBOX_VA\(FAKE_PRCB_VA\),\s*0,\s*0x(?P<size>[0-9A-Fa-f]+)\)"
+)
+PRCB_HOST_FS_POINTER_RE = re.compile(
+    r"MEM32_INIT\(XBOX_FS_BASE\s*\+\s*0x20,\s*FAKE_PRCB_VA\)"
+)
 KERNEL_RESOLVER_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"\(ULONG_PTR\)(?P<target>[^;]+);"
@@ -1320,6 +1329,58 @@ def recover_prcb_cache_writes(
                 prcb_base_registers.discard(register_match.group("register"))
                 prcb_cache_address_aliases.pop(register_match.group("register"), None)
     return writes
+
+
+def recover_prcb_host_layout_evidence(source_root: Path) -> dict[str, Any]:
+    """Verify the pinned host layout used to suppress the PRCB callbacks.
+
+    The host runtime must point ``FS:[0x20]`` at a zeroed block large enough to
+    cover ``+0x250`` before any guest instruction is considered.  This helper
+    checks the source shape only; it does not execute the runtime or claim
+    that a real Xbox kernel has the same initialization behavior.
+    """
+    source_path = source_root / "xbox_memory_layout.c"
+    evidence: dict[str, Any] = {
+        "status": "missing-xbox-memory-layout-source",
+        "source": None,
+        "fake_prcb_va": None,
+        "zero_block_bytes": None,
+        "fake_prcb_define_source": None,
+        "zero_block_source": None,
+        "fs_pointer_assignment_source": None,
+    }
+    if not source_path.exists():
+        return evidence
+
+    text = source_path.read_text(encoding="utf-8")
+    fake_match = PRCB_HOST_FAKE_ADDRESS_RE.search(text)
+    zero_match = PRCB_HOST_ZERO_BLOCK_RE.search(text)
+    fs_match = PRCB_HOST_FS_POINTER_RE.search(text)
+    evidence["source"] = source_path.name
+    if fake_match is not None:
+        evidence["fake_prcb_va"] = f"0x{int(fake_match.group('address'), 16):08X}"
+        evidence["fake_prcb_define_source"] = (
+            f"{source_path.name}:{text.count(chr(10), 0, fake_match.start()) + 1}"
+        )
+    if zero_match is not None:
+        evidence["zero_block_bytes"] = int(zero_match.group("size"), 16)
+        evidence["zero_block_source"] = (
+            f"{source_path.name}:{text.count(chr(10), 0, zero_match.start()) + 1}"
+        )
+    if fs_match is not None:
+        evidence["fs_pointer_assignment_source"] = (
+            f"{source_path.name}:{text.count(chr(10), 0, fs_match.start()) + 1}"
+        )
+    if (
+        fake_match is not None
+        and zero_match is not None
+        and int(zero_match.group("size"), 16) >= 0x254
+        and fs_match is not None
+    ):
+        evidence["status"] = "verified-zeroed-fake-prcb-cache-layout"
+    else:
+        evidence["status"] = "incomplete-fake-prcb-cache-layout-evidence"
+    return evidence
 
 
 def recover_kernel_resolver_cases(source_path: Path) -> dict[int, str]:
@@ -3770,6 +3831,11 @@ def audit(
         if kernel_source is None
         else recover_kernel_resolver_cases(kernel_source)
     )
+    prcb_host_layout_evidence = (
+        None
+        if kernel_source is None
+        else recover_prcb_host_layout_evidence(kernel_source.parent)
+    )
     kernel_bridge_cases = (
         None
         if kernel_source is None or not (kernel_source.parent / "kernel_bridge.c").exists()
@@ -5134,6 +5200,21 @@ def audit(
             )
             else "incomplete-prcb-cache-callback-field-shape"
         ),
+        "prcb_host_layout_status": (
+            "not-supplied"
+            if prcb_host_layout_evidence is None
+            else prcb_host_layout_evidence["status"]
+        ),
+        "prcb_host_layout_fake_prcb_va": (
+            None
+            if prcb_host_layout_evidence is None
+            else prcb_host_layout_evidence["fake_prcb_va"]
+        ),
+        "prcb_host_layout_zero_block_bytes": (
+            None
+            if prcb_host_layout_evidence is None
+            else prcb_host_layout_evidence["zero_block_bytes"]
+        ),
         "callback_return_use_provenance_sites": len(
             callback_return_use_provenance
         ),
@@ -5421,6 +5502,7 @@ def audit(
         "kernel_symbolic_link_host_bridge_evidence": (
             symbolic_link_host_bridge_evidence or {}
         ),
+        "prcb_host_layout_evidence": prcb_host_layout_evidence or {},
     }
 
 
