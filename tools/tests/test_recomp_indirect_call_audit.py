@@ -26,6 +26,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     classify_kernel_bridge_implementation_delegation,
     classify_kernel_bridge_argument_use,
     recover_indexed_callback_table_provenance,
+    recover_indexed_callback_table_initialization_layout,
     recover_dynamic_indexed_callback_consumer_layout,
     recover_dynamic_indexed_callback_frame_provenance,
     recover_dynamic_indexed_callback_object_provenance,
@@ -1102,6 +1103,44 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["capacity_writes"]), 1)
         self.assertEqual(len(evidence["indexed_record_writes"]), 1)
         self.assertEqual(evidence["capacity_writes"][0]["value"], "0x00000020")
+
+    def test_recovers_indexed_callback_table_initialization_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_002772E2(void)\n"
+                "{\n"
+                "    MEM32(0x361360) = eax;\n"
+                "    MEM32(0x36135C) = 0x20;\n"
+                "    MEM32(eax) = MEM32(eax) | 0xFFFFFFFFu;\n"
+                "    MEM32(eax + 8) = MEM32(eax + 8) & 0;\n"
+                "    MEM8(eax + 4) = 0;\n"
+                "    MEM8(eax + 5) = 0xA;\n"
+                "    eax = eax + 0x28;\n"
+                "    ecx = ecx + 0x500;\n"
+                "    ecx = MEM32(0x361360);\n"
+                "    MEM8(ecx + 4) = 0xC1;\n"
+                "    eax = eax + 0x28;\n"
+                "    if (CMP_L(_fa, _fb)) goto loc_00277330;\n"
+                "    _fb = (uint32_t)(0x78) & 0xFFFFFFFFu;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_indexed_callback_table_initialization_layout(
+                generated
+            )
+
+        self.assertEqual(
+            evidence["status"],
+            "verified-bounded-indexed-table-initializer-shape",
+        )
+        self.assertEqual(evidence["capacity_records"], 0x20)
+        self.assertEqual(evidence["record_stride_bytes"], 0x28)
+        self.assertEqual(evidence["initialization_record_count"], 0x20)
+        self.assertEqual(evidence["root_record_zeroed_field_status"], "zero-write-shape-observed")
+        self.assertEqual(evidence["flagged_prefix_record_count"], 3)
 
     def test_separates_indexed_callback_consumer_layout_from_bss_root(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -20,6 +20,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.23
+
+O release 2.23 audita a inicialização estática da raiz indexada
+`0x00361360` em `sub_002772E2` (`recomp_0051.c`). A forma observada publica
+a raiz, grava capacidade `0x20` e percorre um span de `0x500` bytes com stride
+de `0x28`: a aritmética corresponde a `32` registros. Dentro desse laço, o
+dword de cada registro em `+0x8` recebe uma forma de zero; o código também
+observa `+0x0 = 0xFFFFFFFF`, `+0x4 = 0` e `+0x5 = 0xA`. Um segundo laço aplica
+o byte `0xC1` em `+0x4` no prefixo de `3` registros (`0x78` bytes).
+
+Esse marco prova somente a forma do inicializador gerado: não prova sucesso do
+allocator, execução dos laços, identidade entre esses registros de `0x28` e a
+tabela consumida por `sub_0026E70A`, nem um callback válido. Os writers da raiz
+e da capacidade continuam fora do subgrafo direto (`1` e `4` shapes globais,
+respectivamente), e os `47` writers candidatos do alvo indexado continuam sem
+ligação estática provada com essa instância. Os sete callbacks dinâmicos seguem
+sem destino final provado.
+
+A suíte Python passou `105/105`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.22
 
 O release 2.22 amplia a auditoria do objeto passado ao consumidor indexado

@@ -200,6 +200,10 @@ DYNAMIC_INDEXED_RECORD_ALIAS_RE = re.compile(
 )
 INDEXED_CALLBACK_TABLE_BASE = 0x00361360
 INDEXED_CALLBACK_TABLE_CAPACITY_SLOT = 0x0036135C
+INDEXED_CALLBACK_TABLE_INIT_FUNCTION = 0x002772E2
+INDEXED_CALLBACK_TABLE_RECORD_STRIDE = 0x28
+INDEXED_CALLBACK_TABLE_INIT_BYTES = 0x500
+INDEXED_CALLBACK_TABLE_FLAGGED_BYTES = 0x78
 INDEXED_CALLBACK_CONSUMER_FUNCTION = 0x0026E70A
 INDEXED_CALLBACK_CONSUMER_CALL_SITE = 0x0026E75E
 INDEXED_CALLBACK_CONSUMER_OBJECT_TABLE_OFFSET = 0x8
@@ -905,6 +909,154 @@ def recover_indexed_callback_table_provenance(
             for register_match in REGISTER_WRITE_RE.finditer(line):
                 aliases.discard(register_match.group("register"))
     return rows
+
+
+def recover_indexed_callback_table_initialization_layout(
+    generated_dir: Path,
+) -> dict[str, Any]:
+    """Recover the bounded initialization shape of the indexed BSS table.
+
+    This recognizes the local initializer at ``sub_002772E2``: it publishes
+    the allocation at ``0x00361360``, records capacity ``0x20``, clears the
+    dword at root-record ``+8`` across a ``0x500``-byte span with stride
+    ``0x28``, and then applies the observed ``0xC1`` byte pattern to the first
+    ``0x78`` bytes of record starts.  It is a source-shape audit only; it does
+    not prove allocator success, loop execution, record identity at a caller,
+    or a runtime callback target.
+    """
+    function_name = f"sub_{INDEXED_CALLBACK_TABLE_INIT_FUNCTION:08X}"
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current_name = ""
+        function_lines: list[tuple[int, str]] = []
+
+        def inspect_function() -> dict[str, Any] | None:
+            if current_name != function_name or not function_lines:
+                return None
+
+            def find(pattern: str) -> dict[str, str] | None:
+                expression_re = re.compile(pattern)
+                for line_number, line in function_lines:
+                    match = expression_re.search(line)
+                    if match is not None:
+                        return {
+                            "source": f"{source_path.name}:{line_number}",
+                            "expression": line.strip(),
+                            **match.groupdict(),
+                        }
+                return None
+
+            root_write = find(
+                r"MEM32\(0x00361360\)\s*=\s*(?P<value>[^;]+);"
+            ) or find(r"MEM32\(0x361360\)\s*=\s*(?P<value>[^;]+);")
+            capacity_write = find(
+                r"MEM32\(0x0036135C\)\s*=\s*0x(?P<value>[0-9A-Fa-f]+)u?;"
+            ) or find(
+                r"MEM32\(0x36135C\)\s*=\s*0x(?P<value>[0-9A-Fa-f]+)u?;"
+            )
+            sentinel_write = find(
+                r"MEM32\(eax\)\s*=\s*MEM32\(eax\)\s*\|\s*"
+                r"0xFFFFFFFFu;"
+            )
+            callback_field_zero = find(
+                r"MEM32\(eax\s*\+\s*8\)\s*=\s*"
+                r"MEM32\(eax\s*\+\s*8\)\s*&\s*0;"
+            )
+            flag_zero = find(r"MEM8\(eax\s*\+\s*4\)\s*=\s*0;")
+            flag_ten = find(r"MEM8\(eax\s*\+\s*5\)\s*=\s*0xA;")
+            stride_increment = find(
+                r"eax\s*=\s*eax\s*\+\s*0x28;"
+            )
+            span_increment = find(
+                r"ecx\s*=\s*ecx\s*\+\s*0x500;"
+            )
+            root_reload = find(r"ecx\s*=\s*MEM32\(0x361360\);")
+            flagged_write = find(r"MEM8\(ecx\s*\+\s*4\)\s*=\s*0xC1;")
+            flagged_limit = find(r"0x78")
+            required = (
+                root_write is not None
+                and capacity_write is not None
+                and sentinel_write is not None
+                and callback_field_zero is not None
+                and flag_zero is not None
+                and flag_ten is not None
+                and stride_increment is not None
+                and span_increment is not None
+                and root_reload is not None
+                and flagged_write is not None
+                and flagged_limit is not None
+                and int(capacity_write["value"], 16) == 0x20
+            )
+            return {
+                "status": (
+                    "verified-bounded-indexed-table-initializer-shape"
+                    if required
+                    else "incomplete-indexed-table-initializer-shape"
+                ),
+                "source_file": source_path.name,
+                "function": f"0x{INDEXED_CALLBACK_TABLE_INIT_FUNCTION:08X}",
+                "table_root": f"0x{INDEXED_CALLBACK_TABLE_BASE:08X}",
+                "capacity_slot": f"0x{INDEXED_CALLBACK_TABLE_CAPACITY_SLOT:08X}",
+                "capacity_records": (
+                    None
+                    if capacity_write is None
+                    else int(capacity_write["value"], 16)
+                ),
+                "record_stride_bytes": INDEXED_CALLBACK_TABLE_RECORD_STRIDE,
+                "initialization_span_bytes": INDEXED_CALLBACK_TABLE_INIT_BYTES,
+                "initialization_record_count": (
+                    INDEXED_CALLBACK_TABLE_INIT_BYTES
+                    // INDEXED_CALLBACK_TABLE_RECORD_STRIDE
+                ),
+                "root_record_zeroed_field_offset": "0x8",
+                "root_record_zeroed_field_status": (
+                    "zero-write-shape-observed"
+                    if callback_field_zero is not None
+                    else "not-observed"
+                ),
+                "flagged_prefix_bytes": INDEXED_CALLBACK_TABLE_FLAGGED_BYTES,
+                "flagged_prefix_record_count": (
+                    INDEXED_CALLBACK_TABLE_FLAGGED_BYTES
+                    // INDEXED_CALLBACK_TABLE_RECORD_STRIDE
+                ),
+                "flagged_byte_offset": "0x4",
+                "flagged_byte_value": "0xC1",
+                "evidence": {
+                    "root_write": root_write or {},
+                    "capacity_write": capacity_write or {},
+                    "sentinel_write": sentinel_write or {},
+                    "callback_field_zero": callback_field_zero or {},
+                    "flag_zero": flag_zero or {},
+                    "flag_ten": flag_ten or {},
+                    "stride_increment": stride_increment or {},
+                    "span_increment": span_increment or {},
+                    "root_reload": root_reload or {},
+                    "flagged_write": flagged_write or {},
+                    "flagged_limit": flagged_limit or {},
+                },
+            }
+
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match is not None:
+                result = inspect_function()
+                if result is not None:
+                    return result
+                current_name = symbol_match.group(1)
+                function_lines = [(line_number, line)]
+                continue
+            if current_name:
+                function_lines.append((line_number, line))
+        result = inspect_function()
+        if result is not None:
+            return result
+    return {
+        "status": "indexed-table-initializer-function-not-observed",
+        "function": f"0x{INDEXED_CALLBACK_TABLE_INIT_FUNCTION:08X}",
+        "table_root": f"0x{INDEXED_CALLBACK_TABLE_BASE:08X}",
+        "capacity_slot": f"0x{INDEXED_CALLBACK_TABLE_CAPACITY_SLOT:08X}",
+        "evidence": {},
+    }
 
 
 def recover_dynamic_indexed_callback_consumer_layout(
@@ -4290,6 +4442,9 @@ def audit(
     all_indexed_callback_table_provenance = recover_indexed_callback_table_provenance(
         generated_dir, functions, None
     )
+    indexed_callback_table_initialization = (
+        recover_indexed_callback_table_initialization_layout(generated_dir)
+    )
     xbe = load_xbe_layout(xbe_path)
     indirect_tail_switch_provenance = recover_indirect_tail_switch_provenance(
         generated_dir, functions, directly_reachable, xbe
@@ -5535,6 +5690,32 @@ def audit(
         "dynamic_indexed_callback_table_all_record_write_sites": len(
             all_indexed_callback_table_provenance["indexed_record_writes"]
         ),
+        "dynamic_indexed_callback_table_initialization_status": (
+            indexed_callback_table_initialization.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_table_initialization_capacity_records": (
+            indexed_callback_table_initialization.get("capacity_records")
+        ),
+        "dynamic_indexed_callback_table_initialization_record_stride_bytes": (
+            indexed_callback_table_initialization.get("record_stride_bytes")
+        ),
+        "dynamic_indexed_callback_table_initialization_record_count": (
+            indexed_callback_table_initialization.get(
+                "initialization_record_count"
+            )
+        ),
+        "dynamic_indexed_callback_table_initialization_zeroed_field_status": (
+            indexed_callback_table_initialization.get(
+                "root_record_zeroed_field_status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_table_initialization_flagged_prefix_record_count": (
+            indexed_callback_table_initialization.get(
+                "flagged_prefix_record_count"
+            )
+        ),
         "dynamic_indexed_callback_consumer_layout_status": (
             dynamic_indexed_callback_consumer_layout.get(
                 "status", "no-indexed-callback-consumer-observed"
@@ -5924,6 +6105,9 @@ def audit(
         "dynamic_indexed_callback_table_provenance": indexed_callback_table_provenance,
         "dynamic_indexed_callback_table_all_provenance": (
             all_indexed_callback_table_provenance
+        ),
+        "dynamic_indexed_callback_table_initialization": (
+            indexed_callback_table_initialization
         ),
         "dynamic_indexed_callback_consumer_layout": (
             dynamic_indexed_callback_consumer_layout
