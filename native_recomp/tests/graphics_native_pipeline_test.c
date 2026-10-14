@@ -6,6 +6,22 @@
 #include <string.h>
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "pipeline test failed: %d\n", code); return code; } } while (0)
 
+static int read_depth_words(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion,
+    ID3D11Texture2D *texture,uint32_t words[128])
+{
+    D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(texture,&desc);
+    CHECK(desc.Width==16 && desc.Height==8,40);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),41);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),42);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped)),43);
+    for(unsigned y=0;y<8;++y) memcpy(words+y*16,(const uint8_t*)mapped.pData+y*mapped.RowPitch,16*4);
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);ID3D11Texture2D_Release(staging);
+    return 0;
+}
 static int verify(ID3D11Device *device, ID3D11DeviceContext *context, FutNativeConstants *completion,
     ID3D11Texture2D *texture, int depth, int exclusive)
 {
@@ -106,6 +122,19 @@ int main(void)
         CHECK(verify(device,context,&completion,color,0,exclusive)==0,20);
         CHECK(verify(device,context,&completion,depth,1,exclusive)==0,21);
     }
+    /* A retained depth-write mask ofALL cannot enable disabled Z/stencil.
+     * Compare every bit before/after a real synthetic Draw, not guessed clear
+     * depth quantization. This is the D3D host side, not NV2A Zcull emulation. */
+    state.depth_test=state.stencil_test=0;state.draw.depth_write=1;state.compress_depth=1;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),44);
+    ID3D11DepthStencilState_GetDesc(pipeline.depth,&ds);
+    CHECK(!ds.DepthEnable && !ds.StencilEnable && ds.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ALL,45);
+    ID3D11DeviceContext_ClearDepthStencilView(context,dt,D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,.25f,0x5A);
+    uint32_t before_depth[128],after_depth[128];
+    CHECK(!read_depth_words(device,context,&completion,depth,before_depth),46);
+    ID3D11DeviceContext_Draw(context,3,0);
+    CHECK(!read_depth_words(device,context,&completion,depth,after_depth) &&
+        !memcmp(before_depth,after_depth,sizeof(before_depth)),47);
     ID3D11BlendState *saved=pipeline.blend; state.draw.alpha_test=1;
     CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,22);
     state.draw.alpha_test=0; state.draw.front_mode=0x1B03;

@@ -274,13 +274,19 @@ static int native_prepare_draw(NativeGraphicsState *state)
         if(!native_prepare_fragment(state)) return 0;
         fprintf(stderr,"[GRAPHICS] zero-RGB specialization compiled: stages=%X; no candidate texture/alpha resources remain; generic quincunx unsupported\n",candidates);
     }
-    if (!fut_graphics_software_draw_ready(&state->software)) {
-        fprintf(stderr,"[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation; sample_valid=%u alpha=%08X RDI=%08X:%08X,%08X:%08X registers_valid=%X reg400094=%08X reg400B80=%08X\n",
-            state->software.sample_valid,state->software.sample_alpha,state->software.rdi_index[0],state->software.rdi_value[0],
+    if (!fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan)) {
+        fprintf(stderr,"[GRAPHICS] original draw blocked: DXT1-noise/RDI/Zcull state outside translated domain; noise_valid=%u dxt1_noise=%08X RDI=%08X:%08X,%08X:%08X registers_valid=%X reg400094=%08X reg400B80=%08X\n",
+            state->software.noise_valid,state->software.dxt1_noise,state->software.rdi_index[0],state->software.rdi_value[0],
             state->software.rdi_index[1],state->software.rdi_value[1],state->software.register_valid,
             state->software.register_words[0],state->software.register_words[1]);
+        fprintf(stderr,"[GRAPHICS] blocked draw domain: depth=%u stencil=%u depth_write=%u compress_depth=%u samples=%u format=%08X control0=%08X dither=%u\n",
+            state->kelvin.depth_test,state->kelvin.stencil_test,state->kelvin.draw.depth_write,
+            state->kelvin.compress_depth,state->native_surfaces.plan.samples,state->surfaces.format,
+            state->kelvin.control0,state->kelvin.draw.dither);
         return 0;
     }
+    if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,
+        "[GRAPHICS] known DXT1-noise/Zcull controls admitted for linearARGB8/no-depth/no-stencil/single-sample draw only\n");
     if ((state->kelvin.program_mode & 3u)!=2u) {
         fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
         return 0;
@@ -294,6 +300,12 @@ static int native_prepare_draw(NativeGraphicsState *state)
         &state->kelvin,&state->native_surfaces.plan);
     if (FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n",hr);
+        fprintf(stderr,"[GRAPHICS] draw raster controls: dither=%u alpha=%u logic=%u stipple=%u line_smooth=%u polygon_smooth=%u front=%08X back=%08X cull=%u/%08X offset=%u,%u,%u factor=%08X bias=%08X\n",
+            state->kelvin.draw.dither,state->kelvin.draw.alpha_test,state->kelvin.draw.logic_op,
+            state->kelvin.draw.stipple,state->kelvin.draw.line_smooth,state->kelvin.draw.polygon_smooth,
+            state->kelvin.draw.front_mode,state->kelvin.draw.back_mode,state->kelvin.draw.cull_enable,
+            state->kelvin.draw.cull_face,state->kelvin.draw.offset_enable[0],state->kelvin.draw.offset_enable[1],
+            state->kelvin.draw.offset_enable[2],state->kelvin.draw.offset_factor,state->kelvin.draw.offset_bias);
         return 0;
     }
     state->kelvin.draw.dirty=0;

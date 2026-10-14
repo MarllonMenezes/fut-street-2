@@ -63,7 +63,9 @@ int main(void)
         state.native_surfaces.plan.color_pitch==16 && guest_word(0x3000)==0xFF00FF00,17);
     CHECK(native_method(&state,0,0x20C,(24u<<16)|16,0),18);
     CHECK(native_method(&state,0,0x100,(1u<<5)|8,0),19);
+    state.software.rdi_value[1]^=1; /* Unknown/inconsistent RDI remains gated. */
     CHECK(!native_prepare_draw(&state),20); /* SW raster gate stays closed. */
+    state.software.rdi_value[1]^=1;
     CHECK(!native_method(&state,0,0x1FFC,0,0),21); /* Unknown methods stay rejected. */
     state.bindings.references[0][1]=dma; state.bindings.references[0][2]=dma;
     state.bindings.references[0][2].words[2]=0x1003; /* B has a distinct base. */
@@ -145,7 +147,8 @@ int main(void)
         CHECK(fut_graphics_kelvin_state(&state.kelvin,fragment[i][0],fragment[i][1])==FUT_KELVIN_APPLIED,49);
     uint32_t black=0xFF000000;
     for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) memcpy(guest_memory+0x4000+y*16+x*4,&black,4);
-    state.software.sample_valid=1;
+    state.software.noise_valid=1;
+    state.software.rdi_index[0]=0; /* Deliberately outside the admitted domain. */
     CHECK(!native_prepare_draw(&state) && state.textures[0].zero_rgb_candidate &&
         !state.textures[0].sampling_ready && state.pixel_shader && state.pixel_bytecode &&
         !native_finish(&state) && state.immediate.ready,50);

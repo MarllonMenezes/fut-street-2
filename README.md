@@ -14,50 +14,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.75
+## Estado verificável — release 2.76
 
-O primeiro draw agora passa da preparação da textura e compila seu
-**pixel shader nativo especializado para os dados efetivamente observados**.
-A leitura integral da textura `1280×480` enviada à GPU confirmou os 614.400
-texels como `FF000000`: todos os componentes RGB são zero. Filtrar somente
-zeros mantém RGB zero, sem precisar aproximar os offsets do quincunx.
-**Isso não implementa o filtro quincunx genérico nem torna a textura morta.**
+Foi corrigida a identificação do seletor software `8`: o par de escritas RDI
+observado corresponde a **DXT1NoiseEnable**, não SAMPLEALPHA. O
+[pbkit para Xbox original](https://github.com/XboxDev/nxdk/blob/14d5ee97e73347c973f1f57b68b79ec08c9e77f2/lib/pbkit/pbkit.c)
+usa exatamente esse par para ruído DXT1. A
+[conversão de índices do Cxbx](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/585c49a50af1255ab155099e06f24505f9c5a800/src/core/hle/D3D8/Direct3D9/RenderStates.cpp)
+também confirma que o enum normalizado não pode ser usado diretamente como
+índice da tabela compactada da D3D8 5849 presente no XBE.
 
-A especialização exige a mesma snapshot integral do upload, o estado
-quincunx/clamp observado e coordenadas finitas, limitadas e com W/q igual a
-`1`, verificadas pelo readback do vertex shader. Padding não conta como texel.
-Qualquer texel RGB não zero ou estado fora desse domínio mantém a recusa.
-O alpha da textura continua sem tradução: ele permanece como dependência
-não implementada na geração, e o shader só é criado se a
-[reflexão do bytecode compilado](https://learn.microsoft.com/en-us/windows/win32/api/d3d11shader/nf-d3d11shader-id3d11shaderreflection-getresourcebindingdesc)
-confirmar a ausência do recurso candidato. Alpha vivo não recebe um valor
-inventado. A amostragem não foi substituída por point, linear ou Gaussian.
+O backend agora admite os controles conhecidos somente no domínio exercitado:
+texturas ARGB8 lineares, alvo sem AA e depth/stencil desligados. O ruído DXT1
+não se aplica a essas texturas, e os controles Z-cull/ROP-Z conhecidos não
+habilitam depth/stencil. Os valores brutos continuam preservados.
+DXT1/BC1, depth/stencil ativos, outros valores RDI ou registradores divergentes
+continuam recusados. **Não há implementação genérica de RDI ou Z-cull.**
 
-Build Release e CTest passaram `21/21`. O teste WARP executa o pixel shader
-especializado sobre geometria sintética e confere os pixels: RGB zero e alpha
-da cor primária. Regressões recusam dependência do alpha da textura em RGB
-ou alpha, alteração do último texel, estado divergente e coordenadas inválidas.
-O receptor real também confirma que preparar esse shader não libera o gate
-SAMPLEALPHA/RDI nem a conclusão de uma primitiva pendente.
+Build Release e CTest passaram `21/21`. Além das regressões do domínio e
+dos casos recusados, o teste WARP compara todos os bits de depth/stencil
+antes e depois de um draw sintético: os testes desligados preservam o buffer,
+mesmo com máscara de escrita e indicação de compressão retidas.
+Isso valida o lado D3D11 desse caso, não toda a rasterização da NV2A.
 
 Na execução do jogo recompilado, limitada a cinco segundos, o vertex program
-original de duas instruções executou na GPU sem rasterização. O readback dos
-três vértices sustentou a especialização, e os combiners originais foram
-compilados para um pixel shader sem acesso residual à textura candidata.
-O próximo bloqueio observado passou a ser **SAMPLEALPHA/RDI/debug**:
-seus efeitos de rasterização ainda não estão traduzidos e continuam recusados.
-O quincunx para texturas com conteúdo continua pendente.
+original executou pelo estágio nativo de vértices, sem rasterização, e o pixel shader foi compilado com
+a especialização comprovada para a textura integralmente RGB zero.
+Essa especialização ainda exige coordenadas válidas e ausência de dependência
+residual da textura no bytecode; não implementa quincunx genérico.
+O primeiro draw passou pelo novo domínio DXT1/Z-cull e chegou à preparação
+dos estados de rasterização, que permanece bloqueada por **dithering ativo**.
+O dither não foi desligado para avançar.
 
 O processo terminou por diagnóstico antes do timeout. Os dois clears
 originais, as duas primeiras submissões e o marcador `7` continuam concluídos;
 a terceira submissão parou no END, offset `1.248`, sem conclusão.
 **O pixel shader do jogo ainda não executou: nenhum draw rasterizado/frame
-do jogo foi apresentado.** Pixels do teste sintético não são um frame original.
+do jogo foi apresentado.** Testes sintéticos não são um frame original.
 Não houve avanço artificial da leitura de flip ou VBlank.
 ISO intacta; novas saídas controláveis no D:.
 
-Próximo experimento: estabelecer a semântica dos estados SAMPLEALPHA/RDI/debug
-exercitados antes de liberar a rasterização. Permanecem pendentes o filtro
+Próximo experimento: traduzir ou demonstrar o efeito do dithering no alvo
+ARGB8 exercitado antes de liberar o draw. Permanecem pendentes o filtro
 genérico, precisão gráfica, apresentação, gameplay e áudio. `NOT_READY` permanece.
 
 ## Abordagem
