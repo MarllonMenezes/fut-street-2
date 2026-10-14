@@ -20,6 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.32
+
+O release 2.32 reaudita as chamadas indiretas do artefato C completo contra a
+metadata do XBE e a pilha de bridges do kernel. Foram observados `62` sites
+indiretos em `32` funções; `48` sites usam thunks do kernel, distribuídos por
+`19` ordinais únicos. Os `48/48` têm caso explícito no resolver, bridge e
+contagem de argumentos, sem lacunas de stack; os corpos dos `19/19` destinos
+também foram encontrados no código host. Isso valida o encanamento estático
+dos thunks, não a fidelidade completa de cada API.
+
+O limite restante é explícito: `7` callbacks continuam sem destino final
+provado (`1` alvo de memória, `1` campo de objeto, `1` registro indexado e `4`
+dependentes do cache PRCB). Não há writer direto provado para essas famílias no
+subgrafo das `78` funções; os `55` writers encontrados fora dele continuam
+apenas candidatos. Os guards PRCB começam zerados no layout host auditado, mas
+isso não prova o comportamento do kernel Xbox nem resolve os callbacks.
+
+A suíte Python continua em `112/112`, a prontidão permanece `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.31
 
 O release 2.31 transforma a auditoria de `RECOMP_UNIMPL` em um gate que
