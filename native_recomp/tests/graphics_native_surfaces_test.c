@@ -5,22 +5,32 @@
 #include <string.h>
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "surface test failed: %d\n", code); return code; } } while (0)
 
-typedef struct { uint8_t color[256], depth[256]; int fail; unsigned reads; } Memory;
+typedef struct {
+    uint8_t color[256], depth[256], next_color[256], next_depth[256];
+    int fail;
+    unsigned reads, writes;
+    uint32_t fail_write_address;
+} Memory;
 static int memory_read(void *context, uint32_t address, void *data, size_t size)
 {
     Memory *memory = context; ++memory->reads;
     if (memory->fail || size > 256) return 0;
     if (address == 0x80001000) memcpy(data, memory->color, size);
     else if (address == 0x80002000) memcpy(data, memory->depth, size);
+    else if (address == 0x80003000) memcpy(data, memory->next_color, size);
+    else if (address == 0x80004000) memcpy(data, memory->next_depth, size);
     else return 0;
     return 1;
 }
 static int memory_write(void *context, uint32_t address, const void *data, size_t size)
 {
     Memory *memory = context;
-    if (memory->fail || size > 256) return 0;
+    ++memory->writes;
+    if (memory->fail || size > 256 || address == memory->fail_write_address) return 0;
     if (address == 0x80001000) memcpy(memory->color, data, size);
     else if (address == 0x80002000) memcpy(memory->depth, data, size);
+    else if (address == 0x80003000) memcpy(memory->next_color, data, size);
+    else if (address == 0x80004000) memcpy(memory->next_depth, data, size);
     else return 0;
     return 1;
 }
@@ -29,7 +39,7 @@ static int verify_texture(ID3D11Device *device, ID3D11DeviceContext *context,
     unsigned source_pitch, int depth, uint32_t cleared, int after_clear)
 {
     D3D11_TEXTURE2D_DESC desc; ID3D11Texture2D_GetDesc(texture, &desc);
-    CHECK(desc.Width == 8 && desc.Height == 3 && desc.SampleDesc.Count == 1, 40);
+    CHECK(desc.Width > 0 && desc.Width <= 8 && desc.Height == 3 && desc.SampleDesc.Count == 1, 40);
     desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ID3D11Texture2D *staging = NULL;
     HRESULT hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &staging);
@@ -39,7 +49,7 @@ static int verify_texture(ID3D11Device *device, ID3D11DeviceContext *context,
     D3D11_MAPPED_SUBRESOURCE mapped;
     CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped)), 43);
     int correct = 1;
-    for (unsigned y = 0; y < 3; ++y) for (unsigned x = 0; x < 8; ++x) {
+    for (unsigned y = 0; y < desc.Height; ++y) for (unsigned x = 0; x < desc.Width; ++x) {
         uint32_t actual, wanted;
         memcpy(&actual, (const uint8_t *)mapped.pData + (size_t)y * mapped.RowPitch + x * 4, 4);
         if (depth) actual = fut_graphics_depth_to_guest(actual);
@@ -113,11 +123,13 @@ int main(void)
         !memcmp(memory.depth, before.depth, sizeof(memory.depth)), 16);
     CHECK(verify_texture(device, context, &completion, native.color, memory.color, 40, 0, 0, 0) == 0, 17);
     CHECK(verify_texture(device, context, &completion, native.depth, memory.depth, 44, 1, 0, 0) == 0, 18);
-    ID3D11Texture2D *saved = native.color;
+    uint32_t cpu_word = 0xDEADBEEF; memcpy(memory.color, &cpu_word, 4);
     CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native, device, &plan, memory_read, &memory)) &&
-        native.color == saved && memory.reads == 2, 19);
+        memory.reads == 4, 19);
+    CHECK(verify_texture(device, context, &completion, native.color, memory.color, 40, 0, 0, 0) == 0, 45);
+    ID3D11Texture2D *saved = native.color;
     FutGraphicsSurfacePlan changed = plan; changed.color_address += 4;
-    CHECK(fut_native_surfaces_prepare(&native, device, &changed, memory_read, &memory) == E_NOTIMPL &&
+    CHECK(FAILED(fut_native_surfaces_prepare(&native, device, &changed, memory_read, &memory)) &&
         native.color == saved && !memcmp(&native.plan, &plan, sizeof(plan)), 20);
     const float clear[] = {17.0f/255,34.0f/255,51.0f/255,1};
     ID3D11DeviceContext_ClearRenderTargetView(context, native.target, clear);
@@ -131,6 +143,7 @@ int main(void)
     fut_graphics_kelvin_state(&clear_state, 0x1D90, 0xAA123456u);
     fut_graphics_kelvin_state(&clear_state, 0x1D8C, 0xFFFFFF79u);
     CHECK(SUCCEEDED(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,0xF3,memory_read,memory_write,&memory,NULL)),26);
+    CHECK(!native.gpu_dirty, 46);
     for (unsigned y=0;y<3;++y) for (unsigned x=0;x<8;++x) {
         uint32_t c,z;memcpy(&c,memory.color+y*40+x*4,4);memcpy(&z,memory.depth+y*44+x*4,4);
         CHECK(c==0xAA123456u && z==0xFFFFFF79u,27);
@@ -150,8 +163,59 @@ int main(void)
     HANDLE stop=CreateEventA(NULL,TRUE,TRUE,NULL); CHECK(stop!=NULL,34);
     CHECK(fut_native_surfaces_clear(&native,device,context,&completion,&clear_state,3,memory_read,memory_write,&memory,stop)==E_ABORT,35);
     CloseHandle(stop);
+
+    /* Real GPU mutations: dirty data cannot be thrown away by prepare, and
+     * a partial guest-write failure leaves only the unwritten target dirty. */
+    fut_native_surfaces_mark_dirty(&native, 3);
+    ID3D11DeviceContext_ClearRenderTargetView(context, native.target, clear);
+    ID3D11DeviceContext_ClearDepthStencilView(context, native.depth_target,
+        D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL, 1.0f, 0x5A);
+    FutGraphicsSurfacePlan next_plan = plan;
+    next_plan.color_address=0x80003000; next_plan.depth_address=0x80004000;
+    unsigned reads = memory.reads;
+    CHECK(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)==E_PENDING &&
+        native.color==saved && memory.reads==reads, 47);
+    stop=CreateEventA(NULL,TRUE,TRUE,NULL); CHECK(stop!=NULL,48);
+    CHECK(fut_native_surfaces_writeback(&native,device,context,&completion,memory_read,memory_write,&memory,stop)==E_ABORT &&
+        native.gpu_dirty==3,49);
+    CloseHandle(stop);
+    memory.fail_write_address=plan.depth_address;
+    CHECK(FAILED(fut_native_surfaces_writeback(&native,device,context,&completion,memory_read,memory_write,&memory,NULL)) &&
+        native.gpu_dirty==2 && native.color==saved && !memcmp(&native.plan,&plan,sizeof(plan)),50);
+    uint32_t downloaded; memcpy(&downloaded,memory.color,4); CHECK(downloaded==0xFF112233u,51);
+    memcpy(&downloaded,memory.depth,4); CHECK(downloaded==0xFFFFFF58u,52);
+    CHECK(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)==E_PENDING,53);
+    memory.fail_write_address=0;
+    CHECK(SUCCEEDED(fut_native_surfaces_writeback(&native,device,context,&completion,memory_read,memory_write,&memory,NULL)) &&
+        !native.gpu_dirty,54);
+    for (unsigned y=0;y<3;++y) for (unsigned x=0;x<8;++x) {
+        uint32_t c,z;memcpy(&c,memory.color+y*40+x*4,4);memcpy(&z,memory.depth+y*44+x*4,4);
+        CHECK(c==0xFF112233u && z==0xFFFFFF5Au,55);
+    }
+    CHECK(memory.color[32]==0xCD && memory.depth[32]==0xAB,56);
+    memcpy(memory.next_color,before.color,256); memcpy(memory.next_depth,before.depth,256);
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)) &&
+        native.plan.color_address==0x80003000 && !native.gpu_dirty,57);
+    CHECK(verify_texture(device,context,&completion,native.color,memory.next_color,40,0,0,0)==0 &&
+        verify_texture(device,context,&completion,native.depth,memory.next_depth,44,1,0,0)==0,58);
+    /* Change packed storage width, pitch AND address, then return to the old
+     * plan: the original clear data must survive, not an obsolete snapshot. */
+    next_plan.width=next_plan.logical_width; next_plan.samples=1;
+    next_plan.color_pitch=20; next_plan.depth_pitch=24;
+    next_plan.color_span=56; next_plan.depth_span=64;
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)) &&
+        native.plan.width==4 && native.plan.samples==1,59);
+    CHECK(verify_texture(device,context,&completion,native.color,memory.next_color,20,0,0,0)==0 &&
+        verify_texture(device,context,&completion,native.depth,memory.next_depth,24,1,0,0)==0,60);
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native,device,&plan,memory_read,&memory)),61);
+    CHECK(verify_texture(device,context,&completion,native.color,NULL,0,0,0xFF112233u,1)==0 &&
+        verify_texture(device,context,&completion,native.depth,NULL,0,1,0xFFFFFF5Au,1)==0,62);
+    saved=native.color; memory.fail=1;
+    CHECK(FAILED(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)) &&
+        native.color==saved && !memcmp(&native.plan,&plan,sizeof(plan)),63);
+    memory.fail=0;
     fut_native_surfaces_destroy(&native); fut_native_constants_destroy(&completion);
     ID3D11DeviceContext_Release(context); ID3D11Device_Release(device);
-    puts("Pitched sample storage: native color/depth upload, exact readback, clear and range checks OK; no MSAA draw claimed");
+    puts("Pitched storage: native clear, dirty writeback, CPU refresh and coherent plan transitions OK; no original draw claimed");
     return 0;
 }

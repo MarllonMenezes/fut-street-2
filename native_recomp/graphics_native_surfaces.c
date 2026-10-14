@@ -34,10 +34,9 @@ HRESULT fut_native_surfaces_prepare(FutNativeSurfaces *native, ID3D11Device *dev
     const FutGraphicsSurfacePlan *plan, FutGraphicsMemoryRead read, void *context)
 {
     if (!native || !device || !read || !valid_plan(plan)) return E_INVALIDARG;
-    if (native->valid && !memcmp(&native->plan, plan, sizeof(*plan))) return S_OK;
-    /* Changed resources must be downloaded before reuse once draws exist.
-     * Until that path is implemented, never silently discard an old target. */
-    if (native->valid) return E_NOTIMPL;
+    /* A failed GPU writeback must never be hidden by a resource replacement.
+     * Clean resources can be refreshed from authoritative guest memory. */
+    if (native->gpu_dirty) return E_PENDING;
     uint8_t *color = HeapAlloc(GetProcessHeap(), 0, plan->color_span);
     uint8_t *depth = HeapAlloc(GetProcessHeap(), 0, plan->depth_span);
     HRESULT hr = E_OUTOFMEMORY;
@@ -72,7 +71,11 @@ HRESULT fut_native_surfaces_prepare(FutNativeSurfaces *native, ID3D11Device *dev
     D3D11_DEPTH_STENCIL_VIEW_DESC view = {0};
     view.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; view.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
     hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)next.depth, &view, &next.depth_target);
-    if (SUCCEEDED(hr)) { next.plan = *plan; next.valid = 1; *native = next; memset(&next, 0, sizeof(next)); }
+    if (SUCCEEDED(hr)) {
+        next.plan = *plan; next.valid = 1;
+        fut_native_surfaces_destroy(native);
+        *native = next; memset(&next, 0, sizeof(next));
+    }
 done:
     if (color) HeapFree(GetProcessHeap(), 0, color);
     if (depth) HeapFree(GetProcessHeap(), 0, depth);
@@ -80,7 +83,7 @@ done:
     return hr;
 }
 
-static HRESULT download_clear(ID3D11Device *device, ID3D11DeviceContext *context,
+static HRESULT download_pixels(ID3D11Device *device, ID3D11DeviceContext *context,
     FutNativeConstants *completion, ID3D11Texture2D *texture, const FutGraphicsSurfacePlan *plan,
     uint8_t *bytes, int depth, uint32_t mask, uint32_t expected, HANDLE stop)
 {
@@ -106,6 +109,49 @@ static HRESULT download_clear(ID3D11Device *device, ID3D11DeviceContext *context
     ID3D11Texture2D_Release(staging);
     return hr;
 }
+void fut_native_surfaces_mark_dirty(FutNativeSurfaces *native, unsigned attachments)
+{
+    if (native && native->valid) native->gpu_dirty |= attachments & 3u;
+}
+HRESULT fut_native_surfaces_writeback(FutNativeSurfaces *native, ID3D11Device *device,
+    ID3D11DeviceContext *context, FutNativeConstants *completion,
+    FutGraphicsMemoryRead read, FutGraphicsMemoryWrite write,
+    void *memory_context, HANDLE stop_event)
+{
+    if (!native || (native->gpu_dirty & ~3u)) return E_INVALIDARG;
+    if (!native->gpu_dirty) return S_OK;
+    if (!native->valid || !valid_plan(&native->plan) || !device || !context ||
+        !completion || !read || !write) return E_INVALIDARG;
+    if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) return E_ABORT;
+    const FutGraphicsSurfacePlan *p = &native->plan;
+    unsigned attachments = native->gpu_dirty;
+    uint8_t *color = (attachments & 1) ? HeapAlloc(GetProcessHeap(), 0, p->color_span) : NULL;
+    uint8_t *depth = (attachments & 2) ? HeapAlloc(GetProcessHeap(), 0, p->depth_span) : NULL;
+    HRESULT hr = E_OUTOFMEMORY;
+    if (((attachments & 1) && !color) || ((attachments & 2) && !depth)) goto done;
+    hr = E_FAIL;
+    /* Read the padding before overlaying pixels; never publish D3D row pitch. */
+    if (((attachments & 1) && !read(memory_context, p->color_address, color, p->color_span)) ||
+        ((attachments & 2) && !read(memory_context, p->depth_address, depth, p->depth_span))) goto done;
+    hr = S_OK;
+    if (attachments & 1) hr = download_pixels(device, context, completion, native->color, p,
+        color, 0, 0, 0, stop_event);
+    if (SUCCEEDED(hr) && (attachments & 2)) hr = download_pixels(device, context, completion, native->depth, p,
+        depth, 1, 0, 0, stop_event);
+    if (SUCCEEDED(hr) && stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) hr = E_ABORT;
+    if (SUCCEEDED(hr) && (attachments & 1)) {
+        if (write(memory_context, p->color_address, color, p->color_span)) native->gpu_dirty &= ~1u;
+        else hr = E_FAIL;
+    }
+    if (SUCCEEDED(hr) && (attachments & 2)) {
+        if (write(memory_context, p->depth_address, depth, p->depth_span)) native->gpu_dirty &= ~2u;
+        else hr = E_FAIL;
+    }
+done:
+    if (color) HeapFree(GetProcessHeap(), 0, color);
+    if (depth) HeapFree(GetProcessHeap(), 0, depth);
+    return hr;
+}
 HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *device,
     ID3D11DeviceContext *context, FutNativeConstants *completion,
     const FutGraphicsKelvinState *state, uint32_t flags, FutGraphicsMemoryRead read,
@@ -129,6 +175,7 @@ HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *devic
     hr = E_FAIL;
     if ((colors && !read(memory_context, p->color_address, color, p->color_span)) ||
         (depth_flags && !read(memory_context, p->depth_address, depth, p->depth_span))) goto done;
+    fut_native_surfaces_mark_dirty(native, (colors ? 1u : 0u) | (depth_flags ? 2u : 0u));
     if (colors) {
         float rgba[4] = {((state->clear_color>>16)&255)/255.0f, ((state->clear_color>>8)&255)/255.0f,
             (state->clear_color&255)/255.0f, (state->clear_color>>24)/255.0f};
@@ -138,14 +185,20 @@ HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *devic
         ((flags&1)?D3D11_CLEAR_DEPTH:0)|((flags&2)?D3D11_CLEAR_STENCIL:0),
         (state->clear_depth>>8) ? 1.0f : 0.0f, (UINT8)state->clear_depth);
     hr = fut_native_constants_finish(completion, NULL, 2000, stop_event) ? S_OK : E_FAIL;
-    if (SUCCEEDED(hr) && colors) hr = download_clear(device, context, completion, native->color, p,
+    if (SUCCEEDED(hr) && colors) hr = download_pixels(device, context, completion, native->color, p,
         color, 0, UINT32_MAX, state->clear_color, stop_event);
     uint32_t z_mask = ((flags&1)?0xFFFFFF00u:0)|((flags&2)?255u:0);
-    if (SUCCEEDED(hr) && depth_flags) hr = download_clear(device, context, completion, native->depth, p,
+    if (SUCCEEDED(hr) && depth_flags) hr = download_pixels(device, context, completion, native->depth, p,
         depth, 1, z_mask, state->clear_depth, stop_event);
     if (SUCCEEDED(hr) && stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) hr = E_ABORT;
-    if (SUCCEEDED(hr) && colors && !write(memory_context, p->color_address, color, p->color_span)) hr = E_FAIL;
-    if (SUCCEEDED(hr) && depth_flags && !write(memory_context, p->depth_address, depth, p->depth_span)) hr = E_FAIL;
+    if (SUCCEEDED(hr) && colors) {
+        if (write(memory_context, p->color_address, color, p->color_span)) native->gpu_dirty &= ~1u;
+        else hr = E_FAIL;
+    }
+    if (SUCCEEDED(hr) && depth_flags) {
+        if (write(memory_context, p->depth_address, depth, p->depth_span)) native->gpu_dirty &= ~2u;
+        else hr = E_FAIL;
+    }
 done:
     if (color) HeapFree(GetProcessHeap(), 0, color);
     if (depth) HeapFree(GetProcessHeap(), 0, depth);

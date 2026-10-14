@@ -182,6 +182,14 @@ if(FUT_STREET2_BUILD_HOST_APP)
         ${RECOMP_HOST_LIBRARIES})
 
     if(BUILD_TESTING)
+        add_executable(graphics_native_backend_test tests/graphics_native_backend_test.c graphics_native_surfaces.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_constants.c)
+        target_include_directories(graphics_native_backend_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
+            "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+        target_compile_definitions(graphics_native_backend_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+        target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        add_test(NAME graphics_native_backend COMMAND graphics_native_backend_test)
+        set_tests_properties(graphics_native_backend PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_pipeline_test tests/graphics_native_pipeline_test.c graphics_native_pipeline.c graphics_native_constants.c)
         target_include_directories(graphics_native_pipeline_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_pipeline_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)

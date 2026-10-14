@@ -14,48 +14,43 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.68
+## Estado verificável — release 2.69
 
-O código recompilado chegou a **dois clears originais**: depth/stencil com
-flags `0x03`, depois cor/depth/stencil com `0xF3`, cor `0xFF000000` e
-Z/stencil `0xFFFFFF00`. A GPU nativa foi aguardada, todos os bits selecionados
-foram conferidos por readback e os resultados voltaram à memória guest sem
-sobrescrever o padding. A segunda submissão terminou: `2.876` bytes/`471`
-parâmetros, marcador `7` em `0x82801000` e avanço de DMA GET após conclusão.
-Isso inicializa buffers; **não é um draw original nem um frame apresentado**.
+A terceira submissão gráfica passou do offset `12` ao `304`. O backend
+validava o novo pitch com o formato anterior durante uma troca de configuração.
+Agora os setters apenas retêm a descrição; a validação e a preparação dos
+recursos ocorrem no uso por clear/draw. `WAIT_IDLE` e semáforos aguardam o
+trabalho já submetido, sem materializar uma descrição intermediária.
 
-A notificação `0x28` foi identificada como estado `SAMPLEALPHA`: o dispatcher
-de render states do próprio jogo usa o índice `159`, confirmado pela
-[definição de render states do Cxbx](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/master/src/core/hle/D3D8/XbD3D8Types.h).
-`graphics_software_state.c` retém o valor e as duas escritas RDI exatas do
-seletor `8`. O seletor `9` retém somente as escritas de registro observadas,
-com os argumentos existentes nos campos de clear. Não chama um ISR sintético
-nem descarta estados desconhecidos. A equivalência de rasterização desses
-controles **continua pendente**: qualquer draw dependente deles é recusado,
-inclusive após escrever zero. Não os trate como alpha-to-coverage já implementado.
+As superfícies nativas têm controle explícito de dados alterados pela GPU.
+Antes da substituição, o writeback usa o plano atualmente alocado, aguarda a
+GPU, copia os pixels para a memória guest e preserva o padding. Uma falha deixa
+as superfícies não gravadas pendentes e impede sua substituição. O upload
+também é renovado quando a descrição não muda, para respeitar escritas da CPU
+na memória guest. A troca só publica os novos recursos após criação bem-sucedida.
 
-`graphics_native_surfaces.c` traduz o caminho de clear completo observado
-para [ClearRenderTargetView](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-clearrendertargetview)
-e [ClearDepthStencilView](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-cleardepthstencilview).
-Essa forma cobre o retângulo inteiro e todas/nenhuma componentes de cor,
-com depth inteiro nos endpoints. Readback com comparação exata precede
-writeback; qualquer falha impede a publicação do marcador. Retângulos/canais
-parciais, outros valores de depth e depth float ainda são recusados.
-Estados de textura/texgen/bump e color key são preservados para tradução
-posterior, não declarados executados por um pixel shader original.
+Build Release e CTest passaram `17/17`. Os testes WARP verificam o receiver
+real do backend com memória sintética: setters e waits intermediários,
+writeback do plano anterior, troca de pitch/formato/endereço e rejeição de
+uma descrição inválida no uso. Também verificam refresh após escrita da CPU,
+readback de cor/depth/stencil, preservação de padding, cancelamento, falha
+parcial de writeback e retorno à superfície anterior. **Isso não comprova
+um draw original nem uma troca de superfícies concluída pelo jogo.**
 
-O teste WARP verifica clear e writeback com dados sintéticos, preservação de
-padding, stencil-only preservando depth, cancelamento e recusa das formas
-não suportadas. O teste software valida os registros retidos, ausência de
-mutação após rejeição e a trava de draw. Build Release e CTest passaram
-`16/16`; testes públicos passaram `161/161`; build/self-test .NET passaram
-sem avisos/erros, `105` testes (somente o protótipo). ISO intacta; saídas no D:.
+A execução nativa limitada a cinco segundos terminou por diagnóstico antes
+do timeout. Os dois clears originais continuam com readback exato e writeback,
+e as duas primeiras submissões continuam concluídas, com marcador `7` em
+`0x82801000`. A terceira, de `1.948` bytes, agora para no método `0x1B00`,
+valor `0x02C04000`: descrição de textura ainda sem handler nativo, conforme
+o [mapa de métodos NV097](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/nv2a_regs.h).
+A conclusão dessa submissão não foi publicada. ISO intacta; novas saídas no D:.
 
-A terceira submissão contém `1.948` bytes e interrompe no offset `12`, método
-`0x020C`, pitch `0x14000A00`. O frontend tenta validar a nova descrição usando
-ainda o formato anterior: próximo alvo é o ciclo de troca/coerência de
-superfícies e a validação no ponto correto de uso. Depois permanecem os draws,
-shaders e controles de rasterização pendentes. `NOT_READY` permanece.
+Próximo alvo: descrição e tradução de textura/fragment program necessárias
+ao primeiro draw original. SAMPLEALPHA/RDI, geometria e demais estados
+dependentes continuam com validação própria; não foram liberados por esta
+correção. Clears parciais, depth fora dos endpoints suportados, draws,
+apresentação de frame, gameplay e áudio ainda não estão aprovados.
+`NOT_READY` permanece.
 
 ## Abordagem
 

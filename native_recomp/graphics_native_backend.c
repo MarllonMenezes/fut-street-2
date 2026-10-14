@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "xbox_memory_layout.h"
 #include "graphics_command_stream.h"
@@ -75,9 +76,23 @@ typedef struct {
 } NativeGraphicsState;
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
+static int native_writeback_surfaces(NativeGraphicsState *state)
+{
+    HRESULT hr = fut_native_surfaces_writeback(&state->native_surfaces, state->device,
+        state->context, &state->native_constants, object_memory_read, object_memory_write, NULL, backend_stop);
+    if (FAILED(hr)) {
+        fprintf(stderr, "[GRAPHICS] current surface writeback failed: HRESULT=%08lX dirty=%u\n",
+            hr, state->native_surfaces.gpu_dirty);
+        return 0;
+    }
+    return 1;
+}
 static int native_prepare_surfaces(NativeGraphicsState *state)
 {
-    if (state->surfaces.valid != 63) return 1; /* Description still being assembled. */
+    if (state->surfaces.valid != 63) {
+        fprintf(stderr, "[GRAPHICS] incomplete surface description at use: valid=%u\n", state->surfaces.valid);
+        return 0;
+    }
     FutGraphicsDmaView color, depth;
     FutGraphicsSurfacePlan plan;
     const unsigned mask = (1u << 5) | (1u << 6);
@@ -96,7 +111,9 @@ static int native_prepare_surfaces(NativeGraphicsState *state)
             status, state->surfaces.format, state->surfaces.pitch, state->kelvin.control0);
         return 0;
     }
-    int previously_valid = state->native_surfaces.valid;
+    if (!native_writeback_surfaces(state)) return 0;
+    int changed = !state->native_surfaces.valid ||
+        memcmp(&state->native_surfaces.plan, &plan, sizeof(plan));
     HRESULT hr = fut_native_surfaces_prepare(&state->native_surfaces, state->device, &plan, object_memory_read, NULL);
     if (FAILED(hr)) {
         fprintf(stderr, "[GRAPHICS] native surface preparation failed: HRESULT=%08lX\n", hr);
@@ -104,7 +121,7 @@ static int native_prepare_surfaces(NativeGraphicsState *state)
     }
     ID3D11DeviceContext_OMSetRenderTargets(state->context, 1, &state->native_surfaces.target,
         state->native_surfaces.depth_target);
-    if (!previously_valid) fprintf(stderr,
+    if (changed) fprintf(stderr,
         "[GRAPHICS] native surfaces uploaded: logical=%ux%u stored=%ux%u samples=%u color=%08X depth=%08X; no draw\n",
         plan.logical_width, plan.logical_height, plan.width, plan.height, plan.samples, plan.color_address, plan.depth_address);
     return 1;
@@ -139,18 +156,9 @@ static int native_prepare_vertex(NativeGraphicsState *state)
 
 static int native_finish(NativeGraphicsState *state)
 {
-    if (!native_prepare_surfaces(state)) return 0;
-    if (!native_prepare_vertex(state)) return 0;
-    if (state->native_surfaces.valid && state->kelvin.draw.dirty && fut_graphics_draw_ready(&state->kelvin.draw)) {
-        HRESULT hr = fut_native_pipeline_apply(&state->pipeline, state->device, state->context,
-            &state->kelvin, &state->native_surfaces.plan);
-        if (FAILED(hr)) {
-            fprintf(stderr, "[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n", hr);
-            return 0;
-        }
-        state->kelvin.draw.dirty = 0;
-        fprintf(stderr, "[GRAPHICS] native blend/depth/stencil/raster states bound; window constants ready; no draw\n");
-    }
+    /* WAIT_IDLE/semaphore concerns submitted work, not setters for the next
+     * target. In particular, never validate a new pitch with an old format. */
+    if (!native_writeback_surfaces(state)) return 0;
     if (!fut_native_constants_finish(&state->native_constants,
         state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
         return 0;
@@ -216,10 +224,25 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1;
         }
         if ((method == 0x17FCu && value) || method == 0x1810u || method == 0x1818u || method == 0x1800u || method == 0x1808u) {
+            /* Materialize descriptions only at use. This does not permit a
+             * draw: the independent raster/shader/geometry gates still apply. */
+            if (!native_prepare_surfaces(state)) return 0;
             if (!fut_graphics_software_draw_ready(&state->software)) {
                 fprintf(stderr, "[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
                 return 0;
             }
+            if (!native_prepare_vertex(state)) return 0;
+            if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
+                fprintf(stderr, "[GRAPHICS] incomplete native draw state at use\n");
+                return 0;
+            }
+            HRESULT hr = fut_native_pipeline_apply(&state->pipeline, state->device, state->context,
+                &state->kelvin, &state->native_surfaces.plan);
+            if (FAILED(hr)) {
+                fprintf(stderr, "[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n", hr);
+                return 0;
+            }
+            state->kelvin.draw.dirty = 0;
         }
         if (method == 0x1D94u) {
             if (!native_prepare_surfaces(state)) return 0;
@@ -235,7 +258,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1; /* Wait for actual native work; no guest marker written. */
         }
         if (fut_graphics_surface_state(&state->surfaces, method, value))
-            return native_prepare_surfaces(state);
+            return 1; /* Description only; allocation/range validation at use. */
         if (method == 0x1D70u) {
             FutGraphicsDmaView view;
             if (!(state->bindings.reference_masks[subchannel] & (1u << 9)) ||
