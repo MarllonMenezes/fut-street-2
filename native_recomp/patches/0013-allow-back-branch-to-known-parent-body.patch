@@ -1,0 +1,58 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -190,4 +190,6 @@
+-        The source must have one owner. Overlapping target entries are accepted
+-        only when all containing bodies agree on the same end. Branches already
+-        inside the source body and entries in the same shared-tail family are
+-        not duplicated. Other ambiguous ownership stays unresolved.
++        The source normally must have one owner. A narrow exception accepts an
++        overlapping source set when every owner has the same body end and a
++        tail-entry owner starts after the branch target; this is a backwards
++        branch from a known tail alias into the common parent body. Overlapping
++        target entries are accepted only when all containing bodies agree on
++        the same end. Other ambiguous ownership stays unresolved.
+@@ -223 +225,4 @@
+-            if len(source_owners) != 1 or not target_owners:
++            if not source_owners or not target_owners:
++                continue
++            source_ends = {end for _start, end in source_owners}
++            if len(source_ends) != 1:
+@@ -228 +233 @@
+-            source = source_owners[0]
++            source_end = next(iter(source_ends))
+@@ -230 +235,12 @@
+-            if source[0] <= target < source[1] or source[1] == target_end:
++            if len(source_owners) > 1:
++                # A tail alias can branch back into an earlier block of its
++                # overlapping parent. Retain that target as an alternate entry
++                # only when all source owners share the target body's end and
++                # at least one source owner starts strictly after the target.
++                if (source_end == target_end
++                        and any(start > target for start, _end in source_owners)):
++                    self._alias_entries[target] = target_end
++                    added = True
++                continue
++            source = source_owners[0]
++            if source[0] <= target < source[1] or source_end == target_end:
+diff --git a/tools/disasm/test_cross_function_conditional_alias.py b/tools/disasm/test_cross_function_conditional_alias.py
+--- a/tools/disasm/test_cross_function_conditional_alias.py
++++ b/tools/disasm/test_cross_function_conditional_alias.py
+@@ -7 +7 @@
+-def make_detector(functions, branch_target):
++def make_detector(functions, branch_target, branch_source=0x1004):
+@@ -9 +9 @@
+-        address=0x1004, is_cond_jump=True, jump_target=branch_target,
++        address=branch_source, is_cond_jump=True, jump_target=branch_target,
+@@ -58,0 +59,11 @@
++
++
++def test_tail_alias_backward_branch_into_common_parent_creates_entry():
++    parent = Function(0x1000, 0x1060, "parent")
++    tail_alias = Function(0x1038, 0x1060, "tail_alias")
++    detector = make_detector(
++        [parent, tail_alias], 0x1020, branch_source=0x1044,
++    )
++
++    assert detector._pass_cond_branch_interior_aliases()
++    assert detector._alias_entries == {0x1020: 0x1060}

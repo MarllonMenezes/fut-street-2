@@ -24,17 +24,18 @@ serviços do console e integração gráfica/áudio a validar.
   auxiliares e ao protótipo authored. O objetivo é executar a lógica original
   traduzida, sem intérprete/JIT de CPU.
 - XboxRecomp v0.13.1 está fixado no commit
-  `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`, com patches locais 0001–0012.
-  A geração mais recente concluiu 15.701/15.701 funções, zero falhas, em 62
-  fontes C, com 69 destinos de chamada stubados e 92 instruções sem lowering
+  `193e2995ffaec871bb3be43a43bd66aa5fccfeb1`, com patches locais 0001–0013.
+  A geração mais recente concluiu 15.717/15.717 funções, zero falhas, em 62
+  fontes C, com 46 destinos de chamada stubados e 92 instruções sem lowering
   (28 mnemônicos). O patch 0012 filtra um falso limite de função sobre uma
-  string ASCII referenciada como dado após padding `CC`.
+  string ASCII referenciada como dado após padding `CC`; o 0013 recupera
+  entradas para branches de retorno a partir de aliases de cauda comprovados.
 - As 64 unidades C foram compiladas em CMake Release e o host linkou; CTest
   passou 4/4 e `--help` passou. São evidências de tradução/compilação/CLI,
   **não** de boot, execução correta ou equivalência do jogo.
 - Um bring-up controlado anterior alcançou a entrada traduzida e atividade de
   worker/timer, mas não validou boot/menu e não elimina os stubs nem os no-ops.
-  Nenhum XBE foi executado no marco 1.50; XBE, C gerado, objetos e biblioteca
+  Nenhum XBE foi executado no marco 1.51; XBE, C gerado, objetos e biblioteca
   permanecem fora do GitHub.
 - Rendering original, assets, áudio e animação/deformação continuam sem gates
   aprovados. Testes/headless/replay do protótipo .NET não validam o original.

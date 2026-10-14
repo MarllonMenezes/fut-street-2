@@ -221,3 +221,19 @@ is claimed.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0012-ignore-referenced-ascii-cc-boundary.patch'
 ```
+
+Patch `0013-allow-back-branch-to-known-parent-body.patch` follows patches
+0001–0012. A conditional branch from an overlapping tail alias may return to an
+earlier instruction in the common parent body. This exception is accepted only
+when all source owners and all target owners agree on the same body end, and a
+source alias starts after the branch target. Other ambiguous ownership remains
+unresolved. The focused alias suite passes 5/5; the full translator suite
+passes 540 tests (38 skipped). Regeneration adds 16 translated entries and
+removes 23 stubs overall (including aliases exposed by subsequent passes); it
+does not reduce the 92 unsupported instruction sites. Release build, CTest 4/4
+and safe `--help` pass. No XBE launch or fidelity claim is made.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0013-allow-back-branch-to-known-parent-body.patch'
+```

@@ -21,11 +21,11 @@ implementa o runtime específico.
 ## Estado verificável
 
 Na geração mais recente registrada em 2026-10-13, o XboxRecomp v0.13.1
-produziu C para 15.701/15.701 funções; 64 unidades foram compiladas em Release
-e o host linkou. Restam 69 destinos stub e 92 instruções sem lowering (28
+produziu C para 15.717/15.717 funções; 64 unidades foram compiladas em Release
+e o host linkou. Restam 46 destinos stub e 92 instruções sem lowering (28
 mnemônicos). CTest passou 4/4 e o smoke `--help` passou. Um bring-up controlado
 anterior alcançou a entrada traduzida e atividade de worker/timer, mas não
-validou boot/menu; nenhum XBE foi executado no marco 1.50. Não existe
+validou boot/menu; nenhum XBE foi executado no marco 1.51. Não existe
 executável jogável validado. Portanto, isso é avanço de tradução/compilação —
 não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
 
@@ -33,7 +33,7 @@ não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
 
 1. **Congelar a base reproduzível:** fixar a versão/commit do XboxRecomp e os
    patches locais; guardar relatórios e o código derivado apenas localmente.
-2. **Fechar a tradução alcançável com evidência:** classificar os 69 stubs, os
+2. **Fechar a tradução alcançável com evidência:** classificar os 46 stubs, os
    92 sites sem lowering e os imports; priorizar o que for alcançado no boot,
    sem confundir contagens estáticas com código executado. Corrigir o
    detector/lifter quando houver um caso reproduzível; criar override só com

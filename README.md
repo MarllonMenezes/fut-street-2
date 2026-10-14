@@ -9,10 +9,10 @@ com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
 No avanço registrado mais recente, XboxRecomp v0.13.1, fixado no commit
-`193e2995ffaec871bb3be43a43bd66aa5fccfeb1` e com patches locais 0001–0012,
-gerou C para 15.701/15.701 funções. As 64 unidades C foram compiladas em
+`193e2995ffaec871bb3be43a43bd66aa5fccfeb1` e com patches locais 0001–0013,
+gerou C para 15.717/15.717 funções. As 64 unidades C foram compiladas em
 Release e o host linkou; CTest passou 4/4 e o smoke `--help` passou. A geração
-ainda registra 69 destinos de chamada stubados e 92 instruções sem lowering,
+ainda registra 46 destinos de chamada stubados e 92 instruções sem lowering,
 em 28 mnemônicos. Esses resultados provam tradução/compilação, não boot ou
 fidelidade. O XBE não foi executado nesse marco; headless/replay do jogo não
 foram alegados. O protótipo authored em .NET 8 é separado e não demonstra
@@ -48,14 +48,14 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: etapa 1.50, no
+Último avanço registrado: etapa 1.51, no
 [relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-A pilha versionada 0001–0012 foi validada sobre XboxRecomp v0.13.1 fixado; a
-suíte `tools/disasm` + `tools/recomp` passou 539 testes (38 skips), e o build
-CMake Release/CTest 4/4 passou. O patch 0012 evita classificar como função uma
-string ASCII referenciada como dado após padding `CC`, removendo um falso
-positivo e dois stubs/TODOs decorrentes. A geração registra 92 instruções sem
-lowering (28 mnemônicos) e 69 stubs. Nenhum XBE foi executado no marco, e os
+A pilha versionada 0001–0013 foi validada sobre XboxRecomp v0.13.1 fixado; a
+suíte `tools/disasm` + `tools/recomp` passou 540 testes (38 skips), e o build
+CMake Release/CTest 4/4 passou. O patch 0012 filtra uma string referenciada
+como dado; o 0013 recupera alvos de branch para trás a partir de aliases de
+cauda com fim de corpo comum. A geração registra 92 instruções sem lowering
+(28 mnemônicos) e 46 stubs. Nenhum XBE foi executado no marco, e os
 gates de boot, rendering, assets, gameplay original e áudio continuam
 `NOT_READY`. Os arquivos C gerados e builds não são versionados. A evidência
 para `0x80CE` em outro kernel não define o `0x80C0` do jogo; a hipótese

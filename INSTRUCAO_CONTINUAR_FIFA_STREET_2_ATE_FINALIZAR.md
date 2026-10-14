@@ -364,6 +364,16 @@ nenhum boot/headless/replay do jogo alegado. Gates permanecem `NOT_READY`,
 projeto não concluído. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.51, 2026-10-13): patch XboxRecomp 0013
+recupera uma entrada de branch para trás dentro de corpo pai compartilhado por
+alias de cauda, somente quando os owners de origem/alvo concordam no fim. A
+suíte `tools/disasm` + `tools/recomp`: 540 passed/38 skipped; geração
+15717/15717, zero falhas, 46 stubs, 92 instruções/28 mnemônicos sem lowering.
+CMake Release/link do host seletivo, CTest 4/4 e `--help` passaram. Nenhum
+XBE/`--launch` iniciado; autorização específica de bring-up ainda necessária.
+Sem boot/headless/replay original. Gates continuam `NOT_READY`. ISO somente
+leitura, SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 Atualização de continuidade (etapa 1.49, 2026-10-13): patch 0011 traduz AAA/AAS
 somente após AF rastreado no mesmo basic block; somente CF é considerado
 definido depois. Dois sites AAS foram traduzidos. `AAA 0x000C37FD` e
