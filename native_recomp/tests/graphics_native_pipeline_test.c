@@ -118,6 +118,18 @@ int main(void)
     state.point_params_enable=0;state.point_smooth=1;
     CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,27);
     state.point_smooth=0;
+    state.fog_enable=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,28);
+    state.fog_enable=0;state.lighting_enable=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,29);
+    state.lighting_enable=0;state.texture_matrix_enable[3]=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,30);
+    state.texture_matrix_enable[3]=0;
+    state.specular_enable=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,31);
+    state.specular_enable=0;state.light_enable_mask=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,32);
+    state.light_enable_mask=0;
     ID3D11BlendState *bound=NULL; float blend_factor[4]; UINT sample_mask;
     ID3D11DeviceContext_OMGetBlendState(context,&bound,blend_factor,&sample_mask);
     CHECK(bound==saved,25); ID3D11BlendState_Release(bound);

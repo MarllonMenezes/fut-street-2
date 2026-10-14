@@ -81,7 +81,9 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
         (s->cull_face != 0x404 && s->cull_face != 0x405 && s->cull_face != 0x408) ||
         ((s->z_control >> 4) & 15) > 1) return E_INVALIDARG;
     float factor, bias; memcpy(&factor, &s->offset_factor, 4); memcpy(&bias, &s->offset_bias, 4);
-    if (state->point_params_enable || state->point_smooth ||
+    if (state->point_params_enable || state->point_smooth || state->fog_enable || state->lighting_enable ||
+        state->specular_enable || state->light_enable_mask || state->texture_matrix_enable[0] ||
+        state->texture_matrix_enable[1] || state->texture_matrix_enable[2] || state->texture_matrix_enable[3] ||
         s->alpha_test || s->dither || s->logic_op || s->stipple || s->line_smooth || s->polygon_smooth ||
         s->front_mode != s->back_mode || s->front_mode == 0x1B00 ||
         (s->cull_enable && s->cull_face == 0x408) ||

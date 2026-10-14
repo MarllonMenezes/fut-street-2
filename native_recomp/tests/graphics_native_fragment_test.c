@@ -131,10 +131,10 @@ int main(void)
     }
     fut_graphics_fragment_state(&state,0x1E60,8);
     CHECK(verify_math(device,context,&completion,&state,(float[]){.25,.5,.75,.5})==0,24);
-    /* First captured game combiner words, but supplied texture/colors are
-     * SYNTHETIC. RGB final inputs are zero; alpha comes from diffuse.a. */
-    configure(&state,0x08200000,0x14200000,1);state.final_words[0]=0;state.final_words[1]=0x1C80;
-    CHECK(verify_math(device,context,&completion,&state,(float[]){0,0,0,.5})==0,18);
+    /* Captured words, SYNTHETIC sampled color. Final D=R0.rgb, NOT zero:
+     * this program genuinely depends on the texture's filtered RGB. */
+    configure(&state,0x08200000,0x14200000,1);state.final_words[0]=0xC;state.final_words[1]=0x1C80;
+    CHECK(verify_math(device,context,&completion,&state,(float[]){.125,.25,.5,.5})==0,18);
     FutGraphicsKelvinState kelvin={0};kelvin.fragment=state;
     FutNativeTexture textures[4]={0};ID3D11PixelShader *shader=NULL;ID3DBlob *bytecode=NULL;
     CHECK(fut_native_fragment_compile(device,&kelvin,textures,&shader,&bytecode)==E_NOTIMPL && !shader && !bytecode,19);

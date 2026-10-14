@@ -103,9 +103,21 @@ int main(void)
     CHECK(!native_method(&state,0,0x17FC,5,0),32); /* Convolution cannot turn into a draw. */
     CHECK(native_method(&state,0,0x1B0C,0,0) && native_prepare_textures(&state),33);
     ID3D11DeviceContext_PSGetShaderResources(state.context,0,1,&bound);CHECK(!bound,34);
+    CHECK(native_method(&state,0,0x120,0,0) && native_method(&state,0,0x124,0,0) &&
+        native_method(&state,0,0x128,2,0),35);
+    CHECK(!native_method(&state,0,0x130,0,0) && state.kelvin.flip_read==0 && state.kelvin.flip_write==0,36);
+    CHECK(native_method(&state,0,0x12C,0,0) && state.kelvin.flip_write==1 && state.kelvin.flip_read==0,37);
+    CHECK(native_method(&state,0,0x130,0,0) && state.kelvin.flip_write==1 && state.kelvin.flip_read==0,38);
+    CHECK(native_method(&state,0,0x12C,0,0) && !native_method(&state,0,0x130,0,0) && state.kelvin.flip_read==0,39);
+    /* Synthetic test state without SW dependencies: mode4 itself must not
+     * reuse the previously programmable vertex-shader path. */
+    state.software=(FutGraphicsSoftwareState){0};
+    CHECK(native_method(&state,0,0x1E94,4,0) && !native_method(&state,0,0x17FC,5,0),40);
     for(unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_surfaces_destroy(&state.native_surfaces);
     fut_native_constants_destroy(&state.native_constants);
+    if(state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
+    if(state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     ID3D11DeviceContext_Release(state.context); ID3D11Device_Release(state.device);
     puts("Real backend: deferred description validation, WAIT old-plan writeback and independent draw gate OK");
     return 0;

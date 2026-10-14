@@ -17,6 +17,12 @@ int main(void)
     fut_graphics_kelvin_state(&state, 0x1EA4, 60);
     const uint32_t bits[] = {0x7FC01234u, 0x80000000u, 0x3F000000u, 0xFF800000u};
     for (unsigned i = 0; i < 4; ++i) fut_graphics_kelvin_state(&state, 0xB80 + i * 4, bits[i]);
+    const unsigned bases[]={0x440,0x480,0x580,0x680,0x6C0};
+    const unsigned counts[]={16,64,64,16,64};
+    for(unsigned family=0;family<5;++family) for(unsigned i=0;i<counts[family];++i) {
+        uint32_t word=bits[(i+family)%4] ^ ((i&15)<<8);
+        if(fut_graphics_kelvin_state(&state,bases[family]+i*4,word)!=FUT_KELVIN_APPLIED) return 10;
+    }
     if (!fut_native_constants_finish(&native, state.constants, 2000, NULL)) return 3;
     ID3D11Buffer *bound = NULL;
     ID3D11DeviceContext_VSGetConstantBuffers(context, 1, 1, &bound);

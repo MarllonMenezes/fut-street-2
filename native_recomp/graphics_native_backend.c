@@ -304,6 +304,10 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 fprintf(stderr, "[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
                 return 0;
             }
+            if ((state->kelvin.program_mode & 3u)!=2u) {
+                fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
+                return 0;
+            }
             if (!native_prepare_vertex(state)) return 0;
             if (!native_prepare_fragment(state)) return 0;
             if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
@@ -330,6 +334,23 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         if (method == 0x110u) {
             if (value || !native_finish(state)) return 0;
             return 1; /* Wait for actual native work; no guest marker written. */
+        }
+        if(method==0x12Cu) {
+            if(fut_graphics_kelvin_state(&state->kelvin,method,value)!=FUT_KELVIN_APPLIED) return 0;
+            fprintf(stderr,"[GRAPHICS] flip write index advanced: read=%u write=%u modulo=%u; no frame presented\n",
+                state->kelvin.flip_read,state->kelvin.flip_write,state->kelvin.flip_modulo);
+            return 1;
+        }
+        if(method==0x130u) {
+            int available=fut_graphics_flip_available(&state->kelvin);
+            if(value || available!=1) {
+                fprintf(stderr,"[GRAPHICS] flip stall requires valid free slot/real presentation: read=%u write=%u modulo=%u valid=%u\n",
+                    state->kelvin.flip_read,state->kelvin.flip_write,state->kelvin.flip_modulo,state->kelvin.flip_valid);
+                return 0;
+            }
+            if(!native_finish(state)) return 0;
+            fprintf(stderr,"[GRAPHICS] flip write slot available; previous GPU work completed; no read-index advance/present\n");
+            return 1;
         }
         if (fut_graphics_surface_state(&state->surfaces, method, value))
             return 1; /* Description only; allocation/range validation at use. */

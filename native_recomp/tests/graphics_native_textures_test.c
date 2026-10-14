@@ -160,7 +160,7 @@ int main(void)
     CHECK(verify_upload(device,context,&completion,&native,&memory)==0 && !memcmp(memory.bytes,before.bytes,64),17);
     CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)),18);
     const uint32_t fragment_commands[][2]={{0x1E60,1},{0x1E70,1},{0xAC0,0x08200000},
-        {0x260,0x14200000},{0x1E40,0xC00},{0xAA0,0xC00},{0x288,0},{0x28C,0x1C80}};
+        {0x260,0x14200000},{0x1E40,0xC00},{0xAA0,0xC00},{0x288,0xC},{0x28C,0x1C80}};
     for(unsigned i=0;i<sizeof(fragment_commands)/sizeof(fragment_commands[0]);++i)
         CHECK(fut_graphics_kelvin_state(&kelvin,fragment_commands[i][0],fragment_commands[i][1])==FUT_KELVIN_APPLIED,33);
     FutNativeTexture approved[4]={native};ID3D11PixelShader *pixel_shader=NULL;ID3DBlob *pixel_blob=NULL;

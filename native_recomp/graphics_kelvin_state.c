@@ -73,7 +73,22 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         if (component == 3) ++state->program_load;
         return FUT_KELVIN_APPLIED;
     }
-    if (method >= 0xA20u && method <= 0xA2Cu) {
+    if (method >= 0x440u && method < 0x480u) {
+        unsigned slot=(method-0x440u)/4;
+        row=0x04+slot/4; component=slot%4; constant=1;
+    } else if (method >= 0x480u && method < 0x680u) {
+        unsigned inverse=method>=0x580u;
+        unsigned slot=(method-(inverse?0x580u:0x480u))/4;
+        row=(inverse?0x0Cu:0x08u)+(slot/16)*8+(slot%16)/4;
+        component=slot%4; constant=1;
+    } else if (method >= 0x680u && method < 0x6C0u) {
+        unsigned slot=(method-0x680u)/4;
+        row=slot/4; component=slot%4; constant=1;
+    } else if (method >= 0x6C0u && method < 0x7C0u) {
+        unsigned slot=(method-0x6C0u)/4;
+        row=0x44+(slot/16)*8+(slot%16)/4;
+        component=slot%4; constant=1;
+    } else if (method >= 0xA20u && method <= 0xA2Cu) {
         row = 0x3B; component = (method - 0xA20u) / 4; constant = 1;
     } else if (method >= 0xAF0u && method <= 0xAFCu) {
         row = 0x3A; component = (method - 0xAF0u) / 4; constant = 1;
@@ -94,6 +109,7 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
     }
     if (constant) {
         state->constants[row][component] = value;
+        state->constant_valid[row] |= 1u<<component;
         state->constants_dirty = 1;
         return FUT_KELVIN_APPLIED;
     }
@@ -104,6 +120,24 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
     case 0x394: state->clip_min = value; break;
     case 0x398: state->clip_max = value; break;
     case 0x290: state->control0 = value; break;
+    case 0x294:
+        if(value & ~0x00030001u) return FUT_KELVIN_REJECTED;
+        state->light_control=value; break;
+    case 0x2A4:
+        if(value>1) return FUT_KELVIN_REJECTED;
+        state->fog_enable=value; state->draw.dirty=1; break;
+    case 0x314:
+        if(value>1) return FUT_KELVIN_REJECTED;
+        state->lighting_enable=value; state->draw.dirty=1; break;
+    case 0x3B8:
+        if(value>1) return FUT_KELVIN_REJECTED;
+        state->specular_enable=value; state->draw.dirty=1; break;
+    case 0x3BC:
+        if(value & ~0xFFFFu) return FUT_KELVIN_REJECTED;
+        state->light_enable_mask=value; state->draw.dirty=1; break;
+    case 0x420:case 0x424:case 0x428:case 0x42C:
+        if(value>1) return FUT_KELVIN_REJECTED;
+        state->texture_matrix_enable[(method-0x420)/4]=value; state->draw.dirty=1; break;
     case 0x30C:
         if (value > 1) return FUT_KELVIN_REJECTED;
         state->depth_test = value; state->draw.dirty = 1; break;
@@ -151,13 +185,16 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         state->constant_load = value; break;
     case 0x120:
         if (value > 7) return FUT_KELVIN_REJECTED;
-        state->flip_read = value; break;
+        state->flip_read = value; state->flip_valid|=1; break;
     case 0x124:
         if (value > 7) return FUT_KELVIN_REJECTED;
-        state->flip_write = value; break;
+        state->flip_write = value; state->flip_valid|=2; break;
     case 0x128:
         if (value == 0 || value > 7) return FUT_KELVIN_REJECTED;
-        state->flip_modulo = value; break;
+        state->flip_modulo = value; state->flip_valid|=4; break;
+    case 0x12C:
+        if(value || fut_graphics_flip_available(state)<0) return FUT_KELVIN_REJECTED;
+        state->flip_write=(state->flip_write+1)%state->flip_modulo; break;
     case 0x1D90:
         state->clear_color = value; state->clear_valid |= 2; break;
     case 0x1D8C: state->clear_depth = value; state->clear_valid |= 1; break;
@@ -167,4 +204,11 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         return FUT_KELVIN_NOT_HANDLED;
     }
     return FUT_KELVIN_APPLIED;
+}
+
+int fut_graphics_flip_available(const FutGraphicsKelvinState *state)
+{
+    if(!state || state->flip_valid!=7 || !state->flip_modulo || state->flip_modulo>7 ||
+        state->flip_read>=state->flip_modulo || state->flip_write>=state->flip_modulo) return -1;
+    return state->flip_read!=state->flip_write;
 }

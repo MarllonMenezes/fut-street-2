@@ -14,47 +14,51 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.71
+## Estado verificável — release 2.72
 
-A execução recompilada passou do offset `588` ao `848` da terceira submissão.
-Os controles de parâmetros/suavização de pontos e seu tamanho agora são
-preservados. Valores booleanos inválidos são recusados; controles de pontos
-ativados continuam sem implementação de rasterização e bloqueiam o pipeline.
+A execução recompilada chegou ao **primeiro BEGIN de draw**, no offset
+`1.168` da terceira submissão. Antes disso, foram processados os controles
+observados de fog, iluminação, specular e matrizes de textura. Esses estados
+são preservados e validados; suas formas ativadas ainda não traduzidas continuam
+recusadas no uso. Registrar um estado desativado não comprova sua implementação.
 
-`graphics_fragment_program.c` traduz as operações dos register combiners para
-HLSL: até oito estágios, operações multiply/dot/add, os oito mapeamentos de
-entrada, bias/scale e escrita paralela de cor e alpha. Os registradores são
-validados por componente: ler scratch não inicializado, perder configurações
-necessárias ou escrever destinos conflitantes não gera um shader parcial.
-As equações seguem o modelo de [NV_register_combiners](https://registry.khronos.org/OpenGL/extensions/NV/NV_register_combiners.txt),
-com layout de palavras conferido no mapa NV097. MUX, blue-to-alpha, pseudo
-registradores finais SUM/EF, fog e modos dependentes ainda são recusados.
+As matrizes projection, model-view/inverse dos quatro conjuntos, composite
+e as quatro matrizes de textura agora preenchem os slots corretos das 192
+constantes nativas, sem achatar os intervalos entre conjuntos. Há bits de
+presença por componente e preservação dos valores brutos, incluindo NaNs e
+zero negativo. O [mapa de contexto consultado](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/pgraph.c)
+sustenta o layout; isso não implementa o pipeline completo de iluminação/fog
+ou a execução fixed-function de vértices. Esse modo não pode reutilizar
+silenciosamente um shader programável anterior.
 
-`graphics_native_fragment.c` gera e compila o pixel shader nativo para as formas
-suportadas, integrando o clipping de janelas e a amostragem projetada já
-implementados. Um snapshot da descrição aprovada impede reutilizar um sampler
-antigo após mudanças de estado. O filtro original quincunx `0x04072000`
-continua pendente e impede compilar o caminho dependente; não foi aproximado
-por linear. **HLSL float32 não comprova equivalência com a precisão e os
-arredondamentos internos da NV2A.**
+O incremento do índice de escrita de flip usa os contadores explicitamente
+configurados. O stall só passa com slot livre e conclusão do trabalho nativo
+anterior; igualdade entre leitura/escrita continua bloqueada.
+Na execução observada: leitura `0`, escrita `2`, módulo `3`.
+**Não houve avanço artificial da leitura, apresentação de frame nem VBlank.**
 
-Build Release e CTest passaram `19/19`. Testes WARP executam as equações
-geradas e conferem RGBA por readback: cor/alpha paralelos, mapeamentos,
-bias/scale, dot, fatores compartilhados/por estágio e cadeia de oito estágios.
-As palavras do primeiro combiner capturado também foram testadas, mas com
-entradas de textura/cor sintéticas. O adaptador compila bytecode PS para
-configurações suportadas e recusa samplers ausentes ou desatualizados.
-**Isso não é execução do fragment program completo nem um draw do jogo.**
+A nova superfície `640×480`, sem AA, foi importada para a GPU; a textura
+original `1280×480`, pitch `5.120`, veio da memória guest em `0x82C04000`.
+O draw foi então recusado pelo filtro quincunx `0x04072000`, ainda sem tradução.
+A conferência da captura também corrigiu um teste anterior: o combiner final
+é `0x0000000C`, não zero. Sua cor depende de `R0.rgb`, que recebe a textura.
+**Não é válido eliminar a amostragem desse draw.** A hipótese de fazê-lo foi
+descartada; não há esse desvio no código publicado.
 
-A execução nativa limitada a cinco segundos terminou por diagnóstico, sem
-timeout, no método `0x02A4`, valor zero: controle de fog ainda sem handler.
+Build Release e CTest passaram `19/19`, com regressões para layouts/presença
+das matrizes, readback de todos os bits das constantes, controles inválidos,
+flip sem slot e preservação da leitura. O teste corrigido dos combiners usa
+entradas sintéticas coloridas e confirma a dependência da textura, sem afirmar
+execução do fragment program completo ou equivalência de precisão NV2A.
+
+A execução limitada a cinco segundos terminou por diagnóstico antes do timeout.
 Os dois clears originais, as duas primeiras submissões e o marcador `7`
-continuam concluídos. A terceira submissão não foi concluída e ainda não
-chegou ao primeiro draw. ISO intacta; novas saídas no D:.
+continuam concluídos. A terceira submissão permanece sem conclusão e
+**nenhum draw/frame do jogo foi executado/apresentado**.
+ISO intacta; novas saídas no D:.
 
-Próximo alvo: estados de fog/transformação exigidos antes do draw e a tradução
-da convolução observada. SAMPLEALPHA/RDI, geometria, precisão gráfica,
-apresentação de frame, gameplay e áudio continuam pendentes.
+Próximo alvo: tradução do quincunx usado pelo draw; depois permanecem
+SAMPLEALPHA/RDI, geometria, precisão gráfica, apresentação, gameplay e áudio.
 `NOT_READY` permanece.
 
 ## Abordagem

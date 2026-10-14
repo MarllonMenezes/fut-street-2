@@ -38,7 +38,7 @@ int main(void)
     for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i)
         if (fut_graphics_kelvin_state(&state, rejected[i][0], rejected[i][1]) != FUT_KELVIN_REJECTED ||
             memcmp(&before, &state, sizeof(state))) return 12;
-    if (fut_graphics_kelvin_state(&state, 0x314, 0) != FUT_KELVIN_NOT_HANDLED ||
+    if (fut_graphics_kelvin_state(&state, 0x1FFC, 0) != FUT_KELVIN_NOT_HANDLED ||
         memcmp(&before, &state, sizeof(state))) return 13;
     if (fut_graphics_kelvin_state(&state, 0x194C, 0xFF804000u) != FUT_KELVIN_APPLIED ||
         state.attributes[3][0] != 0 || state.attributes[3][1] != 64.0f/255.0f ||
@@ -123,6 +123,52 @@ int main(void)
     before=state;
     if(fut_graphics_kelvin_state(&state,0x318,2)!=FUT_KELVIN_REJECTED ||
         fut_graphics_kelvin_state(&state,0x31C,2)!=FUT_KELVIN_REJECTED || memcmp(&before,&state,sizeof(state))) return 38;
-    puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
+    FutGraphicsKelvinState matrices={0};
+    const unsigned matrix_methods[]={0x480,0x580,0x6C0};
+    const unsigned context_bases[]={0x08,0x0C,0x44};
+    for(unsigned family=0;family<3;++family) for(unsigned matrix=0;matrix<4;++matrix)
+        for(unsigned word=0;word<16;++word) {
+            uint32_t value=0x7FC00000u+family*256+matrix*16+word;
+            unsigned row=context_bases[family]+matrix*8+word/4;
+            if(fut_graphics_kelvin_state(&matrices,matrix_methods[family]+matrix*64+word*4,value)!=FUT_KELVIN_APPLIED ||
+                matrices.constants[row][word%4]!=value || !(matrices.constant_valid[row]&(1u<<(word%4)))) return 39;
+        }
+    for(unsigned matrix=0;matrix<4;++matrix) for(unsigned row=0;row<4;++row)
+        if(matrices.constant_valid[0x40+matrix*8+row] || matrices.constants[0x40+matrix*8+row][0]) return 40;
+    for(unsigned family=0;family<2;++family) for(unsigned word=0;word<16;++word) {
+        unsigned base=family?0:4,method=family?0x680:0x440;
+        uint32_t value=0x80000000u+family*16+word;
+        if(fut_graphics_kelvin_state(&matrices,method+word*4,value)!=FUT_KELVIN_APPLIED ||
+            matrices.constants[base+word/4][word%4]!=value) return 41;
+    }
+    before=matrices;
+    if(fut_graphics_kelvin_state(&matrices,0x7C0,0)!=FUT_KELVIN_NOT_HANDLED ||
+        fut_graphics_kelvin_state(&matrices,0x481,0)!=FUT_KELVIN_REJECTED || memcmp(&before,&matrices,sizeof(matrices))) return 42;
+    const unsigned enables[]={0x2A4,0x314,0x3B8,0x420,0x424,0x428,0x42C};
+    for(unsigned i=0;i<sizeof(enables)/sizeof(enables[0]);++i) {
+        if(fut_graphics_kelvin_state(&matrices,enables[i],1)!=FUT_KELVIN_APPLIED) return 43;
+        before=matrices;
+        if(fut_graphics_kelvin_state(&matrices,enables[i],2)!=FUT_KELVIN_REJECTED || memcmp(&before,&matrices,sizeof(matrices))) return 44;
+    }
+    if(!matrices.fog_enable || !matrices.lighting_enable || !matrices.specular_enable ||
+        !matrices.texture_matrix_enable[0] || !matrices.texture_matrix_enable[3] ||
+        fut_graphics_kelvin_state(&matrices,0x294,0x20001)!=FUT_KELVIN_APPLIED || matrices.light_control!=0x20001 ||
+        fut_graphics_kelvin_state(&matrices,0x3BC,0xFFFF)!=FUT_KELVIN_APPLIED || matrices.light_enable_mask!=0xFFFF) return 45;
+    before=matrices;
+    if(fut_graphics_kelvin_state(&matrices,0x294,2)!=FUT_KELVIN_REJECTED ||
+        fut_graphics_kelvin_state(&matrices,0x3BC,0x10000)!=FUT_KELVIN_REJECTED || memcmp(&before,&matrices,sizeof(matrices))) return 46;
+    FutGraphicsKelvinState flip={0};
+    if(fut_graphics_flip_available(&flip)!=-1 || fut_graphics_kelvin_state(&flip,0x12C,0)!=FUT_KELVIN_REJECTED) return 47;
+    fut_graphics_kelvin_state(&flip,0x120,0);fut_graphics_kelvin_state(&flip,0x124,0);fut_graphics_kelvin_state(&flip,0x128,3);
+    if(fut_graphics_flip_available(&flip)!=0) return 48;
+    for(unsigned i=1;i<=3;++i)
+        if(fut_graphics_kelvin_state(&flip,0x12C,0)!=FUT_KELVIN_APPLIED || flip.flip_write!=i%3 || flip.flip_read!=0 ||
+            fut_graphics_flip_available(&flip)!=(i<3)) return 49;
+    before=flip;
+    if(fut_graphics_kelvin_state(&flip,0x12C,1)!=FUT_KELVIN_REJECTED || memcmp(&before,&flip,sizeof(flip))) return 50;
+    fut_graphics_kelvin_state(&flip,0x124,7);before=flip;
+    if(fut_graphics_flip_available(&flip)!=-1 || fut_graphics_kelvin_state(&flip,0x12C,0)!=FUT_KELVIN_REJECTED ||
+        memcmp(&before,&flip,sizeof(flip))) return 51;
+    puts("Native state slots, matrix context gaps, raw validity, flip free-slot protocol and rejection OK");
     return 0;
 }
