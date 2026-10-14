@@ -22,6 +22,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_target_writes,
     recover_dynamic_indexed_writer_root_link_provenance,
     recover_indexed_callback_root_handoff_provenance,
+    recover_indexed_callback_root_frame_identity_boundary,
     recover_indexed_callback_frame_seed_provenance,
     recover_fixed_callback_consumer_provenance,
     recover_fixed_slot_writes,
@@ -1427,6 +1428,51 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["frame_helper_calls"]), 1)
         self.assertEqual(len(evidence["consumer_calls"]), 1)
         self.assertEqual(evidence["direct_frame_writes"], [])
+
+    def test_joins_static_frame_seed_and_root_address_families(self) -> None:
+        evidence = recover_indexed_callback_root_frame_identity_boundary(
+            {
+                "status": "verified-bounded-root-record-frame-separation",
+                "table_root": "0x00361360",
+                "root_record_stride_bytes": 0x28,
+                "direct_frame_writes": [],
+            },
+            {
+                "status": "static-frame-seed-slot-candidates-observed",
+                "sites": [
+                    {
+                        "status": "static-slot-candidate-zero-guard",
+                        "frame_seed": "0x003034F8",
+                        "table_slot_base": "0x003034F8",
+                    },
+                    {
+                        "status": "static-slot-candidate-zero-guard",
+                        "frame_seed": "0x00303F58",
+                        "table_slot_base": "0x00303F58",
+                    },
+                ],
+            },
+            {
+                "status": "verified-indexed-callback-consumer-layout",
+                "record_stride_bytes": 0xC,
+            },
+            {
+                "status": "verified-indexed-callback-frame-provenance",
+                "frame_local_offset": "0x10",
+            },
+        )
+
+        self.assertEqual(
+            evidence["status"],
+            "verified-bounded-static-root-frame-address-separation",
+        )
+        self.assertEqual(
+            evidence["runtime_alias_status"], "not-proven-runtime-alias"
+        )
+        self.assertEqual(evidence["frame_seed_site_count"], 2)
+        self.assertEqual(evidence["root_frame_address_overlap"], [])
+        self.assertEqual(evidence["root_record_stride_bytes"], 0x28)
+        self.assertEqual(evidence["consumer_record_stride_bytes"], 0xC)
 
     def test_recovers_static_frame_seed_slot_candidate(self) -> None:
         source = (

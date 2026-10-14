@@ -1555,6 +1555,111 @@ def recover_indexed_callback_frame_seed_provenance(
     }
 
 
+def recover_indexed_callback_root_frame_identity_boundary(
+    root_handoff_provenance: dict[str, Any],
+    frame_seed_provenance: dict[str, Any],
+    consumer_layout: dict[str, Any],
+    frame_provenance: dict[str, Any],
+) -> dict[str, Any]:
+    """Join static root, frame-seed, and consumer-layout evidence.
+
+    The indexed root and the frame passed to ``sub_0026E70A`` are kept as
+    separate address families unless a bounded static expression proves an
+    alias.  Distinct literal addresses and strides are useful negative
+    evidence, but they do not exclude runtime pointer propagation or object
+    identity established outside the scanned bodies.
+    """
+    root_address = _address(
+        root_handoff_provenance.get(
+            "table_root", f"0x{INDEXED_CALLBACK_TABLE_BASE:08X}"
+        )
+    )
+    seed_rows = [
+        row
+        for row in frame_seed_provenance.get("sites", [])
+        if row.get("status")
+        in {
+            "static-slot-candidate-zero-guard",
+            "static-slot-candidate-nonzero-guard",
+            "static-slot-empty",
+        }
+    ]
+    seed_addresses = sorted(
+        {
+            _address(row["frame_seed"])
+            for row in seed_rows
+            if row.get("frame_seed")
+        }
+    )
+    slot_addresses = sorted(
+        {
+            _address(row["table_slot_base"])
+            for row in seed_rows
+            if row.get("table_slot_base")
+        }
+    )
+    overlapping_addresses = sorted(
+        {root_address}.intersection(set(seed_addresses) | set(slot_addresses))
+    )
+    root_status = str(root_handoff_provenance.get("status", ""))
+    seed_status = str(frame_seed_provenance.get("status", ""))
+    consumer_status = str(consumer_layout.get("status", ""))
+    frame_status = str(frame_provenance.get("status", ""))
+    direct_frame_writes = len(
+        root_handoff_provenance.get("direct_frame_writes", [])
+    )
+
+    if not seed_rows:
+        status = "no-static-frame-seed-root-boundary-observed"
+    elif not root_status.startswith("verified-"):
+        status = "incomplete-root-frame-identity-boundary"
+    elif overlapping_addresses:
+        status = "static-root-frame-address-overlap-observed"
+    elif direct_frame_writes:
+        status = "direct-frame-write-prevents-root-frame-separation"
+    else:
+        status = "verified-bounded-static-root-frame-address-separation"
+
+    return {
+        "status": status,
+        "semantics": "not-claimed",
+        "runtime_alias_status": "not-proven-runtime-alias",
+        "indexed_table_root": f"0x{root_address:08X}",
+        "frame_seed_addresses": [
+            f"0x{address:08X}" for address in seed_addresses
+        ],
+        "frame_slot_addresses": [
+            f"0x{address:08X}" for address in slot_addresses
+        ],
+        "root_frame_address_overlap": [
+            f"0x{address:08X}" for address in overlapping_addresses
+        ],
+        "frame_seed_status": seed_status,
+        "root_handoff_status": root_status,
+        "consumer_layout_status": consumer_status,
+        "frame_provenance_status": frame_status,
+        "direct_frame_writes": direct_frame_writes,
+        "frame_seed_site_count": len(seed_rows),
+        "root_record_stride_bytes": root_handoff_provenance.get(
+            "root_record_stride_bytes"
+        ),
+        "consumer_record_stride_bytes": consumer_layout.get(
+            "record_stride_bytes"
+        ),
+        "evidence": {
+            "root_record_stride_bytes": root_handoff_provenance.get(
+                "root_record_stride_bytes"
+            ),
+            "consumer_record_stride_bytes": consumer_layout.get(
+                "record_stride_bytes"
+            ),
+            "consumer_frame_local_offset": frame_provenance.get(
+                "frame_local_offset"
+            ),
+        },
+    }
+
+
 def recover_indirect_call_skip_branches(
     generated_dir: Path,
     sites: list[dict[str, Any]],
@@ -5370,6 +5475,14 @@ def audit(
             xbe,
         )
     )
+    indexed_callback_root_frame_identity_boundary = (
+        recover_indexed_callback_root_frame_identity_boundary(
+            indexed_callback_root_handoff_provenance,
+            indexed_callback_frame_seed_provenance,
+            dynamic_indexed_callback_consumer_layout,
+            dynamic_indexed_callback_frame_provenance,
+        )
+    )
     dynamic_callback_outside_direct_caller_provenance = [
         row
         for row in dynamic_callback_all_caller_provenance
@@ -6781,6 +6894,46 @@ def audit(
                 "known_function_target_sites", 0
             )
         ),
+        "dynamic_indexed_callback_root_frame_identity_status": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_runtime_alias_status": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "runtime_alias_status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_seed_sites": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "frame_seed_site_count", 0
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_seed_addresses": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "frame_seed_addresses", []
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_slot_addresses": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "frame_slot_addresses", []
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_address_overlap": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "root_frame_address_overlap", []
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_root_stride_bytes": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "root_record_stride_bytes"
+            )
+        ),
+        "dynamic_indexed_callback_root_frame_consumer_stride_bytes": (
+            indexed_callback_root_frame_identity_boundary.get(
+                "consumer_record_stride_bytes"
+            )
+        ),
         "dynamic_indexed_callback_object_provenance_status": (
             dynamic_indexed_callback_object_provenance.get(
                 "status", "not-assessed"
@@ -7182,6 +7335,9 @@ def audit(
         ),
         "dynamic_indexed_callback_root_handoff_provenance": (
             indexed_callback_root_handoff_provenance
+        ),
+        "dynamic_indexed_callback_root_frame_identity_boundary": (
+            indexed_callback_root_frame_identity_boundary
         ),
         "dynamic_indexed_callback_consumer_layout": (
             dynamic_indexed_callback_consumer_layout

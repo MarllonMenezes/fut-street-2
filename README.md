@@ -14,6 +14,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.35
+
+O release 2.35 junta a evidência do frame de callback indexado com a raiz
+`0x00361360`. Foram observados `3` seeds estáticos do helper
+`sub_002710F4` (`0x003034F8`, `0x00303F58` e `0x00303F68`) e os slots
+correspondentes (`0x003034F8`, `0x00303F58` e `0x00303F74`); nenhum coincide
+com a raiz indexada. Os layouts também permanecem distintos: stride `0x28`
+na família de registros da raiz e stride `0xC` no consumidor
+`sub_0026E70A`.
+
+Esse é um limite estático verificável, não uma prova de que não exista alias
+ou propagação de ponteiro em runtime: o status continua
+`not-proven-runtime-alias`, nenhum callback é resolvido e nenhuma semântica de
+tabela é implementada. A suíte Python passou em `115/115`, a prontidão
+permanece `NOT_READY` e a estimativa conservadora do PoC jogável continua em
+aproximadamente `31% concluído / 69% restante`. A análise permanece estática e
+não executa o XBE.
+
 ## Estado verificável — release 2.34
 
 O release 2.34 fecha um gate de fronteira dos produtores para os dois
