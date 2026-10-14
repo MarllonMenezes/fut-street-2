@@ -47,6 +47,10 @@ FIXED_SLOT_WRITE_RE = re.compile(
     r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
     r"0x(?P<value>[0-9A-Fa-f]{1,8})u?;"
 )
+FIXED_REGISTER_WRITE_RE = re.compile(
+    r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*=\s*"
+    r"(?P<rhs>[^;]+);"
+)
 PRCB_BASE_LOAD_RE = re.compile(
     r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
     r"MEM32\(XBOX_FS_BASE \+ 0x20\);"
@@ -365,6 +369,125 @@ def recover_runtime_fixed_slot_initializers(
                 }
             )
     return initializers
+
+
+def recover_fixed_slot_writes(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int] | None,
+    tracked_slots: set[int],
+) -> dict[int, list[dict[str, Any]]]:
+    """Inventory absolute and register-derived writes to selected slots.
+
+    This is broader than the constant-initializer helper: it also recognizes
+    ``register = slot`` followed by ``MEM32(register) = ...``.  The result is
+    still syntactic provenance only and does not prove that a runtime path
+    reaches the writer.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    writes: dict[int, list[dict[str, Any]]] = {}
+
+    def add_write(
+        slot: int,
+        source_path: Path,
+        line_number: int,
+        current: int,
+        kind: str,
+        expression: str,
+        value: str | None = None,
+    ) -> None:
+        row: dict[str, Any] = {
+            "function": f"0x{current:08X}",
+            "function_name": str(function_by_address[current].get("name", "")),
+            "source": f"{source_path.name}:{line_number}",
+            "kind": kind,
+            "expression": expression,
+        }
+        if value is not None:
+            row["value"] = value
+        writes.setdefault(slot, []).append(row)
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current: int | None = None
+        register_constants: dict[str, int] = {}
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+                register_constants = {}
+            if current is None or (
+                directly_reachable is not None
+                and current not in directly_reachable
+            ):
+                continue
+
+            absolute_match = FIXED_SLOT_WRITE_RE.search(line)
+            if absolute_match is not None:
+                slot = int(absolute_match.group("slot"), 16)
+                if slot in tracked_slots:
+                    add_write(
+                        slot,
+                        source_path,
+                        line_number,
+                        current,
+                        "absolute-constant",
+                        line.strip(),
+                        f"0x{int(absolute_match.group('value'), 16):08X}",
+                    )
+
+            register_match = FIXED_REGISTER_WRITE_RE.search(line)
+            if register_match is not None:
+                register = register_match.group("register")
+                slot = register_constants.get(register)
+                if slot in tracked_slots:
+                    add_write(
+                        slot,
+                        source_path,
+                        line_number,
+                        current,
+                        "register-derived",
+                        line.strip(),
+                        register_match.group("rhs").strip(),
+                    )
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match:
+                register = assignment_match.group("register")
+                rhs = assignment_match.group("rhs").strip()
+                literal_match = REGISTER_LITERAL_RE.fullmatch(rhs)
+                register_match = REGISTER_NAME_RE.fullmatch(rhs)
+                add_match = REGISTER_ADD_RE.fullmatch(rhs)
+                if literal_match is not None:
+                    register_constants[register] = int(
+                        literal_match.group("value"), 0
+                    )
+                elif (
+                    register_match is not None
+                    and register_match.group("register") in register_constants
+                ):
+                    register_constants[register] = register_constants[
+                        register_match.group("register")
+                    ]
+                elif (
+                    add_match is not None
+                    and add_match.group("register") in register_constants
+                ):
+                    register_constants[register] = register_constants[
+                        add_match.group("register")
+                    ] + int(add_match.group("value"), 0)
+                else:
+                    register_constants.pop(register, None)
+            for write_match in REGISTER_WRITE_RE.finditer(line):
+                register_constants.pop(write_match.group("register"), None)
+    return writes
 
 
 def recover_prcb_cache_writes(
@@ -776,8 +899,14 @@ def audit(
         for family, rows in all_dynamic_target_writers.items()
     }
     tracked_bss_slots = (0x00360A70, 0x00360AA8, 0x00360AB4)
+    all_fixed_slot_writes = recover_fixed_slot_writes(
+        generated_dir,
+        functions,
+        None,
+        set(tracked_bss_slots),
+    )
     runtime_fixed_slot_writer_inventory = {
-        f"0x{slot:08X}": all_runtime_initializers.get(slot, [])
+        f"0x{slot:08X}": all_fixed_slot_writes.get(slot, [])
         for slot in tracked_bss_slots
     }
     xbe = load_xbe_layout(xbe_path)

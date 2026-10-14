@@ -11,6 +11,7 @@ from pathlib import Path
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
     recover_dynamic_target_writes,
+    recover_fixed_slot_writes,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
 )
@@ -356,6 +357,38 @@ void sub_00001020(void)
 
         self.assertEqual(len(all_writers[0x11180]), 2)
         self.assertEqual(len(direct_writers[0x11180]), 1)
+
+    def test_recovers_register_derived_fixed_slot_write(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    eax = 0x00011180;
+    MEM32(eax) = edx;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writes = recover_fixed_slot_writes(
+                generated,
+                functions,
+                {0x1000},
+                {0x11180},
+            )
+
+        self.assertEqual(len(writes[0x11180]), 1)
+        self.assertEqual(writes[0x11180][0]["kind"], "register-derived")
 
 
 if __name__ == "__main__":
