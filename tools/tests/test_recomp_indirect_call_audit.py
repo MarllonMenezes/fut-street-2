@@ -25,6 +25,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
+    recover_prcb_callback_cache_provenance,
     recover_runtime_fixed_slot_initializers,
     recover_symbolic_link_open_query_close_sequences,
     recover_symbolic_link_guest_paths,
@@ -95,6 +96,12 @@ void sub_00001020(void)
         self.assertEqual(summary["linear_register_alias_sites"], 1)
         self.assertEqual(summary["dynamic_register_or_object_targets"], 1)
         self.assertEqual(summary["prcb_guarded_dynamic_callback_sites"], 1)
+        self.assertEqual(summary["prcb_callback_cache_provenance_sites"], 1)
+        self.assertEqual(summary["prcb_callback_cache_provenance_complete_sites"], 1)
+        self.assertEqual(
+            summary["prcb_callback_cache_provenance_status"],
+            "prcb-cache-callback-field-shape-observed",
+        )
         self.assertEqual(summary["unresolved_dynamic_sites"], 2)
         self.assertEqual(summary["dynamic_call_stack_shape_sites"], 0)
         self.assertEqual(summary["dynamic_call_stack_shape_missing_sites"], 2)
@@ -234,6 +241,45 @@ void xbe_entry_point(void)
             "eax = MEM32(esp + 0x20);",
             {item["expression"] for item in evidence["0x00001009"]["assignments"]},
         )
+
+    def test_recovers_prcb_callback_cache_field_shape(self) -> None:
+        classified = [
+            {
+                "call_site": "0x0000100B",
+                "function": "0x00001000",
+                "function_name": "xbe_entry_point",
+                "classification": "prcb-guarded-dynamic-callback",
+                "target_expression": "MEM32(eax + 0x14)",
+                "prcb_cache_guarded": True,
+            }
+        ]
+        source_provenance = {
+            "0x0000100B": {
+                "assignments": [
+                    {
+                        "register": "eax",
+                        "expression": "eax = MEM32(eax + 0x250);",
+                    },
+                    {
+                        "register": "eax",
+                        "expression": "eax = MEM32(XBOX_FS_BASE + 0x20);",
+                    },
+                ]
+            }
+        }
+
+        evidence = recover_prcb_callback_cache_provenance(
+            classified, source_provenance
+        )
+
+        row = evidence["0x0000100B"]
+        self.assertEqual(row["source_register"], "eax")
+        self.assertEqual(row["cache_offset"], "0x250")
+        self.assertEqual(row["callback_field_offset"], "0x14")
+        self.assertEqual(row["cache_register"], "eax")
+        self.assertEqual(row["callback_register"], "eax")
+        self.assertTrue(row["guarded"])
+        self.assertEqual(row["status"], "prcb-cache-callback-field-shape-observed")
 
     def test_recovers_direct_caller_push_shape(self) -> None:
         functions = [

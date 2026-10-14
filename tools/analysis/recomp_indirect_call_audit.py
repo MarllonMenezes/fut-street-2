@@ -1777,6 +1777,91 @@ def recover_dynamic_source_provenance(
     return evidence
 
 
+def recover_prcb_callback_cache_provenance(
+    classified: list[dict[str, Any]],
+    dynamic_source_provenance: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Summarize the bounded source shape for PRCB-backed callbacks.
+
+    The report joins the already recovered linear assignments with the
+    classified target expression.  It records the observed
+    ``FS:[0x20] -> +0x250 -> +0x14`` shape and the local guard flag, but it
+    deliberately does not resolve the callback value or claim kernel/runtime
+    behavior.
+    """
+    cache_load_re = re.compile(
+        r"^(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+        r"MEM32\((?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250\);$"
+    )
+    callback_field_re = re.compile(
+        r"^MEM32\((?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x14\)$"
+    )
+    evidence: dict[str, dict[str, Any]] = {}
+    for row in classified:
+        if row.get("classification") != "prcb-guarded-dynamic-callback":
+            continue
+        call_site = str(row["call_site"])
+        provenance = dynamic_source_provenance.get(call_site)
+        assignments = [] if provenance is None else provenance.get("assignments", [])
+        fs_assignment = next(
+            (
+                assignment
+                for assignment in assignments
+                if PRCB_BASE_LOAD_RE.match(str(assignment.get("expression", "")))
+            ),
+            None,
+        )
+        cache_assignment = None
+        if fs_assignment is not None:
+            fs_register = str(fs_assignment["register"])
+            for assignment in assignments:
+                cache_match = cache_load_re.fullmatch(
+                    str(assignment.get("expression", ""))
+                )
+                if cache_match is not None and cache_match.group("base") == fs_register:
+                    cache_assignment = assignment
+                    break
+        callback_match = callback_field_re.fullmatch(
+            str(row.get("target_expression", ""))
+        )
+        cache_register = (
+            None if cache_assignment is None else str(cache_assignment["register"])
+        )
+        callback_register = (
+            None if callback_match is None else callback_match.group("base")
+        )
+        complete = (
+            fs_assignment is not None
+            and cache_assignment is not None
+            and callback_match is not None
+            and cache_register == callback_register
+        )
+        evidence[call_site] = {
+            "call_site": call_site,
+            "function": row["function"],
+            "function_name": row.get("function_name", ""),
+            "classification": row["classification"],
+            "source_expression": "MEM32(XBOX_FS_BASE + 0x20)",
+            "source_register": (
+                None if fs_assignment is None else str(fs_assignment["register"])
+            ),
+            "cache_offset": "0x250",
+            "cache_register": cache_register,
+            "callback_field_offset": "0x14",
+            "callback_register": callback_register,
+            "target_expression": row.get("target_expression", ""),
+            "guarded": bool(row.get("prcb_cache_guarded")),
+            "source_assignment": fs_assignment,
+            "cache_assignment": cache_assignment,
+            "status": (
+                "prcb-cache-callback-field-shape-observed"
+                if complete
+                else "incomplete-prcb-cache-callback-field-shape"
+            ),
+        }
+    return evidence
+
+
 def recover_dynamic_callback_caller_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -2627,6 +2712,9 @@ def audit(
     dynamic_source_provenance = recover_dynamic_source_provenance(
         generated_dir, classified
     )
+    prcb_callback_cache_provenance = recover_prcb_callback_cache_provenance(
+        classified, dynamic_source_provenance
+    )
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
     )
@@ -2654,6 +2742,9 @@ def audit(
         provenance = dynamic_source_provenance.get(str(row["call_site"]))
         if provenance is not None:
             row["dynamic_source_provenance"] = provenance
+        prcb_provenance = prcb_callback_cache_provenance.get(str(row["call_site"]))
+        if prcb_provenance is not None:
+            row["prcb_callback_cache_provenance"] = prcb_provenance
     used_kernel_cases = (
         {}
         if kernel_resolver_cases is None
@@ -3210,6 +3301,29 @@ def audit(
         "dynamic_source_provenance_missing_sites": (
             len(dynamic_stack_rows) - len(dynamic_provenance_rows)
         ),
+        "prcb_callback_cache_provenance_sites": len(
+            prcb_callback_cache_provenance
+        ),
+        "prcb_callback_cache_provenance_complete_sites": sum(
+            row["status"] == "prcb-cache-callback-field-shape-observed"
+            for row in prcb_callback_cache_provenance.values()
+        ),
+        "prcb_callback_cache_provenance_missing_sites": (
+            classifications["prcb-guarded-dynamic-callback"]
+            - len(prcb_callback_cache_provenance)
+        ),
+        "prcb_callback_cache_provenance_status": (
+            "prcb-cache-callback-field-shape-observed"
+            if (
+                len(prcb_callback_cache_provenance)
+                == classifications["prcb-guarded-dynamic-callback"]
+                and all(
+                    row["status"] == "prcb-cache-callback-field-shape-observed"
+                    for row in prcb_callback_cache_provenance.values()
+                )
+            )
+            else "incomplete-prcb-cache-callback-field-shape"
+        ),
         "dynamic_callback_caller_provenance_sites": len(
             dynamic_callback_caller_provenance
         ),
@@ -3338,6 +3452,7 @@ def audit(
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_source_provenance": dynamic_source_provenance,
+        "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "dynamic_callback_all_caller_provenance": (
             dynamic_callback_all_caller_provenance
