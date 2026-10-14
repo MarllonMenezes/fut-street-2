@@ -6,6 +6,17 @@
 static uint8_t g_tv_encoder_field_pin;
 static atomic_bool g_xbox_interrupts_enabled = ATOMIC_VAR_INIT(1);
 
+static void stop_on_runtime_gap(void)
+{
+    const char *trap = getenv("RECOMP_DIAGNOSTIC_TRAP");
+    if (trap != NULL && trap[0] != '\0' && trap[0] != '0') {
+        fflush(NULL);
+        /* A diagnostic exit avoids Windows crash dialogs and does not let
+         * unresolved dispatch synthesize a return value in bring-up runs. */
+        _Exit(3);
+    }
+}
+
 uint8_t recomp_xbox_io_read8(uint16_t port)
 {
     if (port == 0x80C0u) {
@@ -22,7 +33,24 @@ uint8_t recomp_xbox_io_read8(uint16_t port)
                 (unsigned)port);
         reported = 1;
     }
+    stop_on_runtime_gap();
     return 0;
+}
+
+void recomp_xbox_io_write8(uint16_t port, uint8_t value)
+{
+    if (port == 0x80C0u && value == 1u) {
+        /* The observed title init writes 1 to GPIO offset 0. xemu's
+         * xbox_pm_gpio_write applies no effect there (only offset 0x16
+         * changes aspect ratio). Narrow compatibility, not hardware proof. */
+        fprintf(stderr, "[IO] TV-encoder init write port=0x80C0 value=0x01 accepted (compatibility)\n");
+        return;
+    }
+    fprintf(stderr, "[IO] unsupported Xbox byte write port=0x%04X value=0x%02X\n",
+            (unsigned)port, (unsigned)value);
+    /* No defined fallback for an unknown device write. */
+    fflush(NULL);
+    _Exit(3);
 }
 
 void recomp_xbox_cli(void)
@@ -57,6 +85,7 @@ void recomp_icall_fail_log(uint32_t va)
         if (target != 0)
             fprintf(stderr, "  recent[%u]=0x%08X\n", i, target);
     }
+    stop_on_runtime_gap();
 }
 
 void recomp_icall_not_code_log(uint32_t va)
@@ -65,6 +94,14 @@ void recomp_icall_not_code_log(uint32_t va)
     static uint32_t addresses[SLOT_COUNT];
     static uint64_t hits[SLOT_COUNT];
     static uint32_t used;
+
+    /* Always report the first fatal target, even if throttling is exhausted. */
+    const char *trap = getenv("RECOMP_DIAGNOSTIC_TRAP");
+    if (trap != NULL && trap[0] != '\0' && trap[0] != '0') {
+        fprintf(stderr, "[ICALL] target 0x%08X is not code (calls=%llu)\n",
+                va, (unsigned long long)g_icall_count);
+        stop_on_runtime_gap();
+    }
 
     uint32_t slot = 0;
     while (slot < used && addresses[slot] != va)
@@ -102,6 +139,7 @@ void recomp_unimpl(const char *text, uint32_t va)
                 va, text != NULL ? text : "(no instruction text)");
     }
 
+    stop_on_runtime_gap();
     if (stop)
         abort();
 }

@@ -1,0 +1,93 @@
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)][string]$ExecutablePath,
+    [Parameter(Mandatory = $true)][string]$XbePath,
+    [Parameter(Mandatory = $true)][string]$GameDataDirectory,
+    [string]$OutputRoot = 'D:\projeto zeta\artifacts\bringup',
+    [ValidateRange(1, 60)][int]$TimeoutSeconds = 20
+)
+
+$ErrorActionPreference = 'Stop'
+foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory)) {
+    if (-not (Test-Path -LiteralPath $path)) { throw "Input missing: $path" }
+}
+$ExecutablePath = (Resolve-Path -LiteralPath $ExecutablePath).Path
+$XbePath = (Resolve-Path -LiteralPath $XbePath).Path
+$GameDataDirectory = (Resolve-Path -LiteralPath $GameDataDirectory).Path
+$OutputRoot = [IO.Path]::GetFullPath($OutputRoot)
+foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory, $OutputRoot)) {
+    if ($path -notmatch '^[Dd]:\\' -or $path.Contains('"')) {
+        throw "Bring-up paths must be absolute paths on D: without quote characters: $path"
+    }
+}
+foreach ($name in @('RECOMP_AC97_READY', 'RECOMP_PB_EXEC', 'RECOMP_VBLANK')) {
+    if ($null -ne [Environment]::GetEnvironmentVariable($name)) {
+        throw "Unsupported hardware opt-in is set: $name"
+    }
+}
+$runDirectory = Join-Path $OutputRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$saveDirectory = Join-Path $runDirectory 'saves'
+$tempDirectory = Join-Path $runDirectory 'tmp'
+New-Item -ItemType Directory -Path $saveDirectory, $tempDirectory -Force | Out-Null
+$stdout = Join-Path $runDirectory 'stdout.log'
+$stderr = Join-Path $runDirectory 'stderr.log'
+$variables = @{
+    TEMP = $tempDirectory; TMP = $tempDirectory; TMPDIR = $tempDirectory
+    RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
+    RECOMP_TRACE_BUDGET = '20000'
+}
+$previous = @{}
+$process = $null
+$stdoutFile = $null
+$stderrFile = $null
+$timedOut = $false
+try {
+    foreach ($name in $variables.Keys) {
+        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
+        [Environment]::SetEnvironmentVariable($name, $variables[$name], 'Process')
+    }
+    $arguments = '--launch "{0}" "{1}" "{2}"' -f $XbePath, $GameDataDirectory, $saveDirectory
+    # Drain both streams on .NET tasks, independently of the PowerShell runspace.
+    # A verbose native trace must not stall behind a full redirected pipe.
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $ExecutablePath
+    $startInfo.Arguments = $arguments
+    $startInfo.WorkingDirectory = $runDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $stdoutFile = [IO.File]::Open($stdout, 'CreateNew', 'Write', 'Read')
+    $stderrFile = [IO.File]::Open($stderr, 'CreateNew', 'Write', 'Read')
+    if (-not $process.Start()) { throw 'Unable to start recompiled host' }
+    $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
+    $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrFile)
+    $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+    $null = $stdoutTask.GetAwaiter().GetResult()
+    $null = $stderrTask.GetAwaiter().GetResult()
+    $stdoutFile.Dispose(); $stdoutFile = $null
+    $stderrFile.Dispose(); $stderrFile = $null
+    $process.Refresh()
+    $summary = [ordered]@{
+        executable = $ExecutablePath; executable_sha256 = (Get-FileHash -LiteralPath $ExecutablePath).Hash
+        xbe = $XbePath; xbe_sha256 = (Get-FileHash -LiteralPath $XbePath).Hash
+        game_data = $GameDataDirectory; save_directory = $saveDirectory
+        timeout_seconds = $TimeoutSeconds; timed_out = $timedOut
+        exit_code = $process.ExitCode; diagnostic_trap = $true
+        stdout = $stdout; stderr = $stderr
+    }
+    $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'run.json') -Encoding UTF8
+    $summary | ConvertTo-Json | Write-Output
+    Get-Content -LiteralPath $stderr -Tail 60
+} finally {
+    if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
+    foreach ($name in $previous.Keys) {
+        [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
+    }
+    if ($null -ne $process) { $process.Dispose() }
+    if ($null -ne $stdoutFile) { $stdoutFile.Dispose() }
+    if ($null -ne $stderrFile) { $stderrFile.Dispose() }
+}

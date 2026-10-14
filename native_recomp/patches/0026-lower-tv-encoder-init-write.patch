@@ -1,0 +1,150 @@
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+index 7073ba9..ca7cc47 100644
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1597,21 +1597,25 @@ class FunctionTranslator:
+ 
+     @staticmethod
+     def _supported_io_sites(instructions):
+-        """Find only Xbox TV-encoder byte reads with a proven port setup.
++        """Find Xbox TV-encoder byte I/O with a proven port setup.
+ 
+         The current image uses ``mov dx, 0x80C0; in al, dx`` to sample the
+         Xbox TV encoder's field-pin status.  A preceding write to DX must be
+         the immediate port constant in the same straight-line block; any
+         other DX write or control-transfer boundary invalidates the proof.
+-        OUT remains unresolved because its device-side effect is not proven.
++        OUT DX, AL uses a host compatibility hook; the host must reject
++        unsupported values. This proves the port, not hardware fidelity.
+         """
+         supported = set()
+         for index, insn in enumerate(instructions):
+-            if (insn.mnemonic != "in" or len(insn.operands) != 2
+-                    or insn.operands[0].type != "reg"
+-                    or insn.operands[0].reg != "al"
+-                    or insn.operands[1].type != "reg"
+-                    or insn.operands[1].reg != "dx"):
++            operands = insn.operands
++            if insn.mnemonic == "out":
++                operands = list(reversed(operands))
++            if (insn.mnemonic not in ("in", "out") or len(operands) != 2
++                    or operands[0].type != "reg"
++                    or operands[0].reg != "al"
++                    or operands[1].type != "reg"
++                    or operands[1].reg != "dx"):
+                 continue
+ 
+             for previous in reversed(instructions[:index]):
+@@ -1627,7 +1631,7 @@ class FunctionTranslator:
+                             and (source.imm & 0xFFFF) == 0x80C0):
+                         supported.add(insn.address)
+                     break
+-                if "dx" in previous.regs_written:
++                if set(previous.regs_written) & {"dx", "edx", "dl", "dh"}:
+                     break
+         return supported
+ 
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+index d011741..dfde626 100644
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1560,8 +1560,8 @@ class Lifter:
+ 
+         # The title's two byte reads from port 0x80C0 are Xbox TV-encoder
+         # field-pin samples.  The translator enables this only after proving
+-        # the same straight-line block loaded DX with 0x80C0.  OUT and all
+-        # other IN forms remain runtime-visible TODOs.
++        # the same straight-line block loaded DX with 0x80C0. Other ports and
++        # widths remain runtime-visible TODOs.
+         if (m == "in" and insn.address in self.supported_io_sites
+                 and len(ops) == 2
+                 and ops[0].type == "reg" and ops[0].reg == "al"
+@@ -1570,6 +1570,14 @@ class Lifter:
+                 "SET_LO8(eax, recomp_xbox_io_read8(LO16(edx))); /* in al, dx */"
+             ]
+ 
++        if (m == "out" and insn.address in self.supported_io_sites
++                and len(ops) == 2
++                and ops[0].type == "reg" and ops[0].reg == "dx"
++                and ops[1].type == "reg" and ops[1].reg == "al"):
++            return [
++                "recomp_xbox_io_write8(LO16(edx), LO8(eax)); /* out dx, al */"
++            ]
++
+         # Cxbx independently models CLI/STI as a process-wide Xbox interrupt
+         # delivery mask.  The translator enables only exact same-block pairs;
+         # the host helper stores that compatibility state but does not emulate
+diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
+index f5938c2..133cc24 100644
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -95,9 +95,10 @@
+ void recomp_debug_service(uint32_t service, uint32_t arg_va);
+ 
+ /* Narrow, evidence-backed Xbox TV-encoder compatibility.  The recompiled
+- * title currently lowers only byte reads from port 0x80C0; writes and other
+- * port forms remain unresolved instead of being treated as GPU emulation. */
++ * title lowers only byte I/O with a proven port 0x80C0 setup. The host must
++ * reject unsupported write values; this is not a graphics backend. */
+ uint8_t recomp_xbox_io_read8(uint16_t port);
++void recomp_xbox_io_write8(uint16_t port, uint8_t value);
+ 
+ /* CLI/STI preserve the guest's interrupt-mask state for a future host
+  * delivery path.  The current no-emulation host has no synthetic interrupt
+diff --git a/tools/recomp/test_lifter_io_port.py b/tools/recomp/test_lifter_io_port.py
+index 0313e8d..cac72f9 100644
+--- a/tools/recomp/test_lifter_io_port.py
++++ b/tools/recomp/test_lifter_io_port.py
+@@ -1,4 +1,4 @@
+-"""Only proven Xbox TV-encoder byte reads may lower from IN AL, DX."""
++"""Only proven Xbox TV-encoder byte I/O may lower to host hooks."""
+ 
+ from .disasm import Instruction, Operand
+ from .lifter import Lifter
+@@ -24,7 +24,7 @@ def test_only_same_block_80c0_in_reads_are_proven():
+         _insn(0x102, "out", [_reg("dx"), _reg("al")]),
+     ]
+ 
+-    assert FunctionTranslator._supported_io_sites(insns) == {0x101}
++    assert FunctionTranslator._supported_io_sites(insns) == {0x101, 0x102}
+ 
+ 
+ def test_other_dx_write_invalidates_the_port_proof():
+@@ -64,3 +64,37 @@ def test_proven_read_lowers_and_unproven_read_stays_visible():
+             _insn(0x501, "out", [_reg("dx"), _reg("al")])
+         )
+     )
++    assert "RECOMP_UNIMPL" in unresolved
++
++
++def test_real_init_sequence_lowers_write_without_register_changes():
++    insns = [
++        _insn(0x298028, "mov", [_reg("dx"), _imm(0x80C0)]),
++        _insn(0x29802C, "mov", [_reg("al"), _reg("bl")]),
++        _insn(0x29802E, "push", [_imm(4)]),
++        _insn(0x298030, "out", [_reg("dx"), _reg("al")]),
++    ]
++    lifter = Lifter()
++    lifter.supported_io_sites = FunctionTranslator._supported_io_sites(insns)
++    assert lifter.supported_io_sites == {0x298030}
++    assert lifter.lift_instruction(insns[-1]) == [
++        "recomp_xbox_io_write8(LO16(edx), LO8(eax)); /* out dx, al */"
++    ]
++
++
++def test_full_edx_clobber_invalidates_write_port_proof():
++    clobber = _insn(0x601, "xor", [_reg("edx"), _reg("edx")])
++    clobber.regs_written = ["edx"]
++    insns = [
++        _insn(0x600, "mov", [_reg("dx"), _imm(0x80C0)]), clobber,
++        _insn(0x602, "out", [_reg("dx"), _reg("al")]),
++    ]
++    assert FunctionTranslator._supported_io_sites(insns) == set()
++
++
++def test_other_write_width_stays_unimplemented():
++    lifter = Lifter()
++    lifter.supported_io_sites = {0x700}
++    assert "RECOMP_UNIMPL" in " ".join(lifter.lift_instruction(
++        _insn(0x700, "out", [_reg("dx"), _reg("eax")])
++    ))

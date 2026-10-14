@@ -14,6 +14,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.61
+
+A primeira execução controlada do programa nativo recompilado entrou em
+`0x0024D8BE`, realizou chamadas de kernel e criou threads. Ela interrompeu a
+inicialização em `OUT DX,AL` (`0x00298030`). Esse site foi alcançado em runtime
+apesar de estar fora dos grafos estáticos diretos dos marcos anteriores.
+
+O patch `native_recomp/patches/0026-lower-tv-encoder-init-write.patch`
+traduz essa escrita para um helper de compatibilidade. O tradutor exige uma
+preparação de `DX=0x80C0` no mesmo bloco; o host aceita somente o valor `1`
+observado nesse caminho. A referência independente é o
+[handler GPIO do xemu](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/acpi_xbox.c),
+que não aplica efeito à escrita no offset zero. Isso sustenta uma compatibilidade
+restrita para bring-up; não comprova o comportamento do hardware original.
+Portas e valores de escrita não suportados encerram o processo com diagnóstico.
+
+`tools/run-host-bringup.ps1` executa o recompilado com timeout de até 60 segundos,
+logs, saves e temporários isolados no D:. `RECOMP_DIAGNOSTIC_TRAP=1` interrompe
+chamadas indiretas não resolvidas, alvos inválidos, leituras de I/O não suportadas
+e instruções sem tradução antes de aplicar retornos artificiais.
+
+A geração completa com patches 0001–0026 traduziu `15.600/15.600` funções, sem
+falhas; resta o site `SGDT` sem lowering. O build Release passou, os testes do
+host passaram `8/8` e a suíte Python do XboxRecomp passou `704` testes com `2`
+skips (o módulo opcional `tools/fusion/test_lifter_diff.py` foi excluído).
+Os testes públicos passaram `161/161`; build e self-test do protótipo .NET
+passaram, mas validam apenas seus próprios componentes (`105` testes).
+A ISO manteve o SHA-256 original.
+
+Após a correção, a execução ultrapassou o `OUT` e atingiu o timeout de 15
+segundos, com esperas de eventos ainda presentes. Não há aprovação de boot
+completo ou primeiro frame. O próximo passo é localizar a espera no caminho
+de inicialização e conectar os serviços gráficos necessários ao host nativo.
+O trace de inicialização/D3D avançou até `sub_00293500`: sua chamada a
+`sub_002931B0` retornou, mas não há retorno observado da rotina exterior.
+O ASM mostra ali uma espera por progresso do consumidor de comandos em
+`0x00293637`. Essa é a hipótese focal seguinte, ainda sem confirmação do
+contador em memória no momento do timeout. O coletor drena stdout/stderr
+simultaneamente para evitar que o próprio volume de trace bloqueie o teste.
+`NOT_READY` permanece. A estimativa histórica de `31%` não tinha uma métrica
+funcional suficiente e não deve ser interpretada como percentual medido.
+
 ## Estado verificável — release 2.60
 
 O release 2.60 adiciona o patch

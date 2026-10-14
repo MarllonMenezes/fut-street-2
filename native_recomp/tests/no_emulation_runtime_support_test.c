@@ -1,6 +1,7 @@
 #include "recomp_types.h"
 
 #include <stdint.h>
+#include <string.h>
 
 void nv2a_pb_scan(uint32_t start_va, uint32_t end_va);
 void nv2a_pb_scan_report(void);
@@ -35,8 +36,23 @@ volatile uint32_t g_icall_trace[ICALL_TRACE_SIZE];
 volatile uint32_t g_icall_trace_idx;
 volatile uint64_t g_icall_count;
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 2) {
+        if (strcmp(argv[1], "unresolved") == 0)
+            recomp_icall_fail_log(0x1234u);
+        else if (strcmp(argv[1], "not-code") == 0)
+            recomp_icall_not_code_log(0xFFFFFFFFu);
+        else if (strcmp(argv[1], "read") == 0)
+            (void)recomp_xbox_io_read8(0x1234u);
+        else if (strcmp(argv[1], "write-port") == 0)
+            recomp_xbox_io_write8(0x1234u, 1u);
+        else if (strcmp(argv[1], "write-value") == 0)
+            recomp_xbox_io_write8(0x80C0u, 2u);
+        else if (strcmp(argv[1], "unimpl") == 0)
+            recomp_unimpl("test untranslated instruction", 0x1234u);
+        return 99; /* Each diagnostic probe must exit before reaching here. */
+    }
     static const uint32_t guest_addresses[] = {
         0u,
         0x80000000u,
@@ -86,6 +102,7 @@ int main(void)
         return 11;
 
 
+    recomp_xbox_io_write8(0x80C0u, 1u);
     if (recomp_xbox_io_read8(0x80C0u) != 0x20u)
         return 4;
     if (recomp_xbox_io_read8(0x80C0u) != 0x00u)

@@ -75,6 +75,10 @@ if(BUILD_TESTING)
         COMMAND recomp_packed_word_ops_test)
 
     find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    add_test(NAME runtime_diagnostic_stop
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime-diagnostic-stop.ps1"
+            "$<TARGET_FILE:no_emulation_runtime_support_test>")
     add_test(NAME recomp_generated_dispatch_table
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
             -ExecutionPolicy Bypass

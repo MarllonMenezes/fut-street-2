@@ -1,3 +1,6 @@
 # Preserve existing source bytes and historical SHA-256 references.
 # No automatic LF/CRLF conversion on add or checkout.
 * -text
+
+# Unified patches use a single-space prefix for blank context lines.
+native_recomp/patches/*.patch whitespace=-blank-at-eol

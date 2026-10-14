@@ -55,6 +55,7 @@
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c
+!/native_recomp/tests/*.ps1
 !/native_recomp/imports/
 /native_recomp/imports/*
 !/native_recomp/imports/*.def
