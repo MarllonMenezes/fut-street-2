@@ -1,0 +1,242 @@
+diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
+index a9043fd..0758fb1 100644
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -57,6 +57,12 @@
+  */
+ #define RECOMP_WBINVD() atomic_thread_fence(memory_order_seq_cst)
+ 
++/* A title can use CPUID only as a serializing instruction around a timestamp
++ * read.  This barrier deliberately models ordering, not CPUID's register
++ * leaves; the lifter enables it only when a matching PUSHAD/RDTSC/POPAD
++ * pattern proves that those outputs are discarded. */
++#define RECOMP_CPUID_BARRIER() atomic_thread_fence(memory_order_seq_cst)
++
+ /* math.h is load-bearing, and its absence was invisible.
+  *
+  * The lifter emits sqrt() and fabs() for fsqrt/fabs -- 146 of them in one of
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+index ff988f3..c85ab99 100644
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1345,6 +1345,8 @@ class Lifter:
+         self.needs_af = False  # Set per-function when decimal adjust / LAHF reads AF
+         self.supported_decimal_adjust_sites = set()
+         self.supported_ascii_adjust_sites = set()
++        self.supported_cpuid_sites = set()
++        self.supported_flag_save_sites = set()
+         self.publishes_ebp = False  # Set per-function: has a real frame
+         self.trace_exit_name = None  # Set per-function when traced
+         self.force_return_value = None   # Set per-function by --force-return
+@@ -1526,6 +1528,19 @@ class Lifter:
+         if m == "wait":
+             return ["/* wait - FPU sync */"]
+ 
++        # This title's only CPUID is a serializing fence immediately before
++        # RDTSC, bracketed by PUSHAD/POPAD.  The translator proves that the
++        # CPUID register leaves are discarded before enabling this lowering;
++        # a generic CPUID without that proof remains a runtime-visible TODO.
++        if m == "cpuid" and insn.address in self.supported_cpuid_sites:
++            return ["RECOMP_CPUID_BARRIER(); /* cpuid: discarded leaves */"]
++
++        # PUSHFD/POPFD are a save/restore pair around a helper call in the
++        # title's float decoder.  The translator enables this only for the
++        # exact pattern whose net guest-stack and flag effect is empty.
++        if m in ("pushfd", "popfd") and insn.address in self.supported_flag_save_sites:
++            return [f"/* {m}: proven dead save/restore pair */"]
++
+         # ── Misc ──
+         if m == "cdq":
+             return ["edx = ((int32_t)eax < 0) ? 0xFFFFFFFF : 0; /* cdq */"]
+diff --git a/tools/recomp/test_lifter_cpuid_barrier.py b/tools/recomp/test_lifter_cpuid_barrier.py
+new file mode 100644
+index 0000000..c5f912a
+--- /dev/null
++++ b/tools/recomp/test_lifter_cpuid_barrier.py
+@@ -0,0 +1,48 @@
++"""Only a proven timestamp CPUID pattern may lower to a barrier."""
++import unittest
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter
++from .translator import FunctionTranslator
++
++
++def _insn(address, mnemonic, operands=()):
++    return Instruction(address, 1, mnemonic, "", "", operands=list(operands))
++
++
++def _reg(name):
++    return Operand(type="reg", reg=name)
++
++
++def _mem():
++    return Operand(type="mem", mem_base="ebp", mem_disp=-4, mem_size=4)
++
++
++class CpuidBarrierTest(unittest.TestCase):
++    def test_timestamp_pattern_proves_cpuid_outputs_are_discarded(self):
++        insns = [
++            _insn(0x100, "pushal"),
++            _insn(0x101, "cpuid"),
++            _insn(0x102, "rdtsc"),
++            _insn(0x103, "mov", [_mem(), _reg("eax")]),
++            _insn(0x104, "popal"),
++        ]
++        self.assertEqual(
++            FunctionTranslator._supported_cpuid_sites(insns), {0x101})
++
++    def test_unproven_cpuid_stays_runtime_visible(self):
++        lifter = Lifter()
++        out = lifter.lift_instruction(_insn(0x200, "cpuid"))
++        self.assertIn("RECOMP_UNIMPL", " ".join(out))
++        self.assertNotIn(0x200, lifter.supported_cpuid_sites)
++
++    def test_proven_cpuid_emits_only_the_barrier(self):
++        lifter = Lifter()
++        lifter.supported_cpuid_sites = {0x300}
++        out = " ".join(lifter.lift_instruction(_insn(0x300, "cpuid")))
++        self.assertIn("RECOMP_CPUID_BARRIER()", out)
++        self.assertNotIn("RECOMP_UNIMPL", out)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/recomp/test_lifter_flag_save_pair.py b/tools/recomp/test_lifter_flag_save_pair.py
+new file mode 100644
+index 0000000..4fd9912
+--- /dev/null
++++ b/tools/recomp/test_lifter_flag_save_pair.py
+@@ -0,0 +1,47 @@
++"""The one proven dead PUSHFD/POPFD pair may remain stack-neutral."""
++import unittest
++
++from .disasm import Instruction
++from .lifter import Lifter
++from .translator import FunctionTranslator
++
++
++def _insn(address, mnemonic):
++    return Instruction(address, 1, mnemonic, "", "")
++
++
++class FlagSavePairTest(unittest.TestCase):
++    def test_helper_call_pair_is_proven_dead(self):
++        insns = [
++            _insn(0x100, "pushfd"),
++            _insn(0x101, "push"),
++            _insn(0x102, "call"),
++            _insn(0x103, "add"),
++            _insn(0x104, "popfd"),
++            _insn(0x105, "popal"),
++        ]
++        self.assertEqual(
++            FunctionTranslator._supported_flag_save_sites(insns),
++            {0x100, 0x104})
++
++    def test_pair_with_a_branch_is_not_proven(self):
++        insns = [
++            _insn(0x200, "pushfd"),
++            _insn(0x201, "push"),
++            _insn(0x202, "je"),
++            _insn(0x203, "popfd"),
++            _insn(0x204, "popal"),
++        ]
++        self.assertEqual(FunctionTranslator._supported_flag_save_sites(insns), set())
++
++    def test_proven_sites_emit_no_unimplemented_marker(self):
++        lifter = Lifter()
++        lifter.supported_flag_save_sites = {0x300, 0x304}
++        self.assertNotIn("RECOMP_UNIMPL", " ".join(
++            lifter.lift_instruction(_insn(0x300, "pushfd"))))
++        self.assertNotIn("RECOMP_UNIMPL", " ".join(
++            lifter.lift_instruction(_insn(0x304, "popfd"))))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+index 3909ed5..493395e 100644
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1490,6 +1490,71 @@ class FunctionTranslator:
+                 seen_af_definition = False
+         return supported
+ 
++    @staticmethod
++    def _supported_cpuid_sites(instructions):
++        """Allow only CPUID whose leaves are overwritten before any read.
++
++        The current title has one site in a timestamp helper:
++        ``pushad; cpuid; rdtsc; mov [frame], eax; popad``.  The CPUID
++        outputs are therefore not observable, while its serialization before
++        RDTSC still matters to the translated memory/time ordering.  Keep
++        other CPUID forms unresolved instead of guessing an Xbox CPUID leaf.
++        """
++        supported = set()
++        for index, insn in enumerate(instructions):
++            if insn.mnemonic != "cpuid" or index == 0:
++                continue
++            if instructions[index - 1].mnemonic not in ("pushad", "pushal"):
++                continue
++            if index + 3 >= len(instructions):
++                continue
++            rdtsc, store, restore = instructions[index + 1:index + 4]
++            if rdtsc.mnemonic != "rdtsc":
++                continue
++            if (store.mnemonic != "mov" or len(store.operands) != 2
++                    or store.operands[0].type != "mem"
++                    or store.operands[1].type != "reg"
++                    or store.operands[1].reg != "eax"):
++                continue
++            if restore.mnemonic not in ("popad", "popal"):
++                continue
++            supported.add(insn.address)
++        return supported
++
++    @staticmethod
++    def _supported_flag_save_sites(instructions):
++        """Find the exact dead PUSHFD/POPFD helper-call idiom.
++
++        The saved word stays below one pushed argument and one call frame;
++        ``add esp, 4; popfd; popad`` then removes it before a back-edge to a
++        fresh compare.  Requiring this shape avoids pretending to implement
++        arbitrary EFLAGS serialization.
++        """
++        supported = set()
++        for index, insn in enumerate(instructions):
++            if insn.mnemonic != "pushfd":
++                continue
++            window = instructions[index:index + 8]
++            try:
++                pop_index = next(
++                    offset for offset, candidate in enumerate(window[1:], 1)
++                    if candidate.mnemonic == "popfd")
++            except StopIteration:
++                continue
++            before = window[1:pop_index]
++            if not before or before[0].mnemonic != "push":
++                continue
++            if not any(candidate.mnemonic == "call" for candidate in before):
++                continue
++            if any(candidate.is_branch or candidate.is_ret
++                   for candidate in before):
++                continue
++            after = window[pop_index + 1:]
++            if not after or after[0].mnemonic not in ("popad", "popal"):
++                continue
++            supported.update((insn.address, window[pop_index].address))
++        return supported
++
+     def _func_has_prologue(self, instructions):
+         """Check if function starts with push ebp; mov ebp, esp."""
+         if len(instructions) < 2:
+@@ -2460,4 +2525,8 @@ class FunctionTranslator:
+         self.lifter.supported_decimal_adjust_sites = (
+             self._supported_decimal_adjust_sites(instructions))
+         self.lifter.supported_ascii_adjust_sites = set()
++        self.lifter.supported_cpuid_sites = self._supported_cpuid_sites(
++            instructions)
++        self.lifter.supported_flag_save_sites = self._supported_flag_save_sites(
++            instructions)
+         # DAA/DAS and AAA/AAS can each produce the flag consumed by the other.
