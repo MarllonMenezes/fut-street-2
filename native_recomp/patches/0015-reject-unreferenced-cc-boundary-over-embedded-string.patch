@@ -1,0 +1,98 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -481,0 +482,4 @@
++                            if self._is_unreferenced_cc_boundary_with_embedded_ascii(
++                                    next_addr):
++                                i += 1
++                                continue
+@@ -513,0 +518,34 @@
++    def _is_unreferenced_cc_boundary_with_embedded_ascii(self, addr: int) -> bool:
++        """Reject a weak CC-boundary candidate spanning referenced string data.
++
++        Some executable-flagged sections interleave data and strings. A linear
++        sweep can promote bytes before an embedded string into a CC-boundary
++        function; branches decoded from the string then become bogus xrefs and
++        unresolved stubs. Only veto this weak candidate when its entry has no
++        xrefs of any kind and a later exact DATA_IMM target inside the next
++        128 bytes is a printable, NUL-terminated string. Call/jump/data-ref
++        candidates and ambiguous string references are left untouched.
++        """
++        if self.xrefs.get_refs_to(addr):
++            return False
++
++        for offset in range(1, 128):
++            string_addr = addr + offset
++            refs = self.xrefs.get_refs_to(string_addr)
++            if not any(ref.xref_type == XRefType.DATA_IMM for ref in refs):
++                continue
++            if any(ref.xref_type in (XRefType.CALL, XRefType.JUMP,
++                                     XRefType.COND_JUMP) for ref in refs):
++                continue
++
++            data = self.image.read_bytes_at_va(string_addr, 128)
++            if not data:
++                continue
++            end = data.find(b"\0")
++            if end < 16:
++                continue
++            if all(0x20 <= byte < 0x7F or byte in (0x09, 0x0A, 0x0D)
++                   for byte in data[:end]):
++                return True
++        return False
++
+diff --git a/tools/disasm/test_unreferenced_cc_embedded_string.py b/tools/disasm/test_unreferenced_cc_embedded_string.py
+new file mode 100644
+--- /dev/null
++++ b/tools/disasm/test_unreferenced_cc_embedded_string.py
+@@ -0,0 +1,50 @@
++"""Weak CC-boundary candidates cannot swallow referenced ASCII literals."""
++from types import SimpleNamespace
++
++from tools.disasm.functions import FunctionDetector
++from tools.disasm.xrefs import XRefType
++
++
++def make_detector(refs, string):
++    detector = FunctionDetector.__new__(FunctionDetector)
++    detector.xrefs = SimpleNamespace(get_refs_to=lambda address: refs.get(address, []))
++    detector.image = SimpleNamespace(
++        read_bytes_at_va=lambda address, _size: string if address == 0x1040 else b"",
++    )
++    return detector
++
++
++def ref(kind):
++    return SimpleNamespace(xref_type=kind)
++
++
++def test_unreferenced_boundary_before_referenced_embedded_string_is_rejected():
++    detector = make_detector(
++        {0x1040: [ref(XRefType.DATA_IMM)]},
++        b"Unable to open file (error: %s)\0",
++    )
++
++    assert detector._is_unreferenced_cc_boundary_with_embedded_ascii(0x1000)
++
++
++def test_entry_with_any_reference_is_preserved():
++    detector = make_detector(
++        {
++            0x1000: [ref(XRefType.CALL)],
++            0x1040: [ref(XRefType.DATA_IMM)],
++        },
++        b"Unable to open file (error: %s)\0",
++    )
++
++    assert not detector._is_unreferenced_cc_boundary_with_embedded_ascii(0x1000)
++
++
++def test_embedded_string_with_control_flow_reference_is_not_used_as_data_proof():
++    detector = make_detector(
++        {
++            0x1040: [ref(XRefType.DATA_IMM), ref(XRefType.COND_JUMP)],
++        },
++        b"Unable to open file (error: %s)\0",
++    )
++
++    assert not detector._is_unreferenced_cc_boundary_with_embedded_ascii(0x1000)

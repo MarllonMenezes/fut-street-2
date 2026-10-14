@@ -259,3 +259,24 @@ boot, rendering, assets, gameplay and audio remain unvalidated.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0014-recover-tail-targets-in-overlapping-parent-bodies.patch'
 ```
+
+Patch `0015-reject-unreferenced-cc-boundary-over-embedded-string.patch` follows
+patches 0001–0014. It vetoes only a weak `CC`-padding candidate whose entry has
+no xrefs of any kind and whose following 128-byte window contains an exact
+`DATA_IMM`-referenced, printable, NUL-terminated string. Control-flow refs to
+that string disqualify the evidence. This prevents decoded ASCII branches in
+an XGRPH error message from becoming three unresolved stubs; it does not alter
+call/jump candidates or guess a new entry point.
+
+The clean v0.13.1 translation pass now reports 15,672 generated entries, 23
+unresolved stubs, and 88 untranslated instruction sites across 28 mnemonics.
+The stub audit has no remaining direct branch xrefs (20 targets are interiors
+of detected functions; three are uncovered). The 64 C units and host linked in
+Release, CTest passed 4/4, `--help` passed, and the full translator suite passed
+545 tests (38 skipped). No XBE was launched; game boot and fidelity gates remain
+unvalidated.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0015-reject-unreferenced-cc-boundary-over-embedded-string.patch'
+```

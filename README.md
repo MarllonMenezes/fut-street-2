@@ -9,14 +9,15 @@ com código novo. O nome público do projeto é **Fut Street 2**.
 
 **Estado atual: `NOT_READY` — ainda não existe um executável jogável recompilado.**
 No avanço registrado mais recente, XboxRecomp v0.13.1, fixado no commit
-`193e2995ffaec871bb3be43a43bd66aa5fccfeb1` e com patches locais 0001–0014,
-gerou C para 15.673/15.673 funções detectadas, sem falhas de geração. As 64
-unidades C foram compiladas em Release e o host linkou; CTest passou 4/4 e o
-smoke `--help` passou. A auditoria da geração atual registra 26 destinos ainda
-stubados e 93 instruções sem lowering, em 28 mnemônicos. Na etapa 1.52 os stubs
-caíram de 46 para 26 ao recuperar branches para corpos compartilhados; a
-contagem de entradas mudou com os limites/aliases detectados, portanto não deve
-ser comparada isoladamente.
+`193e2995ffaec871bb3be43a43bd66aa5fccfeb1` e com patches locais 0001–0015,
+gerou C para 15.672/15.672 funções detectadas, sem falhas. As 64 unidades C
+foram compiladas em Release e o host linkou; CTest passou 4/4 e o smoke
+`--help` passou. A auditoria da geração atual registra 23 destinos stubados e
+88 instruções sem lowering, em 28 mnemônicos. As etapas 1.52–1.53 reduziram
+stubs de 46 para 23 e TODOs de 92 para 88, por recuperação de corpos
+compartilhados e exclusão de um falso limite sobre texto ASCII referenciado.
+As contagens de entradas mudam com os limites/aliases detectados e não devem
+ser comparadas isoladamente.
 Esses resultados provam tradução/compilação, não boot ou fidelidade. O XBE não
 foi executado nesse marco; headless/replay authored não são evidência do jogo
 recompilado. O protótipo .NET 8 é separado e não demonstra fidelidade ao original.
@@ -51,15 +52,17 @@ devem ser acrescentados sem apagar evidências anteriores. O estado é `NOT_READ
 gates de rendering, assets originais, áudio e animação/deformação ainda abertos.
 Gameplay authored é integrado, sem alegação de equivalência ao jogo original.
 
-Último avanço registrado: etapa 1.52, no
+Último avanço registrado: etapa 1.53, no
 [relatório de recompilação nativa](docs/FUT_STREET_2_RECOMPILACAO_NATIVA_2026-10-13.md).
-A pilha versionada 0001–0014 foi validada sobre XboxRecomp v0.13.1 fixado; a
-suíte `tools/disasm` + `tools/recomp` passou 542 testes (38 skips), e o build
+A pilha versionada 0001–0015 foi validada sobre XboxRecomp v0.13.1 fixado; a
+suíte `tools/disasm` + `tools/recomp` passou 545 testes (38 skips), e o build
 CMake Release/CTest 4/4 passou. O patch 0012 filtra uma string referenciada
 como dado; 0013 recupera branches condicionais de retorno; 0014 reconhece
 destinos de jump dentro de corpos pais sobrepostos somente quando seus limites
-terminais concordam. A última geração registra 26 stubs e 93 instruções sem
-lowering (28 mnemônicos). Nenhum XBE foi executado no marco, e os
+terminais concordam; 0015 rejeita um `cc_boundary` sem referências de entrada
+que contém texto ASCII referenciado como dado. A geração atual registra 23
+stubs e 88 instruções sem lowering (28 mnemônicos). Nenhum XBE foi executado
+no marco, e os
 gates de boot, rendering, assets, gameplay original e áudio continuam
 `NOT_READY`. Os arquivos C gerados e builds não são versionados. A evidência
 para `0x80CE` em outro kernel não define o `0x80C0` do jogo; a hipótese

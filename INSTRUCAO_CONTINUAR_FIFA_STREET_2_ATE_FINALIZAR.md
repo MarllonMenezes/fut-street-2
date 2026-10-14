@@ -345,6 +345,21 @@ focados `520 passed, 38 skipped`; build CMake Release/link, CTest `4/4` e
 gates `NOT_READY`. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.53, 2026-10-13): patch XboxRecomp 0015
+elimina um falso limite de função `cc_boundary` criado pela interpretação de
+bytes de string como branches. Pilha limpa v0.13.1, patches 0001–0015:
+545 passed/38 skipped; geração 15672/15672, zero falhas, 23 stubs e 88 sites
+sem lowering em 28 mnemônicos. Auditoria: 20 destinos interiores a funções,
+três sem cobertura, nenhum XRef direto de branch. CMake Release/link, CTest
+4/4, `--help` e self-test .NET 105/105 passaram. Não houve execução do XBE;
+headless/replay do jogo não foram alegados. Rendering, assets, gameplay,
+animação e áudio seguem `NOT_READY`; projeto incompleto. Próximo foco: analisar
+individualmente os 23 destinos de stub e classificar os 88 sites sem lowering,
+sem preencher lacunas por suposição. A recompilação é o objetivo; o protótipo
+.NET permanece apenas auxiliar e não substitui o código de jogo traduzido.
+ISO somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 Atualização de continuidade (etapa 1.47, 2026-10-13): patch XboxRecomp 0008
 traduz AAM/AAD para bases imediatas não nulas; `AAM 0` continua sem lowering
 porque dispara `#DE`, ainda sem despacho de exceção guest. Reaplicação limpa
