@@ -237,3 +237,25 @@ and safe `--help` pass. No XBE launch or fidelity claim is made.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0013-allow-back-branch-to-known-parent-body.patch'
 ```
+
+Patch `0014-recover-tail-targets-in-overlapping-parent-bodies.patch` follows
+patches 0001–0013. Tail-jump discovery now inspects every body containing the
+target instead of only the nearest preceding start. It emits a callable alias
+only when all target owners agree on the body end; conflicting or uncovered
+targets remain unresolved. This recovers tail exits that jump beyond a short
+overlapping child into its shared parent body without extending either source
+function or guessing an ABI. Synthetic tests cover both the accepted shared
+end and conflicting ownership.
+
+On the pinned v0.13.1 XBE pipeline, regeneration changed the output to 15,673
+translated entries, 26 unresolved stubs and 93 untranslated instruction sites
+across 28 mnemonics. The stub audit no longer classifies overlapping body
+ranges; this is static translation evidence only. The 64 C translation units
+and native host linked in Release, CTest passed 4/4 and `--help` passed. The
+full translator suite passed 542 tests (38 skipped). No XBE was launched, so
+boot, rendering, assets, gameplay and audio remain unvalidated.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0014-recover-tail-targets-in-overlapping-parent-bodies.patch'
+```

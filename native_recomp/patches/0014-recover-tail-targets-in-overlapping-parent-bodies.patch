@@ -1,0 +1,88 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -727,0 +728,16 @@ class FunctionDetector:
++        prefix_max_end = []
++        max_end = 0
++        for _start, end in bodies:
++            max_end = max(max_end, end)
++            prefix_max_end.append(max_end)
++
++        def owners_at(address):
++            index = bisect.bisect_right(starts, address) - 1
++            owners = []
++            while index >= 0 and prefix_max_end[index] > address:
++                start, end = bodies[index]
++                if start <= address < end:
++                    owners.append((start, end))
++                index -= 1
++            return owners
++
+@@ -759,4 +775,8 @@
+-            j = bisect.bisect_right(starts, target) - 1
+-            if j >= 0 and bodies[j][0] < target < bodies[j][1]:
+-                if target not in self._alias_entries:
+-                    self._alias_entries[target] = bodies[j][1]
++            target_owners = owners_at(target)
++            if target_owners:
++                owner_ends = {end for _start, end in target_owners}
++                # A short overlapping child may end before the tail target,
++                # while the parent body still owns it. Recover the entry only
++                # when every body that contains the target agrees on its end.
++                if len(owner_ends) == 1 and target not in self._alias_entries:
++                    self._alias_entries[target] = next(iter(owner_ends))
+diff --git a/tools/disasm/test_cross_function_tail_alias.py b/tools/disasm/test_cross_function_tail_alias.py
+new file mode 100644
+--- /dev/null
++++ b/tools/disasm/test_cross_function_tail_alias.py
+@@ -0,0 +1,50 @@
++"""Only unambiguous shared-body tail targets become callable aliases."""
++from types import SimpleNamespace
++
++from tools.disasm.functions import Function, FunctionDetector
++
++
++def make_detector(functions, source, target):
++    jump = SimpleNamespace(
++        address=source, is_jump=True, is_cond_jump=False, jump_target=target,
++    )
++    target_insn = SimpleNamespace(
++        address=target, is_jump=False, is_cond_jump=False, jump_target=None,
++    )
++    detector = FunctionDetector.__new__(FunctionDetector)
++    detector.engine = SimpleNamespace(
++        instructions={source: jump, target: target_insn},
++    )
++    detector.functions = {function.start: function for function in functions}
++    detector._candidates = {}
++    detector._alias_entries = {}
++    detector.image = SimpleNamespace(
++        get_section_at_va=lambda _address: SimpleNamespace(
++            executable=True, virtual_addr=0x1000, virtual_size=0x1000,
++        ),
++    )
++    detector._pass_cond_branch_orphans = lambda _bodies, _starts: False
++    return detector
++
++
++def test_tail_jump_past_short_child_recovers_parent_body_entry():
++    parent = Function(0x1000, 0x1100, "parent")
++    short_child = Function(0x1080, 0x10F0, "short_child")
++    detector = make_detector([parent, short_child], 0x10A0, 0x10F8)
++
++    assert detector._pass_tail_jump_targets([])
++    assert detector._alias_entries == {0x10F8: 0x1100}
++    assert detector._candidates == {}
++
++
++def test_tail_jump_with_conflicting_parent_ends_stays_unresolved():
++    parent = Function(0x1000, 0x1100, "parent")
++    short_child = Function(0x1080, 0x10F0, "short_child")
++    conflicting_target_owner = Function(0x10B0, 0x10FA, "conflicting")
++    detector = make_detector(
++        [parent, short_child, conflicting_target_owner], 0x10A0, 0x10F8,
++    )
++
++    assert not detector._pass_tail_jump_targets([])
++    assert detector._alias_entries == {}
++    assert detector._candidates == {}

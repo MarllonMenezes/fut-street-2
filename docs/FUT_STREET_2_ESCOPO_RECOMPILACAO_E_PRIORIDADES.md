@@ -21,20 +21,23 @@ implementa o runtime específico.
 ## Estado verificável
 
 Na geração mais recente registrada em 2026-10-13, o XboxRecomp v0.13.1
-produziu C para 15.717/15.717 funções; 64 unidades foram compiladas em Release
-e o host linkou. Restam 46 destinos stub e 92 instruções sem lowering (28
-mnemônicos). CTest passou 4/4 e o smoke `--help` passou. Um bring-up controlado
-anterior alcançou a entrada traduzida e atividade de worker/timer, mas não
-validou boot/menu; nenhum XBE foi executado no marco 1.51. Não existe
-executável jogável validado. Portanto, isso é avanço de tradução/compilação —
+produziu C para 15.673/15.673 funções detectadas, sem falhas de geração; a
+mudança de contagem reflete a descoberta de corpos e aliases compartilhados,
+não é uma métrica isolada de cobertura. As 64 unidades foram compiladas em
+Release e o host linkou. A auditoria marca 26 destinos stubados e 93 instruções
+sem lowering (28 mnemônicos). CTest passou 4/4 e o smoke `--help` passou. Um
+bring-up controlado anterior alcançou a entrada traduzida e atividade de
+worker/timer, mas não validou boot/menu; nenhum XBE foi executado no marco 1.52.
+Não existe executável jogável validado. Portanto, isso é avanço de
+tradução/compilação —
 não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
 
 ## Caminho crítico recomendado
 
 1. **Congelar a base reproduzível:** fixar a versão/commit do XboxRecomp e os
    patches locais; guardar relatórios e o código derivado apenas localmente.
-2. **Fechar a tradução alcançável com evidência:** classificar os 46 stubs, os
-   92 sites sem lowering e os imports; priorizar o que for alcançado no boot,
+2. **Fechar a tradução alcançável com evidência:** classificar os 26 stubs, os
+   93 sites sem lowering e os imports; priorizar o que for alcançado no boot,
    sem confundir contagens estáticas com código executado. Corrigir o
    detector/lifter quando houver um caso reproduzível; criar override só com
    evidência de endereço, bytes, ABI, fluxo

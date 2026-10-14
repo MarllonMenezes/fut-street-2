@@ -384,6 +384,21 @@ sem runtime headless/replay do jogo. Gates `NOT_READY`; projeto incompleto. ISO
 somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.52, 2026-10-13): patch XboxRecomp 0014
+recupera destinos de tail-jump que ficam dentro de corpos pais sobrepostos,
+apenas quando todos os owners do destino concordam no fim. Checkout limpo
+v0.13.1 fixado, patches 0001–0014: 542 passed/38 skipped; geração
+15673/15673, zero falhas, 26 stubs e 93 instruções/28 mnemônicos sem lowering.
+Auditoria: 22 destinos interiores a funções, quatro sem cobertura e três com
+XRefs diretos de branch; nenhum stub restante está em range sobreposto. CMake
+Release/link, CTest 4/4, `--help` e self-test .NET 105/105 passaram. Nenhum
+XBE/`--launch` iniciado; boot e gates de rendering, assets, gameplay, animação
+e áudio seguem `NOT_READY`. Próximo passo: investigar os 3 destinos com XRefs
+diretos de branch e os 93 sites sem lowering, com evidência de bytes/fluxo e
+sem coalescer boundaries ambíguos. Não iniciar XBE/`--launch` sem autorização
+específica de bring-up. ISO somente leitura, SHA-256
+`F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 
 
 
