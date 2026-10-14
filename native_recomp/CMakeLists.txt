@@ -141,6 +141,23 @@ if(FUT_STREET2_BUILD_HOST_APP)
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel
         ${RECOMP_HOST_LIBRARIES})
+
+    add_executable(no_emulation_kernel_file_contract_test
+        tests/no_emulation_kernel_file_contract_test.c)
+    target_include_directories(no_emulation_kernel_file_contract_test PRIVATE
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+    target_compile_definitions(no_emulation_kernel_file_contract_test PRIVATE
+        WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(no_emulation_kernel_file_contract_test PRIVATE
+        fut_street_2_no_emulation_kernel
+        ${RECOMP_HOST_LIBRARIES})
+
+    if(BUILD_TESTING)
+        add_test(NAME no_emulation_kernel_file_contract
+            COMMAND no_emulation_kernel_file_contract_test)
+    endif()
+
     if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
         target_link_options(fut_street_2_recompiled_app PRIVATE
             "-Wl,--no-undefined")

@@ -14,6 +14,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.45
+
+O release 2.45 adiciona o contrato host-only
+`no_emulation_kernel_file_contract_test`. Contra a pilha XboxRecomp usada no
+host, o teste exercita `XboxFilePositionInformation` (`14`),
+`XboxFileNetworkOpenInformation` (`34`), reserva/altera tamanho de arquivo e
+as conversões observadas de `NTSTATUS` para erro DOS. O teste usa somente um
+arquivo temporário do host e lookups guest nulos; não chama o dispatch nem o
+entry point recompilado. O CTest completo passou em `7/7`.
+
+Esse marco reduz uma lacuna verificável dos serviços de arquivo, mas não prova
+que toda a semântica Xbox esteja coberta nem que o jogo atravesse esse caminho.
+Boot, rendering, assets, gameplay, animação e áudio continuam pendentes, assim
+como `SGDT`/`OUT`, callbacks dinâmicos e a semântica completa dos serviços Xbox.
+A prontidão permanece `NOT_READY`, a estimativa conservadora do PoC jogável
+continua em aproximadamente `31% concluído / 69% restante`, e o XBE não é
+executado.
+
 ## Estado verificável — release 2.44
 
 O release 2.44 adiciona `tools/run-host-preflight-gate.ps1`, um gate
