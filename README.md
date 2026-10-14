@@ -14,6 +14,23 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.57
+
+O release 2.57 adiciona
+`tools/analysis/recomp_host_preflight_evidence_gate.py`, um gate que torna
+reproduzível a fronteira entre preparar o host e executar o jogo. No artefato
+local 25f, o modo estático carregou `11/11` seções da XBE, inicializou o mapa
+de memória e resolveu o entry point traduzido. O modo runtime de preparação
+também inicializou a ponte kernel com `128/128` entradas resolvidas (`128`
+bridged, `0` stub).
+
+Os dois modos passaram sem `--launch`; o gate exige os marcadores de guardas
+dinâmicos, entry point e ponte quando aplicável, e rejeita evidência de chamada
+ao entry point. Isso confirma preparação e wiring do host, não boot: nenhum
+código guest foi executado, rendering, assets, gameplay, animação e áudio
+continuam sem aprovação, `NOT_READY` permanece e a estimativa conservadora do
+PoC jogável continua em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.56
 
 O release 2.56 adiciona
@@ -1022,6 +1039,26 @@ cmake -S native_recomp -B artifacts/fut-street2-native/build -G Ninja `
 cmake --build artifacts/fut-street2-native/build --config Release --parallel
 ctest --test-dir artifacts/fut-street2-native/build -C Release --output-on-failure
 ```
+
+Depois de compilar o host opcional, a fronteira de preflight pode ser
+verificada sem executar o entry point recompilado:
+
+```powershell
+python tools/analysis/recomp_host_preflight_evidence_gate.py `
+  --executable C:/caminho/local/fut_street_2_recompiled_app.exe `
+  --xbe C:/caminho/local/game_files/default.xbe `
+  --mode static
+
+python tools/analysis/recomp_host_preflight_evidence_gate.py `
+  --executable C:/caminho/local/fut_street_2_recompiled_app.exe `
+  --xbe C:/caminho/local/game_files/default.xbe `
+  --mode runtime `
+  --data-directory C:/caminho/local/game-data `
+  --save-directory C:/caminho/local/save-data
+```
+
+Esse gate usa somente a opção explícita `--preflight`, exige
+`guest_execution=none` e nunca substitui um teste de boot do jogo.
 
 O projeto auxiliar .NET pode ser compilado e testado sem a ISO:
 
