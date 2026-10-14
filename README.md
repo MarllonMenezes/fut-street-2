@@ -22,7 +22,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável
 
-O último marco publicado é a etapa 1.63 (14/10/2026): o modo `--preflight <default.xbe> <game-data-directory> <save-directory>` agora exercita também a inicialização do kernel e da ponte de thunks, sem chamar o entry point. Contra o XBE local e diretórios isolados, o runtime preflight confirmou mapa de memória, dispatch, entry point `0x0024D8BE` e `128/128` thunks resolvidos (`128 bridged`, `0 stub`), encerrando antes de qualquer instrução guest. A geração estática permanece em `15.600/15.600` funções, zero falhas e `1.775.604` linhas em 63 arquivos de funções; o CMake recompilou 64 unidades C. A biblioteca passou `2/2` e o host passou `5/5`, incluindo rejeição de XBE ausente, `--help`, suporte runtime, estado `CLI`/`STI`, operações packed-word e rejeição de `RECOMP_VBLANK` antes de qualquer acesso ao XBE. `OUT DX,AL` e `SGDT` continuam sem lowering por dependerem de efeitos de hardware/GDT não comprovados. O XBE não foi executado; o runtime preflight é somente validação de preparação e a prontidão permanece `NOT_READY`. A estimativa conservadora para um possível PoC jogável sobe apenas para aproximadamente 27% concluído e 73% restante, principalmente execução do entry point, entrega real de interrupções, compatibilidade de kernel/hardware, rendering, assets, gameplay, animação e áudio.
+O último marco publicado é a etapa 1.64 (14/10/2026): além do preflight da etapa 1.63, uma auditoria estática versionada do caminho iniciado em `0x0024D8BE` confirmou `78/78` funções alcançáveis por chamadas diretas com tradução gerada, zero alvo direto externo e nenhum dos dois `RECOMP_UNIMPL` conhecidos (`OUT DX,AL` em `0x00298030` e `SGDT` em `0x00253FD8`) dentro desse subgrafo direto. A auditoria não infere chamadas indiretas, callbacks, imports ou execução; esses gates continuam pendentes. Contra o XBE local e diretórios isolados, o runtime preflight confirmou mapa de memória, dispatch, entry point `0x0024D8BE` e `128/128` thunks resolvidos (`128 bridged`, `0 stub`), encerrando antes de qualquer instrução guest. A geração estática permanece em `15.600/15.600` funções, zero falhas e `1.775.604` linhas em 63 arquivos de funções; o CMake recompilou 64 unidades C. A biblioteca passou `2/2` e o host passou `5/5`, incluindo rejeição de XBE ausente, `--help`, suporte runtime, estado `CLI`/`STI`, operações packed-word e rejeição de `RECOMP_VBLANK` antes de qualquer acesso ao XBE. `OUT DX,AL` e `SGDT` continuam sem lowering por dependerem de efeitos de hardware/GDT não comprovados. O XBE não foi executado; o runtime preflight é somente validação de preparação e a prontidão permanece `NOT_READY`. A estimativa conservadora para um possível PoC jogável sobe apenas para aproximadamente 28% concluído e 72% restante, principalmente chamadas indiretas e callbacks, execução do entry point, entrega real de interrupções, compatibilidade de kernel/hardware, rendering, assets, gameplay, animação e áudio.
 
 ## Conteúdo
 
@@ -49,6 +49,16 @@ O projeto auxiliar .NET pode ser compilado e testado sem a ISO:
 dotnet build fifa_pc/FifaStreetPc.csproj -c Release
 dotnet fifa_pc/bin/Release/net8.0/FifaStreetPc.dll self-test
 ```
+
+Com `functions.json` e a geração local disponíveis, a cobertura estrutural direta do entry point pode ser auditada sem executar o XBE:
+
+```powershell
+python tools/analysis/recomp_entry_call_graph_audit.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen
+```
+
+Essa auditoria é limitada a chamadas diretas recuperadas estaticamente; ela não aprova chamadas indiretas, callbacks, imports, compatibilidade de hardware ou execução do jogo.
 
 Esses comandos validam compilação e testes do código-fonte, não os gates do jogo original. Não execute nem distribua o XBE ou assets proprietários.
 
