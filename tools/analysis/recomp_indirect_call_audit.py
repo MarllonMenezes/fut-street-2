@@ -74,6 +74,9 @@ KERNEL_FUNCTION_DEFINITION_RE = re.compile(
     r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
     r"(?P<name>xbox_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{"
 )
+KERNEL_IMPLEMENTATION_BODY_MARKER_RE = re.compile(
+    r"(?i)\b(?:stub(?:bed)?|no-op|STATUS_NOT_IMPLEMENTED)\b"
+)
 KERNEL_BRIDGE_FUNCTION_RE = re.compile(
     r"^\s*static\s+bridge_func_t\s+bridge_for_ordinal\s*\(ULONG\s+ordinal\)\s*$"
 )
@@ -852,6 +855,7 @@ def recover_kernel_implementation_evidence(
         target: {
             "status": "missing-source-definition",
             "sources": [],
+            "body_markers": [],
         }
         for target in target_names
     }
@@ -868,6 +872,33 @@ def recover_kernel_implementation_evidence(
                 f"{relative_source}:{line_number}"
             )
             evidence[target]["status"] = "source-definition-found"
+            body_start = match.end() - 1
+            depth = 0
+            body_end: int | None = None
+            for index in range(body_start, len(text)):
+                character = text[index]
+                if character == "{":
+                    depth += 1
+                elif character == "}":
+                    depth -= 1
+                    if depth == 0:
+                        body_end = index
+                        break
+            if body_end is None:
+                continue
+            for marker_match in KERNEL_IMPLEMENTATION_BODY_MARKER_RE.finditer(
+                text, body_start, body_end + 1
+            ):
+                marker = marker_match.group(0)
+                marker_source = {
+                    "marker": marker,
+                    "source": (
+                        f"{relative_source}:"
+                        f"{text.count(chr(10), 0, marker_match.start()) + 1}"
+                    ),
+                }
+                if marker_source not in evidence[target]["body_markers"]:
+                    evidence[target]["body_markers"].append(marker_source)
     return evidence
 
 
@@ -1882,6 +1913,23 @@ def audit(
             if kernel_implementation_evidence is None
             else sum(
                 item["status"] == "source-definition-found"
+                for item in kernel_implementation_evidence.values()
+            )
+        ),
+        "kernel_implementation_body_marker_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else sorted(
+                target
+                for target, item in kernel_implementation_evidence.items()
+                if item["body_markers"]
+            )
+        ),
+        "kernel_implementation_body_marker_target_count": (
+            None
+            if kernel_implementation_evidence is None
+            else sum(
+                bool(item["body_markers"])
                 for item in kernel_implementation_evidence.values()
             )
         ),

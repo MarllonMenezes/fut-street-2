@@ -303,7 +303,7 @@ void xbe_entry_point(void)
                 "NTSTATUS __stdcall xbox_IoCreateFile(\n"
                 "    PVOID a)\n"
                 "{\n"
-                "    return STATUS_SUCCESS;\n"
+                "    return STATUS_SUCCESS; /* no-op */\n"
                 "}\n",
                 encoding="utf-8",
             )
@@ -313,7 +313,12 @@ void xbe_entry_point(void)
 
         self.assertEqual(evidence["xbox_IoCreateFile"]["status"], "source-definition-found")
         self.assertEqual(evidence["xbox_IoCreateFile"]["sources"], ["kernel_file.c:1"])
+        self.assertEqual(
+            evidence["xbox_IoCreateFile"]["body_markers"],
+            [{"marker": "no-op", "source": "kernel_file.c:4"}],
+        )
         self.assertEqual(evidence["xbox_Missing"]["status"], "missing-source-definition")
+        self.assertEqual(evidence["xbox_Missing"]["body_markers"], [])
 
     def test_reads_only_kernel_bridge_resolver_cases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
