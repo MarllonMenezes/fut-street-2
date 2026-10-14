@@ -65,14 +65,41 @@ int main(int argc, char **argv)
 
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("Fut Street 2 static recompilation host");
+        puts("Usage: fut-street-2-recompiled --preflight <default.xbe>");
         puts("Usage: fut-street-2-recompiled --launch <default.xbe> <game-data-directory> <save-directory>");
         puts("This build excludes the XboxRecomp NV2A/APU emulators.");
         return 0;
     }
+    if (argc == 3 && strcmp(argv[1], "--preflight") == 0) {
+        if (!read_xbe(argv[2], &xbe_data, &xbe_size))
+            return 1;
+
+        if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
+            fprintf(stderr, "Xbox memory layout initialization failed.\n");
+            goto cleanup;
+        }
+        memory_ready = 1;
+
+        if (!recomp_dispatch_init())
+            fprintf(stderr, "Dispatch acceleration unavailable; using lookup fallback.\n");
+
+        entry = recomp_lookup(FUT_STREET_2_ENTRY_POINT);
+        if (entry == NULL) {
+            fprintf(stderr, "No translated entry point at 0x%08X.\n",
+                    FUT_STREET_2_ENTRY_POINT);
+            goto cleanup;
+        }
+
+        puts("Static preflight OK: XBE memory layout initialized and translated "
+             "entry point resolved; no guest code executed.");
+        result = 0;
+        goto cleanup;
+    }
     if (argc != 5 || strcmp(argv[1], "--launch") != 0) {
         fprintf(stderr,
-                "Refusing implicit launch. Use --help or explicitly provide "
-                "--launch <default.xbe> <game-data-directory> <save-directory>.\n");
+                "Refusing implicit launch. Use --help, --preflight <default.xbe>, "
+                "or explicitly provide --launch <default.xbe> <game-data-directory> "
+                "<save-directory>.\n");
         return 2;
     }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||

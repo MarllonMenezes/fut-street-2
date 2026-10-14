@@ -142,6 +142,10 @@ if(FUT_STREET2_BUILD_HOST_APP)
         add_test(NAME recompiled_host_help
             COMMAND fut_street_2_recompiled_app --help)
         find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+        add_test(NAME recompiled_host_rejects_missing_preflight_xbe
+            COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/preflight-rejects-missing-xbe.ps1"
+                "$<TARGET_FILE:fut_street_2_recompiled_app>")
         add_test(NAME recompiled_host_rejects_synthetic_vblank
             COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
                 -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/reject-synthetic-vblank.ps1"
