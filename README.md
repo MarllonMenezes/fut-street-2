@@ -14,6 +14,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.59
+
+O release 2.59 adiciona
+`tools/analysis/recomp_translation_coverage_gate.py`, que junta três
+evidências estáticas do mesmo artefato: o alcance direto a partir do entry
+point `0x0024D8BE`, o alinhamento entre `summary.json`, C gerado e ASM, e o
+contexto dos dois sites ainda sem lowering. Contra o artefato 25f local, o
+gate confirma `78` funções diretamente alcançáveis, `80` após os tail-jumps
+observados, zero traduções ausentes nesses escopos e os dois sites
+`SGDT [esp+6]` (`0x00253FD8`) e `OUT DX,AL` (`0x00298030`) fora de ambos.
+
+Isso fecha uma regressão de cobertura, não implementa semântica de hardware:
+`SGDT`/`OUT` continuam sem lowering, `hardware_semantics=not-proven`, o XBE
+não é executado, `NOT_READY` permanece e a estimativa conservadora do PoC
+jogável continua em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.58
 
 O release 2.58 endurece
@@ -1091,6 +1107,20 @@ python tools/analysis/recomp_entry_call_graph_audit.py `
 ```
 
 Essa auditoria é limitada a chamadas diretas recuperadas estaticamente; ela não aprova chamadas indiretas, callbacks, imports, compatibilidade de hardware ou execução do jogo.
+
+Para fechar a regressão de cobertura do artefato integral, forneça também o
+`summary.json` da mesma geração e o diretório `asm` recuperado:
+
+```powershell
+python tools/analysis/recomp_translation_coverage_gate.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen `
+  --summary C:/caminho/local/xboxrecomp/gen/summary.json `
+  --asm-dir C:/caminho/local/disasm/asm
+```
+
+Esse gate apenas junta os três controles e mantém os sites sem lowering e a
+semântica de hardware explicitamente não provados.
 
 Para classificar os sites indiretos do mesmo subgrafo, forneça também o XBE local:
 
