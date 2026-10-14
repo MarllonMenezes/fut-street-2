@@ -13,6 +13,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
     recover_indirect_call_skip_branches,
+    recover_kernel_bridge_cases,
     recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
@@ -299,6 +300,31 @@ void xbe_entry_point(void)
         self.assertEqual(evidence["xbox_IoCreateFile"]["status"], "source-definition-found")
         self.assertEqual(evidence["xbox_IoCreateFile"]["sources"], ["kernel_file.c:1"])
         self.assertEqual(evidence["xbox_Missing"]["status"], "missing-source-definition")
+
+    def test_reads_only_kernel_bridge_resolver_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "kernel_bridge.c"
+            source.write_text(
+                "static int stdcall_args_for_ordinal(ULONG ordinal)\n"
+                "{\n"
+                "    switch (ordinal) {\n"
+                "    case 66: return 8;\n"
+                "    default: return -1;\n"
+                "    }\n"
+                "}\n"
+                "static bridge_func_t bridge_for_ordinal(ULONG ordinal)\n"
+                "{\n"
+                "    switch (ordinal) {\n"
+                "    case 66: return bridge_IoCreateFile;\n"
+                "    default: return NULL;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            cases = recover_kernel_bridge_cases(source)
+
+        self.assertEqual(cases, {66: "bridge_IoCreateFile"})
 
     def test_keeps_dynamic_writer_shapes_separate(self) -> None:
         functions = [

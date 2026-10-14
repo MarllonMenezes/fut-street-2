@@ -67,6 +67,13 @@ KERNEL_FUNCTION_DEFINITION_RE = re.compile(
     r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
     r"(?P<name>xbox_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{"
 )
+KERNEL_BRIDGE_FUNCTION_RE = re.compile(
+    r"^\s*static\s+bridge_func_t\s+bridge_for_ordinal\s*\(ULONG\s+ordinal\)\s*$"
+)
+KERNEL_BRIDGE_CASE_RE = re.compile(
+    r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
+    r"(?P<target>bridge_[^;]+);"
+)
 DYNAMIC_OBJECT_FIELD_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584\)\s*="
 )
@@ -709,6 +716,43 @@ def recover_kernel_implementation_evidence(
     return evidence
 
 
+def recover_kernel_bridge_cases(source_path: Path) -> dict[int, str]:
+    """Read ordinal-to-bridge wrappers from ``kernel_bridge.c``.
+
+    This is separate from the typed service resolver: the bridge is the ABI
+    adapter that reads guest stack/register state and translates guest pointers
+    before calling the host implementation.  A bridge case still does not
+    prove the service's Xbox semantics.
+    """
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    in_bridge = False
+    entered_body = False
+    depth = 0
+    cases: dict[int, str] = {}
+    for line in lines:
+        if not in_bridge:
+            if KERNEL_BRIDGE_FUNCTION_RE.match(line) is None:
+                continue
+            in_bridge = True
+        depth += line.count("{") - line.count("}")
+        if depth > 0:
+            entered_body = True
+        match = KERNEL_BRIDGE_CASE_RE.match(line)
+        if match is not None:
+            ordinal = int(match.group("ordinal"), 10)
+            target = match.group("target").strip()
+            previous = cases.get(ordinal)
+            if previous is not None and previous != target:
+                raise ValueError(
+                    f"conflicting kernel bridge cases for ordinal {ordinal} "
+                    f"at {source_path}"
+                )
+            cases[ordinal] = target
+        if entered_body and depth == 0:
+            break
+    return cases
+
+
 def recover_dynamic_target_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
@@ -996,6 +1040,11 @@ def audit(
         if kernel_source is None
         else recover_kernel_resolver_cases(kernel_source)
     )
+    kernel_bridge_cases = (
+        None
+        if kernel_source is None or not (kernel_source.parent / "kernel_bridge.c").exists()
+        else recover_kernel_bridge_cases(kernel_source.parent / "kernel_bridge.c")
+    )
     dynamic_memory_ranges = []
     for site in sites:
         range_text = site.get("target_memory_address_range")
@@ -1075,6 +1124,14 @@ def audit(
             else:
                 row["host_implementation_status"] = implementation["status"]
                 row["host_implementation_sources"] = implementation["sources"]
+        ordinal = row.get("kernel_ordinal")
+        if kernel_bridge_cases is not None and ordinal is not None:
+            bridge_target = kernel_bridge_cases.get(int(ordinal))
+            row["host_bridge_status"] = (
+                "explicit-case" if bridge_target is not None else "missing-case"
+            )
+            if bridge_target is not None:
+                row["host_bridge_target"] = bridge_target
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -1083,6 +1140,12 @@ def audit(
     ]
     resolver_missing_sites = [
         row for row in kernel_slots if row.get("host_resolver_status") == "missing-case"
+    ]
+    bridge_case_sites = [
+        row for row in kernel_slots if row.get("host_bridge_status") == "explicit-case"
+    ]
+    bridge_missing_sites = [
+        row for row in kernel_slots if row.get("host_bridge_status") == "missing-case"
     ]
     dynamic_writer_counts = {
         family: len(rows)
@@ -1126,6 +1189,21 @@ def audit(
         ),
         "kernel_resolver_missing_sites": (
             None if kernel_resolver_cases is None else len(resolver_missing_sites)
+        ),
+        "kernel_bridge_status": (
+            "not-supplied"
+            if kernel_source is None
+            else (
+                "bridge-source-not-found"
+                if kernel_bridge_cases is None
+                else "verified-explicit-case-coverage"
+            )
+        ),
+        "kernel_bridge_case_sites": (
+            None if kernel_bridge_cases is None else len(bridge_case_sites)
+        ),
+        "kernel_bridge_missing_sites": (
+            None if kernel_bridge_cases is None else len(bridge_missing_sites)
         ),
         "kernel_implementation_status": (
             "not-supplied"
@@ -1248,6 +1326,7 @@ def audit(
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
+        "kernel_bridge_cases": kernel_bridge_cases or {},
     }
 
 
