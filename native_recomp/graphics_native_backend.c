@@ -69,6 +69,7 @@ typedef struct {
     FutNativeConstants native_constants;
     ID3D11VertexShader *vertex_shader;
     ID3DBlob *vertex_bytecode;
+    FutNativeVertexSurface vertex_surface;
     ID3D11PixelShader *pixel_shader;
     ID3DBlob *pixel_bytecode;
     FutGraphicsBindings bindings;
@@ -145,7 +146,7 @@ static int native_prepare_vertex(NativeGraphicsState *state)
             if (state->kelvin.program[first + count - 1][3] & 1u) break;
         }
         ID3D11VertexShader *shader = NULL; ID3DBlob *bytecode = NULL;
-        HRESULT hr = fut_native_vertex_compile(state->device, state->kelvin.program + first,
+        HRESULT hr = fut_native_vertex_compile_screen(state->device, state->kelvin.program + first,
             count, &shader, &bytecode);
         if (FAILED(hr)) {
             fprintf(stderr, "[GRAPHICS] vertex program recompilation failed: start=%u count=%u hr=%08lX\n",
@@ -280,6 +281,12 @@ static int native_prepare_draw(NativeGraphicsState *state)
 
 static int native_prepare_immediate(NativeGraphicsState *state)
 {
+    if(!native_prepare_surfaces(state)) return 0;
+    HRESULT hr=fut_native_vertex_surface_prepare(&state->vertex_surface,state->device,state->context,
+        &state->native_surfaces.plan);
+    if(FAILED(hr)) {
+        fprintf(stderr,"[GRAPHICS] vertex screen-space preparation failed: HRESULT=%08lX\n",hr);return 0;
+    }
     if ((state->kelvin.program_mode&3u)!=2u || !native_prepare_vertex(state) ||
         !state->vertex_shader || !state->vertex_bytecode) return 0;
     unsigned first=state->kelvin.program_start,count=0;
@@ -289,7 +296,7 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     }
     uint16_t required=0;
     if(!fut_vertex_program_input_mask(state->kelvin.program+first,count,&required)) return 0;
-    HRESULT hr=fut_native_immediate_upload(&state->native_immediate,state->device,state->context,
+    hr=fut_native_immediate_upload(&state->native_immediate,state->device,state->context,
         state->vertex_bytecode,&state->immediate,required);
     if(FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] immediate vertex upload refused: count=%u required=%04X HRESULT=%08lX\n",
@@ -298,6 +305,21 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     }
     fprintf(stderr,"[GRAPHICS] immediate vertices uploaded: count=%u required=%04X; no draw/completion\n",
         state->immediate.count,required);
+    if(!fut_native_constants_finish(&state->native_constants,
+        state->kelvin.constants_dirty?state->kelvin.constants:NULL,2000,backend_stop)) return 0;
+    state->kelvin.constants_dirty=0;
+    FutNativePosition positions[FUT_IMMEDIATE_CAPACITY];
+    hr=fut_native_immediate_probe_positions(&state->native_immediate,state->device,state->context,
+        state->vertex_shader,state->vertex_bytecode,&state->native_constants,positions,FUT_IMMEDIATE_CAPACITY,2000,backend_stop);
+    if(FAILED(hr)) {
+        fprintf(stderr,"[GRAPHICS] vertex-only execution/readback failed: HRESULT=%08lX\n",hr);return 0;
+    }
+    fprintf(stderr,"[GRAPHICS] original vertex program executed with no rasterized stream: vertices=%u; no pixels/submission completion\n",
+        state->native_immediate.count);
+    for(unsigned i=0;i<state->native_immediate.count && i<3;++i) fprintf(stderr,
+        "[GRAPHICS] vertex%u screen=(%g,%g,%g,%g) clip=(%g,%g,%g,%g)\n",i,
+        positions[i].screen[0],positions[i].screen[1],positions[i].screen[2],positions[i].screen[3],
+        positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3]);
     return 1;
 }
 
@@ -514,6 +536,7 @@ static DWORD WINAPI native_worker(void *unused)
     for (unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_pipeline_destroy(&state.pipeline);
     fut_native_immediate_destroy(&state.native_immediate);
+    fut_native_vertex_surface_destroy(&state.vertex_surface);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);

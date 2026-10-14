@@ -46,17 +46,18 @@ static void write_mask(Writer *out, const char *destination, unsigned mask, cons
     for (unsigned i = 0; i < 4; ++i)
         if (mask & (8u >> i)) emit(out, "%s.%c=%s.%c;\n", destination, "xyzw"[i], value, "xyzw"[i]);
 }
-int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
-    char *text, size_t capacity, size_t *length)
+static int generate(const uint32_t (*words)[4], size_t count,
+    char *text, size_t capacity, size_t *length,int screen)
 {
     if (!length) return 0;
     *length = 0;
     if (!words || !count || count > 136 || !text || !capacity) return 0;
     text[0] = 0;
     Writer out = {text, capacity, 0, 0};
+    if(screen) emit(&out,"cbuffer VertexSurface:register(b3){float4 vertexSurface;};\n");
     emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\nstruct In{\n");
     for (unsigned i = 0; i < 16; ++i) emit(&out, "float4 v%u:ATTR%u;\n", i, i);
-    emit(&out, "};struct Out{float4 pos:SV_POSITION;float4 col0:COLOR0;float4 col1:COLOR1;"
+    emit(&out, "};struct Out{float4 pos:SV_POSITION;float4 screen:TEXCOORD6;float4 col0:COLOR0;float4 col1:COLOR1;"
         "float fog:FOG;float pts:PSIZE;float4 back0:TEXCOORD4;float4 back1:TEXCOORD5;"
         "float4 t0:TEXCOORD0;float4 t1:TEXCOORD1;float4 t2:TEXCOORD2;float4 t3:TEXCOORD3;};\n"
         "Out main(In input){float4 r[12];float4 o[16];"
@@ -109,12 +110,33 @@ int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
         if (w[3] & 1) { ended = 1; break; }
     }
     if (!ended || out.failed) return 0;
-    emit(&out, "Out result;result.pos=o[0];result.col0=saturate(o[3]);result.col1=saturate(o[4]);"
+    emit(&out, "Out result;result.pos=o[0];result.screen=o[0];result.col0=saturate(o[3]);result.col1=saturate(o[4]);"
         "result.fog=o[5].x;result.pts=o[6].x;result.back0=saturate(o[7]);result.back1=saturate(o[8]);"
-        "result.t0=o[9];result.t1=o[10];result.t2=o[11];result.t3=o[12];return result;}\n");
+        "result.t0=o[9];result.t1=o[10];result.t2=o[11];result.t3=o[12];\n");
+    if(screen) {
+        /* NV programmable outputs are already screen coordinates. D3D's
+         * viewport flips Y and divides by W: invert both operations here.
+         * Only finite positive W in [2^-64,2^64] is admitted by the SO probe;
+         * exceptional/clamped W and MSAA sampling remain unsupported. */
+        emit(&out,"float2 pixel=trunc(o[0].xy*16.0f)/16.0f;"
+            "float2 ndc=(2.0f*pixel-vertexSurface.xy)/vertexSurface.xy;"
+            "result.pos=float4(ndc.x,-ndc.y,o[0].z/vertexSurface.z,1)*o[0].w;\n");
+    }
+    emit(&out,"return result;}\n");
     if (out.failed) return 0;
     *length = out.used;
     return 1;
+}
+
+int fut_vertex_program_hlsl(const uint32_t (*words)[4],size_t count,
+    char *text,size_t capacity,size_t *length)
+{
+    return generate(words,count,text,capacity,length,0);
+}
+int fut_vertex_program_hlsl_screen(const uint32_t (*words)[4],size_t count,
+    char *text,size_t capacity,size_t *length)
+{
+    return generate(words,count,text,capacity,length,1);
 }
 
 int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16_t *mask)

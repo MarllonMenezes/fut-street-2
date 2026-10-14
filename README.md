@@ -14,46 +14,49 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.73
+## Estado verificável — release 2.74
 
-A execução recompilada agora coleta os **três vértices do primeiro triângulo**
-e envia seus atributos para um vertex buffer e um input layout nativos.
-A forma observada `BEGIN TRIANGLES / ATTR2F / END` chegou ao END no offset
-`1.248` da terceira submissão. **Upload de geometria não é execução do draw.**
+O primeiro **vertex program original recompilado executou na GPU do PC**
+para os três vértices do triângulo observado. O host leu de volta as posições
+originais em espaço de tela e suas conversões para o espaço de recorte D3D11.
+Essa execução usa stream-output com `SO_NO_RASTERIZED_STREAM`:
+**o estágio de vértices executa, mas não gera pixels nem apresenta um frame.**
 
-O coletor preserva snapshots por vértice, os bits de X/Y e os componentes
-Z=`0`, W=`1` da forma 2F. Atributos lidos pelo shader precisam estar definidos
-em todos os vértices; pares incompletos, primitivas não suportadas, mudanças
-de estado dentro da primitiva e excesso de capacidade são recusados.
-Uma primitiva aberta ou ainda não executada impede a conclusão da submissão,
-WAIT e semáforos: preparar buffers não gera confirmação fictícia de GPU.
+A variante nativa de rasterização quantiza XY em passos de `1/16`, inverte
+o viewport D3D11, incluindo o sentido de Y, normaliza Z24 e restaura W para
+a divisão de perspectiva do host. A variante de testes de instrução continua
+retornando os resultados brutos. O
+[contrato de viewport D3D11](https://learn.microsoft.com/en-us/windows/win32/direct3d11/d3d10-graphics-programming-guide-rasterizer-stage-getting-started)
+e a [implementação NV2A consultada](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/glsl/vsh-prog.c)
+sustentam essa conversão; isso não comprova toda a precisão de rasterização NV2A.
 
-Foi corrigida a inicialização das saídas não escritas do vertex program para
-`(0,0,0,1)`, incluindo alpha igual a `1`. A
-[especificação NV_vertex_program](https://registry.khronos.org/OpenGL/extensions/NV/NV_vertex_program.txt)
-documenta esse valor; a implementação NV2A consultada também o utiliza.
-O teste nativo WARP executa um shader sintético de dois MOV com três vértices
-2F e confere por stream-output as posições, coordenadas de textura e saídas
-não escritas. Esse teste **não rasteriza nem executa um frame do jogo**,
-e não comprova toda a precisão NV2A ou conversão de posição screen/clip.
+O caminho novo aceita somente a superfície sem AA do caso exercitado,
+com profundidade inteira Z24S8. O readback exige posições finitas e W positivo
+entre `2^-64` e `2^64`; casos fora desse domínio continuam recusados.
+Os buffers de saída começam com sentinelas NaN, a consulta GPU tem timeout
+e o resultado só é entregue após validação. Bindings GS/SO já ocupados são
+recusados sem sobrescrevê-los. A primitiva permanece pendente:
+concluir o estágio VS **não conclui o draw nem a submissão original**.
 
-Build Release e CTest passaram `21/21`, incluindo testes do coletor, máscara
-de atributos, resultados do shader e receptor real de métodos. Na execução
-original limitada a cinco segundos, foram enviados três vértices, a superfície
-`640×480` e a textura `1280×480`, pitch `5.120`. O draw continuou recusado
-pelo filtro quincunx `0x04072000`, sem aproximação por outro filtro.
-A cor desse draw depende da textura: eliminar a amostragem não é válido.
+Build Release e CTest passaram `21/21`. As regressões incluem conversão
+screen/clip, coordenadas negativas, truncamento em vez de floor, W diferente
+de `1`, W inválido, cancelamento, AA não suportado e preservação de bindings.
+Na execução do jogo recompilado, limitada a cinco segundos, o shader original
+de duas instruções executou com a superfície `640×480`. A textura `1280×480`
+foi importada, mas o filtro quincunx `0x04072000` continuou recusado.
+Não foi substituído por Gaussian/linear nem tratado como amostragem morta.
 
 O processo terminou por diagnóstico antes do timeout. Os dois clears
 originais, as duas primeiras submissões e o marcador `7` continuam concluídos;
-a terceira submissão permanece sem conclusão. **Nenhum draw/frame do jogo
-foi executado/apresentado**, nem houve avanço artificial da leitura de flip
-ou VBlank. ISO intacta; novas saídas controláveis no D:.
+a terceira submissão parou no END, offset `1.248`, sem conclusão.
+**Nenhum draw rasterizado/frame do jogo foi executado/apresentado**,
+nem houve avanço artificial da leitura de flip ou VBlank.
+ISO intacta; novas saídas controláveis no D:.
 
 Próximo experimento: estabelecer offsets e arredondamento do quincunx NV2A
-com evidência suficiente para traduzi-lo. Continuam pendentes
-SAMPLEALPHA/RDI, conversão/rasterização dos vértices, precisão gráfica,
-apresentação, gameplay e áudio. `NOT_READY` permanece.
+com fontes ou resultados públicos de hardware. Continuam pendentes
+SAMPLEALPHA/RDI, rasterização e precisão gráfica, apresentação, gameplay e áudio.
+`NOT_READY` permanece.
 
 ## Abordagem
 

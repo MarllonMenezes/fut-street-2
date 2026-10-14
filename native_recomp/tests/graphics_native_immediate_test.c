@@ -5,6 +5,7 @@
 #include "graphics_vertex_program.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"native immediate test failed: %d\n",n);return n;}}while(0)
 static FutGraphicsImmediate batch;
 static FutGraphicsKelvinState kelvin;
@@ -13,6 +14,89 @@ static int pair(unsigned slot,float x,float y)
     uint32_t a,b;memcpy(&a,&x,4);memcpy(&b,&y,4);
     return fut_graphics_immediate_method(&batch,&kelvin,0x1880+slot*8,a)==FUT_IMMEDIATE_APPLIED &&
         fut_graphics_immediate_method(&batch,&kelvin,0x1884+slot*8,b)==FUT_IMMEDIATE_APPLIED;
+}
+static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion,
+    const uint32_t (*program)[4])
+{
+    ID3D11DeviceContext_ClearState(context);
+    ID3D11VertexShader *shader=NULL;ID3DBlob *bytecode=NULL;
+    CHECK(SUCCEEDED(fut_native_vertex_compile_screen(device,program,2,&shader,&bytecode)),30);
+    ID3D11DeviceContext_VSSetShader(context,shader,NULL,0);
+    FutNativeVertexSurface surface={0};
+    FutGraphicsSurfacePlan plan={.width=64,.height=32,.logical_width=64,.logical_height=32,.samples=1};
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)),31);
+    ID3D11Buffer *previous=surface.buffer;
+    plan.samples=2;plan.width=128;
+    CHECK(fut_native_vertex_surface_prepare(&surface,device,context,&plan)==E_NOTIMPL &&
+        surface.buffer==previous && surface.width==64,32);
+    ID3D11Buffer *bound_surface=NULL;
+    ID3D11DeviceContext_VSGetConstantBuffers(context,3,1,&bound_surface);
+    CHECK(bound_surface==previous,45);ID3D11Buffer_Release(bound_surface);
+    plan.samples=1;plan.width=64;
+    const float points[3][4]={{-0.0624f,-0.0626f,0,1},{64,32,16777215,2},
+        {128.0624f,64.0626f,8388607.5f,0.5f}};
+    for(unsigned i=0;i<3;++i) memcpy(batch.vertices[i][0],points[i],sizeof(points[i]));
+    FutNativeImmediate native={0};
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)),33);
+    FutNativePosition positions[3],saved[3];memset(positions,0xA5,sizeof(positions));memcpy(saved,positions,sizeof(saved));
+    CHECK(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        positions,2,2000,NULL)==E_INVALIDARG && !memcmp(positions,saved,sizeof(saved)),34);
+    CHECK(SUCCEEDED(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        positions,3,2000,NULL)),35);
+    for(unsigned i=0;i<3;++i) {
+        /* Independent inverse viewport after signed truncation (not floor).
+         * Screen W is undone then restored by D3D perspective division. */
+        const float *p=points[i];
+        float x=(float)(int)(p[0]*16)/16,y=(float)(int)(p[1]*16)/16;
+        float expected[4]={(x/64*2-1)*p[3],(1-y/32*2)*p[3],p[2]/16777215*p[3],p[3]};
+        CHECK(!memcmp(positions[i].screen,p,16),36);
+        for(unsigned c=0;c<4;++c) CHECK(fabsf(positions[i].clip[c]-expected[c])<0.000002f,37);
+        CHECK(fabsf((positions[i].clip[0]/p[3]+1)*32-x)<0.00002f &&
+            fabsf((1-positions[i].clip[1]/p[3])*16-y)<0.00002f,38);
+    }
+    ID3D11GeometryShader *bound=NULL;ID3D11Buffer *target=NULL;
+    ID3D11DeviceContext_GSGetShader(context,&bound,NULL,NULL);
+    ID3D11DeviceContext_SOGetTargets(context,1,&target);
+    CHECK(!bound && !target && batch.ready,39);
+    memcpy(saved,positions,sizeof(saved));
+    D3D11_BUFFER_DESC occupied_desc={0};occupied_desc.ByteWidth=32;
+    occupied_desc.Usage=D3D11_USAGE_DEFAULT;occupied_desc.BindFlags=D3D11_BIND_STREAM_OUTPUT;
+    ID3D11Buffer *occupied=NULL;UINT offset=0;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&occupied_desc,NULL,&occupied)),46);
+    ID3D11DeviceContext_SOSetTargets(context,1,&occupied,&offset);
+    CHECK(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        positions,3,2000,NULL)==E_NOTIMPL && !memcmp(positions,saved,sizeof(saved)),47);
+    ID3D11DeviceContext_SOGetTargets(context,1,&target);
+    CHECK(target==occupied,48);ID3D11Buffer_Release(target);
+    ID3D11DeviceContext_SOSetTargets(context,0,NULL,NULL);ID3D11Buffer_Release(occupied);
+    D3D11_SO_DECLARATION_ENTRY decl[]={{0,"SV_POSITION",0,0,4,0},{0,"TEXCOORD",6,0,4,0}};
+    ID3D11GeometryShader *occupied_gs=NULL;UINT stride=32;
+    CHECK(SUCCEEDED(ID3D11Device_CreateGeometryShaderWithStreamOutput(device,
+        ID3D10Blob_GetBufferPointer(bytecode),ID3D10Blob_GetBufferSize(bytecode),decl,2,
+        &stride,1,D3D11_SO_NO_RASTERIZED_STREAM,NULL,&occupied_gs)),49);
+    ID3D11DeviceContext_GSSetShader(context,occupied_gs,NULL,0);
+    CHECK(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        positions,3,2000,NULL)==E_NOTIMPL && !memcmp(positions,saved,sizeof(saved)),50);
+    ID3D11DeviceContext_GSGetShader(context,&bound,NULL,NULL);
+    CHECK(bound==occupied_gs,51);ID3D11GeometryShader_Release(bound);
+    ID3D11DeviceContext_GSSetShader(context,NULL,NULL,0);ID3D11GeometryShader_Release(occupied_gs);
+    const float invalid_w[]={0,-1,0x1p-65f,0x1p65f,INFINITY,NAN};
+    for(unsigned i=0;i<sizeof(invalid_w)/sizeof(invalid_w[0]);++i) {
+        batch.vertices[0][0][3]=invalid_w[i];
+        CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)),40);
+        memcpy(saved,positions,sizeof(saved));
+        CHECK(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+            positions,3,2000,NULL)==E_NOTIMPL && !memcmp(positions,saved,sizeof(saved)) && batch.ready,41);
+    }
+    memcpy(batch.vertices[0][0],points[0],sizeof(points[0]));
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)),42);
+    HANDLE stop=CreateEventA(NULL,TRUE,TRUE,NULL);CHECK(stop,43);
+    CHECK(FAILED(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        positions,3,2000,stop)) && !memcmp(positions,saved,sizeof(saved)),44);
+    CloseHandle(stop);
+    fut_native_immediate_destroy(&native);fut_native_vertex_surface_destroy(&surface);
+    ID3D11DeviceContext_ClearState(context);ID3D11VertexShader_Release(shader);ID3D10Blob_Release(bytecode);
+    return 0;
 }
 int main(void)
 {
@@ -72,10 +156,11 @@ int main(void)
     }
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
     CHECK(batch.ready && batch.count==3,19); /* SO test does not consume original draw. */
+    CHECK(verify_screen(device,context,&constants,program)==0,20);
     ID3D11Buffer_Release(staging);ID3D11Buffer_Release(output);
     ID3D11GeometryShader_Release(stream);fut_native_immediate_destroy(&native);
     fut_native_constants_destroy(&constants);ID3D11VertexShader_Release(shader);ID3D10Blob_Release(bytecode);
     ID3D11DeviceContext_ClearState(context);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
-    puts("Three synthetic2F vertices executed by translated VS: exact positions/UV/default alpha1; no rasterization");
+    puts("Translated VS: raw attributes/defaults, screen/clip viewport inverse, signed1/16 truncation, positiveW domain and bounded SO-only execution verified; no game frame");
     return 0;
 }

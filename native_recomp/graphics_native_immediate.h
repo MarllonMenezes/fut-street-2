@@ -3,10 +3,20 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include "graphics_immediate.h"
+#include "graphics_native_constants.h"
 typedef struct {ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count;} FutNativeImmediate;
 /* Upload/bind only: no Draw/consumption. Failure preserves old resources.
  * Used attributes must be completely defined in every vertex. */
 HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *device,
     ID3D11DeviceContext *context,ID3DBlob *vertex_bytecode,const FutGraphicsImmediate *batch,uint16_t required);
 void fut_native_immediate_destroy(FutNativeImmediate *native);
+typedef struct {float clip[4],screen[4];} FutNativePosition;
+/* Execute VS only with SO_NO_RASTERIZED_STREAM, query, copy and validate.
+ * Positive finite screen W [2^-64,2^64] only. No pixels, batch consumption,
+ * guest marker or original submission completion. Output unchanged on failure.
+ * The renderer owns the context: preexisting GS/SO bindings are refused. */
+HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
+    ID3D11Device *device,ID3D11DeviceContext *context,ID3D11VertexShader *vertex_shader,ID3DBlob *vertex_bytecode,
+    FutNativeConstants *completion,FutNativePosition *positions,unsigned capacity,
+    DWORD timeout_ms,HANDLE stop_event);
 #endif

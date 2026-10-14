@@ -138,6 +138,7 @@ int main(void)
     CHECK(!native_method(&state,0,0x17FC,5,0) && state.immediate.count==3 &&
         !native_method(&state,0,0x110,0,0) && !native_method(&state,0,0x1D70,8,0),48);
     fut_native_immediate_destroy(&state.native_immediate);
+    fut_native_vertex_surface_destroy(&state.vertex_surface);
     for(unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_surfaces_destroy(&state.native_surfaces);
     fut_native_constants_destroy(&state.native_constants);

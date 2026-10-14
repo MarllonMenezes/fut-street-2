@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_immediate.h"
 #include <string.h>
+#include <math.h>
 void fut_native_immediate_destroy(FutNativeImmediate *native)
 {
     if(native->buffer) ID3D11Buffer_Release(native->buffer);
@@ -33,4 +34,66 @@ HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *dev
     ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&next.buffer,&stride,&offset);
     ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     fut_native_immediate_destroy(native);*native=next;return S_OK;
+}
+HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
+    ID3D11Device *device,ID3D11DeviceContext *context,ID3D11VertexShader *shader,ID3DBlob *bytecode,
+    FutNativeConstants *completion,FutNativePosition *positions,unsigned capacity,
+    DWORD timeout_ms,HANDLE stop_event)
+{
+    if(!native || !native->buffer || !native->layout || !native->count ||
+        native->count>FUT_IMMEDIATE_CAPACITY || native->count%3 || !device || !context || !shader || !bytecode ||
+        !completion || !completion->buffer || !completion->completion || completion->context!=context || !positions || capacity<native->count ||
+        !timeout_ms || timeout_ms>2000) return E_INVALIDARG;
+    if(stop_event && WaitForSingleObject(stop_event,0)!=WAIT_TIMEOUT) return E_ABORT;
+    ID3D11GeometryShader *previous=NULL;
+    ID3D11DeviceContext_GSGetShader(context,&previous,NULL,NULL);
+    if(previous) {ID3D11GeometryShader_Release(previous);return E_NOTIMPL;}
+    ID3D11Buffer *targets[D3D11_SO_BUFFER_SLOT_COUNT]={0};int occupied=0;
+    ID3D11DeviceContext_SOGetTargets(context,D3D11_SO_BUFFER_SLOT_COUNT,targets);
+    for(unsigned i=0;i<D3D11_SO_BUFFER_SLOT_COUNT;++i) if(targets[i]) {
+        occupied=1;ID3D11Buffer_Release(targets[i]);
+    }
+    if(occupied) return E_NOTIMPL;
+    D3D11_SO_DECLARATION_ENTRY decl[]={{0,"SV_POSITION",0,0,4,0},{0,"TEXCOORD",6,0,4,0}};
+    UINT stride=sizeof(FutNativePosition),offset=0;ID3D11GeometryShader *stream=NULL;
+    HRESULT hr=ID3D11Device_CreateGeometryShaderWithStreamOutput(device,
+        ID3D10Blob_GetBufferPointer(bytecode),ID3D10Blob_GetBufferSize(bytecode),
+        decl,2,&stride,1,D3D11_SO_NO_RASTERIZED_STREAM,NULL,&stream);
+    ID3D11Buffer *output=NULL,*staging=NULL;
+    uint32_t sentinel[FUT_IMMEDIATE_CAPACITY*8];
+    for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*8;++i) sentinel[i]=0x7FC00000;
+    D3D11_BUFFER_DESC desc={0};desc.ByteWidth=native->count*stride;
+    desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_STREAM_OUTPUT;
+    D3D11_SUBRESOURCE_DATA initial={sentinel,0,0};
+    if(SUCCEEDED(hr)) hr=ID3D11Device_CreateBuffer(device,&desc,&initial,&output);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    if(SUCCEEDED(hr)) hr=ID3D11Device_CreateBuffer(device,&desc,NULL,&staging);
+    if(FAILED(hr)) goto done;
+    UINT input_stride=16*4*sizeof(float);
+    ID3D11DeviceContext_IASetInputLayout(context,native->layout);
+    ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&native->buffer,&input_stride,&offset);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_VSSetShader(context,shader,NULL,0);
+    ID3D11DeviceContext_GSSetShader(context,stream,NULL,0);
+    ID3D11DeviceContext_SOSetTargets(context,1,&output,&offset);
+    ID3D11DeviceContext_Draw(context,native->count,0);
+    ID3D11DeviceContext_SOSetTargets(context,0,NULL,NULL);
+    ID3D11DeviceContext_GSSetShader(context,NULL,NULL,0);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)output);
+    if(!fut_native_constants_finish(completion,NULL,timeout_ms,stop_event)) {hr=E_FAIL;goto done;}
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    hr=ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped);
+    if(FAILED(hr)) goto done;
+    const FutNativePosition *values=mapped.pData;
+    for(unsigned i=0;i<native->count;++i) {
+        for(unsigned c=0;c<4;++c) if(!isfinite(values[i].screen[c]) || !isfinite(values[i].clip[c])) hr=E_NOTIMPL;
+        if(values[i].screen[3]<0x1p-64f || values[i].screen[3]>0x1p64f) hr=E_NOTIMPL;
+    }
+    if(SUCCEEDED(hr)) memcpy(positions,values,native->count*sizeof(*positions));
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
+done:
+    if(staging) ID3D11Buffer_Release(staging);
+    if(output) ID3D11Buffer_Release(output);
+    if(stream) ID3D11GeometryShader_Release(stream);
+    return hr;
 }
