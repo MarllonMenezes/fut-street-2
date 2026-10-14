@@ -14,6 +14,31 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.46
+
+O release 2.46 adiciona
+`tools/analysis/recomp_dynamic_callback_evidence_gate.py`, um gate estático
+específico do artefato integral para impedir regressões na classificação dos
+callbacks dinâmicos. Contra a geração limpa 25f, ele preserva os `7` sites
+exatos (`0x0024D3B1`, `0x0024D4C7`, `0x00250612`, `0x002512A4`,
+`0x00252C7D`, `0x00252CF1` e `0x0026E75E`) e as famílias `1` de memória,
+`1` de campo de objeto, `1` de registro indexado e `4` protegidas pelo PRCB.
+
+O gate também exige evidência de origem local, contagem de pushes e guard
+condicional em `7/7` sites, além de `0` writers diretos provados. A
+classificação de inicialização permanece conservadora: `1` valor zerado na
+imagem, `4` caches PRCB zerados no host e `2` inicializações ainda não
+provadas em runtime (campo de objeto e registro indexado). O produtor do
+campo de objeto, a fronteira do frame indexado e a raiz estática da tabela
+continuam documentados, sem promover nenhum destino a callback resolvido.
+
+Esse gate é uma proteção contra regressão de evidência, não um resolver. Ele
+falha se aparecer, desaparecer ou mudar de família um site conhecido e não
+executa o XBE, o C gerado ou o runtime host. A prontidão permanece `NOT_READY`,
+a estimativa conservadora do PoC jogável continua em aproximadamente `31%
+concluído / 69% restante`, e boot, rendering, assets, gameplay, animação,
+áudio e a semântica completa dos serviços Xbox continuam pendentes.
+
 ## Estado verificável — release 2.45
 
 O release 2.45 adiciona o contrato host-only
@@ -850,6 +875,21 @@ python tools/analysis/recomp_indirect_call_audit.py `
   --generated C:/caminho/local/xboxrecomp/gen `
   --xbe C:/caminho/local/game_files/default.xbe
 ```
+
+Para transformar essa classificação em um gate de regressão do artefato
+integral, use:
+
+```powershell
+python tools/analysis/recomp_dynamic_callback_evidence_gate.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen `
+  --xbe C:/caminho/local/game_files/default.xbe `
+  --kernel-source C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c
+```
+
+Esse gate é específico dos sete sites atualmente auditados e mantém a
+distinção entre evidência estática e inicialização de runtime; saída aprovada
+não significa que qualquer callback esteja resolvido ou executável.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os
