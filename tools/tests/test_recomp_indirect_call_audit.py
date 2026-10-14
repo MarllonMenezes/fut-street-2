@@ -21,6 +21,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_indirect_call_nonzero_guards,
     recover_indirect_call_skip_branches,
     recover_kernel_bridge_cases,
+    recover_kernel_bridge_body_provenance,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -839,6 +840,41 @@ void xbe_entry_point(void)
             cases = recover_kernel_bridge_cases(source)
 
         self.assertEqual(cases, {66: "bridge_IoCreateFile"})
+
+    def test_recovers_kernel_bridge_body_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "kernel_bridge.c"
+            source.write_text(
+                "static void bridge_IoCreateFile(void)\n"
+                "{\n"
+                "    uint32_t path = STACK_ARG(0);\n"
+                "    uint32_t options = STACK_ARG(2);\n"
+                "    path = XBOX_TO_NATIVE(path);\n"
+                "    options = BRIDGE_MEM32(path);\n"
+                "    g_eax = options;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_kernel_bridge_body_provenance(
+                source, {66: "bridge_IoCreateFile"}, {66}
+            )
+
+        self.assertEqual(
+            evidence["bridge_IoCreateFile"]["status"], "source-body-found"
+        )
+        self.assertEqual(
+            evidence["bridge_IoCreateFile"]["stack_arg_indices"], [0, 2]
+        )
+        self.assertEqual(
+            evidence["bridge_IoCreateFile"]["pointer_translation_sites"], 1
+        )
+        self.assertEqual(
+            evidence["bridge_IoCreateFile"]["guest_memory_access_sites"], 1
+        )
+        self.assertEqual(
+            len(evidence["bridge_IoCreateFile"]["g_eax_assignment_sites"]), 1
+        )
 
     def test_counts_kernel_call_push_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

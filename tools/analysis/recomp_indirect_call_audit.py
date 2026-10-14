@@ -101,6 +101,10 @@ KERNEL_BRIDGE_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"(?P<target>bridge_[^;]+);"
 )
+KERNEL_BRIDGE_FUNCTION_DEF_RE = re.compile(
+    r"^\s*static\s+void\s+(?P<name>bridge_[A-Za-z0-9_]+)\s*\(void\)\s*$"
+)
+KERNEL_BRIDGE_STACK_ARG_RE = re.compile(r"\bSTACK_ARG\((?P<index>[0-9]+)\)")
 KERNEL_STDCALL_FUNCTION_RE = re.compile(
     r"^\s*static\s+int\s+stdcall_args_for_ordinal\s*\(ULONG\s+ordinal\s*\)\s*$"
 )
@@ -1160,6 +1164,84 @@ def recover_kernel_bridge_cases(source_path: Path) -> dict[int, str]:
         if entered_body and depth == 0:
             break
     return cases
+
+
+def recover_kernel_bridge_body_provenance(
+    source_path: Path,
+    bridge_cases: dict[int, str],
+    used_ordinals: set[int],
+) -> dict[str, dict[str, Any]]:
+    """Summarize ABI-facing shapes in bridge bodies used by the XBE path.
+
+    The report records stack-argument indices, ``g_eax`` assignments, and
+    guest-pointer/memory access macros.  These are source observations only;
+    they do not establish Xbox-compatible parameter types or behavior.
+    """
+    target_names = {
+        bridge_cases[ordinal]
+        for ordinal in used_ordinals
+        if ordinal in bridge_cases
+    }
+    evidence: dict[str, dict[str, Any]] = {
+        target: {
+            "status": "missing-source-body",
+            "source": None,
+            "stack_arg_indices": [],
+            "g_eax_assignment_sites": [],
+            "pointer_translation_sites": 0,
+            "guest_memory_access_sites": 0,
+            "body_line_count": 0,
+        }
+        for target in target_names
+    }
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    index = 0
+    while index < len(lines):
+        match = KERNEL_BRIDGE_FUNCTION_DEF_RE.match(lines[index])
+        if match is None:
+            index += 1
+            continue
+        target = match.group("name")
+        body_lines: list[tuple[int, str]] = []
+        depth = 0
+        entered_body = False
+        body_index = index
+        while body_index < len(lines):
+            body_line = lines[body_index]
+            body_lines.append((body_index + 1, body_line))
+            depth += body_line.count("{") - body_line.count("}")
+            if depth > 0:
+                entered_body = True
+            if entered_body and depth == 0:
+                break
+            body_index += 1
+        if target in evidence and entered_body and depth == 0:
+            stack_args = {
+                int(arg_match.group("index"))
+                for _, body_line in body_lines
+                for arg_match in KERNEL_BRIDGE_STACK_ARG_RE.finditer(body_line)
+            }
+            g_eax_sources = [
+                f"{source_path.name}:{line_number}"
+                for line_number, body_line in body_lines
+                if re.search(r"\bg_eax\s*=", body_line) is not None
+            ]
+            item = evidence[target]
+            item["status"] = "source-body-found"
+            item["source"] = f"{source_path.name}:{index + 1}"
+            item["stack_arg_indices"] = sorted(stack_args)
+            item["g_eax_assignment_sites"] = g_eax_sources
+            item["pointer_translation_sites"] = sum(
+                len(re.findall(r"\bXBOX_TO_NATIVE\s*\(", body_line))
+                for _, body_line in body_lines
+            )
+            item["guest_memory_access_sites"] = sum(
+                len(re.findall(r"\bBRIDGE_MEM32\s*\(", body_line))
+                for _, body_line in body_lines
+            )
+            item["body_line_count"] = len(body_lines)
+        index = max(body_index + 1, index + 1)
+    return evidence
 
 
 def recover_kernel_stdcall_arg_bytes(source_path: Path) -> dict[int, int]:
@@ -3063,6 +3145,20 @@ def audit(
             and int(row["kernel_ordinal"]) in kernel_resolver_cases
         }
     )
+    used_kernel_ordinals = {
+        int(row["kernel_ordinal"])
+        for row in classified
+        if row["classification"] == "kernel-thunk-slot"
+    }
+    kernel_bridge_body_provenance = (
+        None
+        if kernel_source is None or kernel_bridge_cases is None
+        else recover_kernel_bridge_body_provenance(
+            kernel_source.parent / "kernel_bridge.c",
+            kernel_bridge_cases,
+            used_kernel_ordinals,
+        )
+    )
     kernel_implementation_evidence = (
         None
         if kernel_source is None
@@ -3132,6 +3228,7 @@ def audit(
             if contract is not None:
                 row["host_return_contract"] = contract
         ordinal = row.get("kernel_ordinal")
+        bridge_target = None
         if kernel_bridge_cases is not None and ordinal is not None:
             bridge_target = kernel_bridge_cases.get(int(ordinal))
             row["host_bridge_status"] = (
@@ -3154,6 +3251,53 @@ def audit(
                     if expected_bytes == observed["pushed_bytes"]
                     else "argument-count-mismatch"
                 )
+        if kernel_bridge_body_provenance is not None and bridge_target is not None:
+            bridge_body = kernel_bridge_body_provenance.get(bridge_target)
+            row["host_bridge_body_shape"] = bridge_body
+            if bridge_body is None:
+                row["kernel_bridge_body_status"] = "missing-source-body"
+            else:
+                row["kernel_bridge_body_status"] = bridge_body["status"]
+                expected_bytes = (
+                    None
+                    if kernel_stdcall_arg_bytes is None
+                    else kernel_stdcall_arg_bytes.get(int(ordinal))
+                )
+                observed = kernel_call_argument_counts.get(str(row["call_site"]))
+                expected_arg_count = (
+                    None if expected_bytes is None else expected_bytes // 4
+                )
+                stack_arg_indices = bridge_body["stack_arg_indices"]
+                if bridge_body["status"] != "source-body-found":
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "missing-source-body"
+                    )
+                elif not stack_arg_indices:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "no-stack-arg-read-and-zero-arg-call"
+                        if expected_arg_count == 0
+                        else "no-stack-arg-read"
+                    )
+                elif expected_arg_count is None:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "missing-expected-count"
+                    )
+                elif max(stack_arg_indices) >= expected_arg_count:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "stack-arg-index-outside-expected-count"
+                    )
+                elif observed is None:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "within-expected-count-observed-call-missing"
+                    )
+                elif max(stack_arg_indices) >= observed["push_count"]:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "stack-arg-index-outside-observed-window"
+                    )
+                else:
+                    row["kernel_bridge_body_stack_arg_status"] = (
+                        "indices-within-expected-and-observed-window"
+                    )
         if kernel_file_information_evidence is not None and ordinal is not None:
             file_operation = kernel_file_operations.get(int(ordinal))
             if file_operation is not None:
@@ -3211,6 +3355,40 @@ def audit(
     ]
     bridge_missing_sites = [
         row for row in kernel_slots if row.get("host_bridge_status") == "missing-case"
+    ]
+    bridge_body_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_status") == "source-body-found"
+    ]
+    bridge_body_missing_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_status") != "source-body-found"
+    ]
+    bridge_body_stack_index_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_stack_arg_status")
+        == "indices-within-expected-and-observed-window"
+    ]
+    bridge_body_stack_index_outside_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_stack_arg_status")
+        in {
+            "stack-arg-index-outside-expected-count",
+            "stack-arg-index-outside-observed-window",
+        }
+    ]
+    bridge_body_stack_index_gap_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_stack_arg_status")
+        not in {
+            "indices-within-expected-and-observed-window",
+            "no-stack-arg-read-and-zero-arg-call",
+        }
     ]
     abi_count_sites = [
         row for row in kernel_slots if row.get("kernel_abi_stack_status") == "argument-count-match"
@@ -3364,6 +3542,82 @@ def audit(
         ),
         "kernel_bridge_missing_sites": (
             None if kernel_bridge_cases is None else len(bridge_missing_sites)
+        ),
+        "kernel_bridge_body_status": (
+            "not-supplied"
+            if kernel_bridge_body_provenance is None
+            else (
+                "verified-source-body-and-stack-index-coverage"
+                if len(bridge_body_sites) == len(kernel_slots)
+                and not bridge_body_stack_index_gap_sites
+                else (
+                    "verified-source-body-with-stack-index-gap"
+                    if len(bridge_body_sites) == len(kernel_slots)
+                    else "source-body-or-stack-index-gap"
+                )
+            )
+        ),
+        "kernel_bridge_body_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(kernel_bridge_body_provenance)
+        ),
+        "kernel_bridge_body_defined_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                item["status"] == "source-body-found"
+                for item in kernel_bridge_body_provenance.values()
+            )
+        ),
+        "kernel_bridge_body_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_sites)
+        ),
+        "kernel_bridge_body_missing_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_missing_sites)
+        ),
+        "kernel_bridge_body_stack_index_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_stack_index_sites)
+        ),
+        "kernel_bridge_body_stack_index_outside_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_stack_index_outside_sites)
+        ),
+        "kernel_bridge_body_stack_index_gap_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_stack_index_gap_sites)
+        ),
+        "kernel_bridge_body_g_eax_assignment_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                bool(item["g_eax_assignment_sites"])
+                for item in kernel_bridge_body_provenance.values()
+            )
+        ),
+        "kernel_bridge_body_pointer_translation_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                item["pointer_translation_sites"] > 0
+                for item in kernel_bridge_body_provenance.values()
+            )
+        ),
+        "kernel_bridge_body_guest_memory_access_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                item["guest_memory_access_sites"] > 0
+                for item in kernel_bridge_body_provenance.values()
+            )
         ),
         "kernel_abi_stack_status": (
             "not-supplied"
@@ -3922,6 +4176,7 @@ def audit(
         "kernel_return_contract_evidence": kernel_return_contract_evidence or {},
         "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
+        "kernel_bridge_body_provenance": kernel_bridge_body_provenance or {},
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
         "kernel_register_constant_arguments": kernel_register_constant_arguments,

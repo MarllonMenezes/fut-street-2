@@ -20,9 +20,9 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.07
+## Estado verificável — release 2.08
 
-O release 2.07 mantém a proveniência local completa dos sete callbacks
+O release 2.08 mantém a proveniência local completa dos sete callbacks
 dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
 inventaria todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
 dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
@@ -79,6 +79,19 @@ retornos vazios. Essa evidência conecta o call site ao corpo host e expõe áre
 prioritárias, mas não prova que os códigos de status, ponteiros, efeitos
 colaterais ou regras de ownership sejam compatíveis com o Xbox.
 
+A checagem seguinte atravessa a fronteira entre o adaptador e o corpo do
+bridge: `kernel_bridge_body_status=verified-source-body-with-stack-index-gap`
+para os `48` sites dos `19` targets usados. Todos os `19/19` corpos
+`bridge_*` foram localizados; em `47/48` sites, os índices `STACK_ARG`
+observados ficam dentro da contagem ABI esperada e da janela de argumentos
+empurrados pelo caller. O único caso sem `STACK_ARG` identificado é o ordinal
+178 (`bridge_MmPersistContiguousMemory`), por isso ele continua sendo uma
+lacuna de forma, não uma aprovação da chamada. A fonte também mostra
+atribuição a `g_eax` em `18/19` targets, `XBOX_TO_NATIVE` em `8/19` e
+`BRIDGE_MEM32` em `9/19`. Essa checagem registra somente formas textuais do
+corpo host e a comparação estática de janelas; não prova tipos, convenção
+completa, tradução de ponteiros, semântica Xbox ou efeitos colaterais.
+
 A checagem do callback indexado continua em
 `dynamic_callback_container_field_provenance_sites=2`: nos dois chamadores do
 subgrafo direto, o argumento de objeto tem a forma local `ebp - 16`, os campos
@@ -97,7 +110,7 @@ com `170/170` ferramentas e `6/6` prompts, mas não há Hopper, Ghidra ou IDA
 local; ao receber o `default.xbe`, `rea analyze` retornou
 `target_unavailable / unsupported binary format`. Portanto o REA não acrescenta
 evidência ao XBE neste release e não foi usado para criar bindings. A suíte
-Python passou `93/93`; a prontidão segue `NOT_READY` e a estimativa conservadora
+Python passou `94/94`; a prontidão segue `NOT_READY` e a estimativa conservadora
 do PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
 
 ## Histórico verificável
