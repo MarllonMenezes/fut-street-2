@@ -62,6 +62,11 @@ KERNEL_RESOLVER_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"\(ULONG_PTR\)(?P<target>[^;]+);"
 )
+KERNEL_FUNCTION_DEFINITION_RE = re.compile(
+    r"(?ms)^\s*(?:(?:static|inline|__declspec\([^)]*\))\s+)*"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*\s+)+"
+    r"(?P<name>xbox_[A-Za-z0-9_]+)\s*\([^;{}]*\)\s*\{"
+)
 DYNAMIC_OBJECT_FIELD_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584\)\s*="
 )
@@ -662,6 +667,48 @@ def recover_kernel_resolver_cases(source_path: Path) -> dict[int, str]:
     return cases
 
 
+def recover_kernel_implementation_evidence(
+    resolver_source: Path,
+    resolver_cases: dict[int, str],
+) -> dict[str, dict[str, Any]]:
+    """Locate source definitions for functions returned by the kernel resolver.
+
+    A definition is only source-presence evidence.  It does not prove ABI,
+    Xbox-compatible behavior, side effects, or that a body marked as a stub is
+    sufficient for the game's call site.  The resolver source's directory is
+    treated as the root because the implementations live beside
+    ``kernel_thunks.c`` in the pinned XboxRecomp source tree.
+    """
+    target_names = sorted(
+        {
+            target.strip().lstrip("&")
+            for target in resolver_cases.values()
+            if target.strip().lstrip("&").startswith("xbox_")
+        }
+    )
+    evidence = {
+        target: {
+            "status": "missing-source-definition",
+            "sources": [],
+        }
+        for target in target_names
+    }
+    source_root = resolver_source.parent
+    for source_path in sorted(source_root.rglob("*.c")):
+        text = source_path.read_text(encoding="utf-8")
+        for match in KERNEL_FUNCTION_DEFINITION_RE.finditer(text):
+            target = match.group("name")
+            if target not in evidence:
+                continue
+            line_number = text.count("\n", 0, match.start()) + 1
+            relative_source = source_path.relative_to(source_root).as_posix()
+            evidence[target]["sources"].append(
+                f"{relative_source}:{line_number}"
+            )
+            evidence[target]["status"] = "source-definition-found"
+    return evidence
+
+
 def recover_dynamic_target_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
@@ -996,6 +1043,23 @@ def audit(
         kernel_resolver_cases,
         dynamic_target_writers,
     )
+    used_kernel_cases = (
+        {}
+        if kernel_resolver_cases is None
+        else {
+            int(row["kernel_ordinal"]): kernel_resolver_cases[int(row["kernel_ordinal"])]
+            for row in classified
+            if row["classification"] == "kernel-thunk-slot"
+            and int(row["kernel_ordinal"]) in kernel_resolver_cases
+        }
+    )
+    kernel_implementation_evidence = (
+        None
+        if kernel_source is None
+        else recover_kernel_implementation_evidence(
+            kernel_source, used_kernel_cases
+        )
+    )
     skip_branch_evidence = recover_indirect_call_skip_branches(
         generated_dir, classified
     )
@@ -1003,6 +1067,14 @@ def audit(
         evidence = skip_branch_evidence.get(str(row["call_site"]))
         if evidence is not None:
             row["conditional_skip_evidence"] = evidence
+        resolver_target = row.get("host_resolver_target")
+        if kernel_implementation_evidence is not None and resolver_target:
+            implementation = kernel_implementation_evidence.get(resolver_target)
+            if implementation is None:
+                row["host_implementation_status"] = "resolver-target-not-a-function"
+            else:
+                row["host_implementation_status"] = implementation["status"]
+                row["host_implementation_sources"] = implementation["sources"]
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -1054,6 +1126,40 @@ def audit(
         ),
         "kernel_resolver_missing_sites": (
             None if kernel_resolver_cases is None else len(resolver_missing_sites)
+        ),
+        "kernel_implementation_status": (
+            "not-supplied"
+            if kernel_implementation_evidence is None
+            else (
+                "verified-source-definitions"
+                if all(
+                    item["status"] == "source-definition-found"
+                    for item in kernel_implementation_evidence.values()
+                )
+                else "missing-source-definitions"
+            )
+        ),
+        "kernel_implementation_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else len(kernel_implementation_evidence)
+        ),
+        "kernel_implementation_defined_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else sum(
+                item["status"] == "source-definition-found"
+                for item in kernel_implementation_evidence.values()
+            )
+        ),
+        "kernel_implementation_missing_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else sorted(
+                target
+                for target, item in kernel_implementation_evidence.items()
+                if item["status"] != "source-definition-found"
+            )
         ),
         "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
         "dynamic_target_direct_writer_counts": dynamic_writer_counts,
@@ -1141,6 +1247,7 @@ def audit(
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
+        "kernel_implementation_evidence": kernel_implementation_evidence or {},
     }
 
 

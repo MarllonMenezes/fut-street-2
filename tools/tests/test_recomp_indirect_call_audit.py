@@ -13,6 +13,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
     recover_indirect_call_skip_branches,
+    recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
 )
@@ -273,6 +274,31 @@ void xbe_entry_point(void)
             result["sites"][0]["host_resolver_target"],
             "xbox_IoCreateFile",
         )
+
+    def test_distinguishes_kernel_source_definition_from_missing_definition(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            resolver = root / "kernel_thunks.c"
+            resolver.write_text(
+                "case 66: return (ULONG_PTR)xbox_IoCreateFile;\n"
+                "case 67: return (ULONG_PTR)xbox_Missing;\n",
+                encoding="utf-8",
+            )
+            (root / "kernel_file.c").write_text(
+                "NTSTATUS __stdcall xbox_IoCreateFile(\n"
+                "    PVOID a)\n"
+                "{\n"
+                "    return STATUS_SUCCESS;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            cases = {66: "xbox_IoCreateFile", 67: "xbox_Missing"}
+            evidence = recover_kernel_implementation_evidence(resolver, cases)
+
+        self.assertEqual(evidence["xbox_IoCreateFile"]["status"], "source-definition-found")
+        self.assertEqual(evidence["xbox_IoCreateFile"]["sources"], ["kernel_file.c:1"])
+        self.assertEqual(evidence["xbox_Missing"]["status"], "missing-source-definition")
 
     def test_keeps_dynamic_writer_shapes_separate(self) -> None:
         functions = [
