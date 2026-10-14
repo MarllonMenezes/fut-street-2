@@ -15,6 +15,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_object_field_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
+    recover_fixed_callback_consumer_provenance,
     recover_fixed_slot_writes,
     recover_indirect_call_nonzero_guards,
     recover_indirect_call_skip_branches,
@@ -336,6 +337,64 @@ void sub_00001000(void)
         self.assertEqual(
             evidence[0]["pushes"][1]["source_assignment"]["rhs"],
             "ebp + -16",
+        )
+
+    def test_recovers_fixed_callback_consumer_push_shape(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "sub_00001000",
+                "calls_to": [],
+            },
+            {
+                "start": "0x2000",
+                "end": "0x2010",
+                "name": "sub_00002000",
+                "calls_to": ["0x1000"],
+            },
+        ]
+        generated_source = """
+void sub_00001000(void)
+{
+    eax = MEM32(0x360A70);
+    if (CMP_EQ(_fa, _fb)) goto loc_0000100F;
+    { uint32_t _icall_target = eax; PUSH32(esp, 0x0000100Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Fu); }
+loc_0000100F: ;
+}
+void sub_00002000(void)
+{
+    PUSH32(esp, ebx);
+    PUSH32(esp, 0x0000200Au); RECOMP_ABI_CALL(0x00001000u, sub_00001000); /* call */
+}
+"""
+        classified = [
+            {
+                "call_site": "0x0000100F",
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "runtime-initialized-fixed-slot",
+                "fixed_slot": "0x00360A70",
+                "target_expression": "eax",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_fixed_callback_consumer_provenance(
+                generated, classified, functions
+            )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["fixed_slot"], "0x00360A70")
+        self.assertEqual(evidence[0]["consumer_call_site"], "0x0000100F")
+        self.assertEqual(evidence[0]["caller_name"], "sub_00002000")
+        self.assertEqual([item["operand"] for item in evidence[0]["pushes"]], ["ebx"])
+        self.assertEqual(
+            evidence[0]["status"], "fixed-callback-consumer-push-shape-observed"
         )
 
     def test_recovers_indexed_callback_container_field_shapes(self) -> None:

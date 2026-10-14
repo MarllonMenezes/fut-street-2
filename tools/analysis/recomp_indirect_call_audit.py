@@ -1981,6 +1981,64 @@ def recover_dynamic_callback_caller_provenance(
     return results
 
 
+def recover_fixed_callback_consumer_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    functions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Inventory callers of the two unresolved fixed callback consumers.
+
+    The fixed slots are still unresolved BSS-backed callback values.  This
+    helper reuses the bounded direct-call push analysis for their consumer
+    functions and adds the slot/read site that led to each consumer.  It does
+    not infer the callback implementation, parameter types, or runtime path.
+    """
+    unresolved_fixed_rows = [
+        row
+        for row in classified
+        if row.get("classification") == "runtime-initialized-fixed-slot"
+        and row.get("fixed_slot") in {"0x00360A70", "0x00360AA8"}
+    ]
+    if not unresolved_fixed_rows:
+        return []
+    synthetic_rows = [
+        {
+            "function": row["function"],
+            "function_name": row.get("function_name", ""),
+            "classification": "dynamic-memory-target",
+        }
+        for row in unresolved_fixed_rows
+    ]
+    target_callers = recover_dynamic_callback_caller_provenance(
+        generated_dir, synthetic_rows, functions, None
+    )
+    fixed_by_function = {
+        _address(row["function"]): row for row in unresolved_fixed_rows
+    }
+    results: list[dict[str, Any]] = []
+    for caller in target_callers:
+        consumer = fixed_by_function.get(_address(caller["target"]))
+        if consumer is None:
+            continue
+        results.append(
+            {
+                "fixed_slot": consumer["fixed_slot"],
+                "consumer_function": consumer["function"],
+                "consumer_function_name": consumer.get("function_name", ""),
+                "consumer_call_site": consumer["call_site"],
+                "consumer_target_expression": consumer["target_expression"],
+                "caller": caller["caller"],
+                "caller_name": caller["caller_name"],
+                "source": caller["source"],
+                "target": caller["target"],
+                "target_name": caller["target_name"],
+                "pushes": caller["pushes"],
+                "status": "fixed-callback-consumer-push-shape-observed",
+            }
+        )
+    return results
+
+
 def recover_dynamic_callback_container_field_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -2728,6 +2786,21 @@ def audit(
         for row in dynamic_callback_all_caller_provenance
         if _address(row["caller"]) not in directly_reachable
     ]
+    fixed_callback_consumer_provenance = (
+        recover_fixed_callback_consumer_provenance(
+            generated_dir, classified, functions
+        )
+    )
+    fixed_callback_consumer_direct_provenance = [
+        row
+        for row in fixed_callback_consumer_provenance
+        if _address(row["caller"]) in directly_reachable
+    ]
+    fixed_callback_consumer_outside_direct_provenance = [
+        row
+        for row in fixed_callback_consumer_provenance
+        if _address(row["caller"]) not in directly_reachable
+    ]
     dynamic_callback_container_field_provenance = (
         recover_dynamic_callback_container_field_provenance(
             generated_dir, classified, dynamic_callback_caller_provenance
@@ -3355,6 +3428,37 @@ def audit(
                 for row in dynamic_callback_outside_direct_caller_provenance
             )
         ),
+        "fixed_callback_consumer_provenance_sites": len(
+            fixed_callback_consumer_provenance
+        ),
+        "fixed_callback_consumer_direct_provenance_sites": len(
+            fixed_callback_consumer_direct_provenance
+        ),
+        "fixed_callback_consumer_outside_direct_provenance_sites": len(
+            fixed_callback_consumer_outside_direct_provenance
+        ),
+        "fixed_callback_consumer_provenance_status": (
+            "fixed-bss-consumer-push-shape-observed"
+            if fixed_callback_consumer_provenance
+            else "no-fixed-bss-consumer-push-shape-observed"
+        ),
+        "fixed_callback_consumer_counts": dict(
+            Counter(
+                row["fixed_slot"] for row in fixed_callback_consumer_provenance
+            )
+        ),
+        "fixed_callback_consumer_direct_counts": dict(
+            Counter(
+                row["fixed_slot"]
+                for row in fixed_callback_consumer_direct_provenance
+            )
+        ),
+        "fixed_callback_consumer_outside_direct_counts": dict(
+            Counter(
+                row["fixed_slot"]
+                for row in fixed_callback_consumer_outside_direct_provenance
+            )
+        ),
         "dynamic_callback_container_field_provenance_sites": len(
             dynamic_callback_container_field_provenance
         ),
@@ -3459,6 +3563,13 @@ def audit(
         ),
         "dynamic_callback_outside_direct_caller_provenance": (
             dynamic_callback_outside_direct_caller_provenance
+        ),
+        "fixed_callback_consumer_provenance": fixed_callback_consumer_provenance,
+        "fixed_callback_consumer_direct_provenance": (
+            fixed_callback_consumer_direct_provenance
+        ),
+        "fixed_callback_consumer_outside_direct_provenance": (
+            fixed_callback_consumer_outside_direct_provenance
         ),
         "dynamic_callback_container_field_provenance": (
             dynamic_callback_container_field_provenance
