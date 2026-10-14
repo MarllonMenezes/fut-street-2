@@ -1364,6 +1364,197 @@ def recover_indexed_callback_root_handoff_provenance(
     }
 
 
+def recover_indexed_callback_frame_seed_provenance(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    caller_provenance: list[dict[str, Any]],
+    xbe: dict[str, Any],
+) -> dict[str, Any]:
+    """Recover static table-slot candidates from frame-helper stack seeds.
+
+    For callers that both invoke ``sub_002710F4`` and pass ``ebp - 0x10`` to
+    ``sub_0026E70A``, the helper's two preceding pushes are recorded as the
+    frame-size and frame-seed shapes.  When the latest local frame-index
+    assignment is constant, the corresponding guard and target dwords are
+    read from the supplied XBE image.  A zero guard remains a skipped or
+    runtime-dependent callback, not a resolved call.
+    """
+    target_name = f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}"
+    known_functions = {_address(row["start"]) for row in functions}
+    source_cache: dict[str, list[str]] = {}
+    rows: list[dict[str, Any]] = []
+    push_re = re.compile(r"^\s*PUSH32\(esp,\s*(?P<value>[^)]+)\);")
+    frame_index_re = re.compile(
+        r"^\s*MEM32\(ebp\s*\+\s*(?:-0x4|-4)\)\s*=\s*"
+        r"(?P<value>[^;]+);"
+    )
+
+    for caller in caller_provenance:
+        if _address(caller.get("target", 0)) != INDEXED_CALLBACK_CONSUMER_FUNCTION:
+            continue
+        object_push = (caller.get("pushes") or [{}])[-1]
+        object_expression = str(object_push.get("operand", "")).strip()
+        source_assignment = object_push.get("source_assignment")
+        if isinstance(source_assignment, dict):
+            object_expression = str(
+                source_assignment.get("rhs", object_expression)
+            ).strip()
+        if re.sub(r"\s+", "", object_expression).lower() not in {
+            "ebp+-0x10",
+            "ebp+-16",
+        }:
+            continue
+
+        source_text, separator, line_text = str(caller.get("source", "")).rpartition(":")
+        source_path = generated_dir / source_text if separator else None
+        if source_path is None or not line_text.isdigit() or not source_path.exists():
+            continue
+        lines = source_cache.setdefault(
+            source_text, source_path.read_text(encoding="utf-8").splitlines()
+        )
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        function_start = 0
+        function_name = ""
+        for index in range(call_index, -1, -1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(lines[index])
+            if symbol_match is not None:
+                function_start = index
+                function_name = symbol_match.group(1)
+                break
+        helper_call_index = None
+        for index in range(call_index - 1, function_start - 1, -1):
+            if "0x002710F4u, sub_002710F4" in lines[index]:
+                helper_call_index = index
+                break
+        if helper_call_index is None:
+            continue
+
+        pushes: list[dict[str, Any]] = []
+        for index in range(helper_call_index - 1, function_start - 1, -1):
+            push_match = push_re.match(lines[index])
+            if push_match is None:
+                if pushes:
+                    break
+                continue
+            pushes.append(
+                {
+                    "source": f"{source_text}:{index + 1}",
+                    "expression": lines[index].strip(),
+                    "value": push_match.group("value").strip(),
+                }
+            )
+            if len(pushes) == 2:
+                break
+        pushes.reverse()
+        if len(pushes) != 2:
+            continue
+        frame_size_expression = pushes[0]["value"]
+        frame_seed_expression = pushes[1]["value"]
+        seed_match = re.fullmatch(
+            r"0x(?P<value>[0-9A-Fa-f]{1,8})u?", frame_seed_expression
+        )
+        if seed_match is None:
+            continue
+        frame_seed = int(seed_match.group("value"), 16)
+
+        register_constants: dict[str, int] = {}
+        frame_index: int | None = None
+        frame_index_assignment: dict[str, Any] | None = None
+        for index in range(helper_call_index + 1, call_index):
+            line = lines[index]
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match is not None:
+                register = assignment_match.group("register")
+                rhs = assignment_match.group("rhs").strip()
+                literal_match = REGISTER_LITERAL_RE.fullmatch(rhs)
+                if literal_match is not None:
+                    register_constants[register] = int(
+                        literal_match.group("value"), 0
+                    )
+                else:
+                    register_constants.pop(register, None)
+            index_match = frame_index_re.match(line)
+            if index_match is None:
+                continue
+            value = index_match.group("value").strip()
+            literal_match = REGISTER_LITERAL_RE.fullmatch(value)
+            if literal_match is not None:
+                frame_index = int(literal_match.group("value"), 0)
+            elif REGISTER_NAME_RE.fullmatch(value) and value in register_constants:
+                frame_index = register_constants[value]
+            else:
+                frame_index = None
+            frame_index_assignment = {
+                "source": f"{source_text}:{index + 1}",
+                "expression": line.strip(),
+                "value": value,
+            }
+        row: dict[str, Any] = {
+            "caller": caller.get("caller"),
+            "caller_name": caller.get("caller_name", function_name),
+            "source": caller.get("source"),
+            "frame_size_expression": frame_size_expression,
+            "frame_seed_expression": frame_seed_expression,
+            "frame_seed": f"0x{frame_seed:08X}",
+            "frame_seed_pushes": pushes,
+            "frame_index": frame_index,
+            "frame_index_assignment": frame_index_assignment,
+            "consumer": target_name,
+        }
+        if frame_index is None:
+            row["status"] = "frame-seed-observed-index-unresolved"
+            rows.append(row)
+            continue
+        base = (
+            frame_seed
+            + frame_index * INDEXED_CALLBACK_CONSUMER_RECORD_STRIDE
+        )
+        guard_offset = _file_offset(xbe["sections"], len(xbe["data"]), base + 4)
+        target_offset = _file_offset(xbe["sections"], len(xbe["data"]), base + 8)
+        if guard_offset is None or target_offset is None:
+            row["status"] = "frame-seed-table-slot-outside-xbe"
+            rows.append(row)
+            continue
+        guard = _u32(xbe["data"], guard_offset)
+        target = _u32(xbe["data"], target_offset)
+        row["table_slot_base"] = f"0x{base:08X}"
+        row["guard_address"] = f"0x{base + 4:08X}"
+        row["guard_raw_value"] = f"0x{guard:08X}"
+        row["target_address"] = f"0x{base + 8:08X}"
+        row["target_raw_value"] = f"0x{target:08X}"
+        row["target_is_known_function_start"] = target in known_functions
+        row["status"] = (
+            "static-slot-candidate-zero-guard"
+            if guard == 0 and target != 0
+            else (
+                "static-slot-candidate-nonzero-guard"
+                if target != 0
+                else "static-slot-empty"
+            )
+        )
+        rows.append(row)
+
+    return {
+        "status": (
+            "static-frame-seed-slot-candidates-observed"
+            if rows
+            else "no-static-frame-seed-slot-candidates-observed"
+        ),
+        "consumer_function": target_name,
+        "sites": rows,
+        "site_count": len(rows),
+        "zero_guard_sites": sum(
+            row.get("status") == "static-slot-candidate-zero-guard"
+            for row in rows
+        ),
+        "known_function_target_sites": sum(
+            bool(row.get("target_is_known_function_start")) for row in rows
+        ),
+    }
+
+
 def recover_indirect_call_skip_branches(
     generated_dir: Path,
     sites: list[dict[str, Any]],
@@ -4729,6 +4920,14 @@ def audit(
             generated_dir, classified, functions, None
         )
     )
+    indexed_callback_frame_seed_provenance = (
+        recover_indexed_callback_frame_seed_provenance(
+            generated_dir,
+            functions,
+            dynamic_callback_all_caller_provenance,
+            xbe,
+        )
+    )
     dynamic_callback_outside_direct_caller_provenance = [
         row
         for row in dynamic_callback_all_caller_provenance
@@ -6026,6 +6225,22 @@ def audit(
                 "table_root_link_status", "not-assessed"
             )
         ),
+        "dynamic_indexed_callback_frame_seed_status": (
+            indexed_callback_frame_seed_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_frame_seed_sites": (
+            indexed_callback_frame_seed_provenance.get("site_count", 0)
+        ),
+        "dynamic_indexed_callback_frame_seed_zero_guard_sites": (
+            indexed_callback_frame_seed_provenance.get("zero_guard_sites", 0)
+        ),
+        "dynamic_indexed_callback_frame_seed_known_target_sites": (
+            indexed_callback_frame_seed_provenance.get(
+                "known_function_target_sites", 0
+            )
+        ),
         "dynamic_indexed_callback_object_provenance_status": (
             dynamic_indexed_callback_object_provenance.get(
                 "status", "not-assessed"
@@ -6408,6 +6623,9 @@ def audit(
         ),
         "dynamic_indexed_callback_frame_provenance": (
             dynamic_indexed_callback_frame_provenance
+        ),
+        "dynamic_indexed_callback_frame_seed_provenance": (
+            indexed_callback_frame_seed_provenance
         ),
         "dynamic_indexed_callback_object_provenance": (
             dynamic_indexed_callback_object_provenance

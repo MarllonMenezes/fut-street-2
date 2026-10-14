@@ -19,6 +19,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_target_writes,
     recover_dynamic_indexed_writer_root_link_provenance,
     recover_indexed_callback_root_handoff_provenance,
+    recover_indexed_callback_frame_seed_provenance,
     recover_fixed_callback_consumer_provenance,
     recover_fixed_slot_writes,
     recover_indirect_call_nonzero_guards,
@@ -1264,6 +1265,77 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["frame_helper_calls"]), 1)
         self.assertEqual(len(evidence["consumer_calls"]), 1)
         self.assertEqual(evidence["direct_frame_writes"], [])
+
+    def test_recovers_static_frame_seed_slot_candidate(self) -> None:
+        source = (
+            "void sub_00277AB1(void)\n"
+            "{\n"
+            "    PUSH32(esp, 8);\n"
+            "    PUSH32(esp, 0x303F58);\n"
+            "    RECOMP_ABI_CALL(0x002710F4u, sub_002710F4);\n"
+            "    ebx = 1; /* indexed record 1 */\n"
+            "    MEM32(ebp + -4) = ebx;\n"
+            "    PUSH32(esp, 0xFFFFFFFFu);\n"
+            "    eax = ebp + -16;\n"
+            "    PUSH32(esp, eax);\n"
+            "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+            "}\n"
+        )
+        image = bytearray(0x40000)
+        struct.pack_into("<I", image, 0x3F68, 0)
+        struct.pack_into("<I", image, 0x3F6C, 0x1000)
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(source, encoding="utf-8")
+            evidence = recover_indexed_callback_frame_seed_provenance(
+                generated,
+                [{"start": "0x00001000", "name": "sub_00001000"}],
+                [
+                    {
+                        "caller": "0x00277AB1",
+                        "caller_name": "sub_00277AB1",
+                        "source": "recomp_0000.c:10",
+                        "target": "0x0026E70A",
+                        "pushes": [
+                            {
+                                "operand": "eax",
+                                "source_assignment": {
+                                    "rhs": "ebp + -16"
+                                },
+                            }
+                        ],
+                    }
+                ],
+                {
+                    "data": image,
+                    "sections": [
+                        {
+                            "virtual_address": 0x300000,
+                            "virtual_size": 0x10000,
+                            "file_address": 0,
+                            "file_size": 0x10000,
+                        }
+                    ],
+                },
+            )
+
+        self.assertEqual(
+            evidence["status"],
+            "static-frame-seed-slot-candidates-observed",
+        )
+        self.assertEqual(evidence["site_count"], 1)
+        self.assertEqual(evidence["zero_guard_sites"], 1)
+        self.assertEqual(evidence["known_function_target_sites"], 1)
+        self.assertEqual(
+            evidence["sites"][0]["status"],
+            "static-slot-candidate-zero-guard",
+        )
+        self.assertEqual(
+            evidence["sites"][0]["table_slot_base"],
+            "0x00303F64",
+        )
+        self.assertEqual(evidence["sites"][0]["target_raw_value"], "0x00001000")
 
     def test_recovers_indexed_callback_frame_without_root_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

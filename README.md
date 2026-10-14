@@ -20,6 +20,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.27
+
+O release 2.27 cruza os seeds empilhados pelos chamadores com os slots
+consumidos por `sub_0026E70A`. O helper `sub_002710F4` recebe os seeds
+`0x003034F8`, `0x00303F58` e `0x00303F68`; os três sites observados usam o
+índice de frame `0`, `0` e `1`, respectivamente. Aplicando o stride de `0xC`
+do registro do consumidor e lendo somente a imagem estática do XBE, os `3/3`
+slots têm guard bruto `0x00000000` e alvo bruto em início de função conhecido:
+`0x002732AE`, `0x00277B45` e `0x00277C46`.
+
+Isso é uma evidência estática de candidatos de slot, não prova de execução,
+alcance em runtime, inicialização efetiva da tabela ou identidade semântica
+entre esses ponteiros e callbacks jogáveis. O guard zero indica que, na imagem
+observada, o caminho localmente não habilita a chamada; o alvo não-zero é
+somente um valor estático candidato. A busca delimitada nas fontes C geradas
+também não encontrou escrita direta para esses seeds. Os sete callbacks
+dinâmicos continuam sem destino final provado.
+
+A suíte Python passou `108/108`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.26
 
 O release 2.26 aprofunda a relação entre a raiz indexada e o consumidor
