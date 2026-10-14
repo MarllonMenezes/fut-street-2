@@ -90,6 +90,11 @@ void sub_00001020(void)
         generated_source = """
 void xbe_entry_point(void)
 {
+    eax = 0x00011010;
+    ecx = eax;
+    { uint32_t _icall_target = MEM32(ecx); PUSH32(esp, 0x00001007u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001007u); }
+    ecx = ecx + 4;
+    { uint32_t _icall_target = MEM32(ecx); PUSH32(esp, 0x00001007u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001007u); }
     eax = MEM32(ecx + 0x584);
     { uint32_t _icall_target = eax; PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
     { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); PUSH32(esp, 0x00001009u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001009u); }
@@ -111,17 +116,27 @@ void xbe_entry_point(void)
         self.assertEqual(
             result["summary"]["dynamic_target_family_counts"],
             {
-                "dynamic-memory-target": 1,
+                "dynamic-memory-target": 3,
                 "dynamic-object-field-target": 1,
                 "dynamic-indexed-record-target": 1,
             },
         )
+        self.assertEqual(result["sites"][0]["target_memory_address"], "0x00011010")
+        self.assertEqual(result["sites"][0]["target_memory_raw_value"], "0x80000042")
         self.assertEqual(
-            result["sites"][0]["target_source_expression"],
+            result["sites"][1]["target_memory_address_range"],
+            "0x00011010-0x00011014",
+        )
+        self.assertEqual(
+            result["sites"][1]["target_memory_raw_values"],
+            {"0x00011010": "0x80000042", "0x00011014": "0x00000000"},
+        )
+        self.assertEqual(
+            result["sites"][2]["target_source_expression"],
             "MEM32(ecx + 0x584)",
         )
         self.assertEqual(
-            result["sites"][0]["classification"],
+            result["sites"][2]["classification"],
             "dynamic-object-field-target",
         )
 

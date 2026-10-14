@@ -30,6 +30,14 @@ REGISTER_ASSIGNMENT_RE = re.compile(
 REGISTER_WRITE_RE = re.compile(
     r"\b(?P<register>eax|ebx|ecx|edx|esi|edi)\s*(?:\+\+|--|\+=|-=|&=|\|=)"
 )
+REGISTER_LITERAL_RE = re.compile(
+    r"^(?P<value>0x[0-9A-Fa-f]{1,8}|[0-9]+)u?$"
+)
+REGISTER_NAME_RE = re.compile(r"^(?P<register>eax|ebx|ecx|edx|esi|edi)$")
+REGISTER_ADD_RE = re.compile(
+    r"^(?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+    r"(?P<value>0x[0-9A-Fa-f]{1,8}|[0-9]+)$"
+)
 INDIRECT_CALL_RE = re.compile(
     r"_icall_target\s*=\s*(?P<expression>[^;]+);.*?"
     r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*0x(?P<site>[0-9A-Fa-f]{8})u\)"
@@ -146,6 +154,8 @@ def recover_indirect_sites(
         current: int | None = None
         register_aliases: dict[str, int] = {}
         register_memory_sources: dict[str, str] = {}
+        register_constants: dict[str, int] = {}
+        register_constant_history: dict[str, set[int]] = {}
         for line_number, line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         ):
@@ -154,6 +164,8 @@ def recover_indirect_sites(
                 current = address_by_name.get(symbol_match.group(1))
                 register_aliases = {}
                 register_memory_sources = {}
+                register_constants = {}
+                register_constant_history = {}
                 prcb_cache_sequence_pending = False
                 prcb_cache_loaded = False
                 prcb_cache_guard_checked = False
@@ -186,6 +198,24 @@ def recover_indirect_sites(
                     row["target_alias_register"] = expression
                 if expression in register_memory_sources:
                     row["target_source_expression"] = register_memory_sources[expression]
+                memory_register_match = re.fullmatch(
+                    r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)",
+                    expression,
+                )
+                if memory_register_match is not None:
+                    register = memory_register_match.group("register")
+                    if register in register_constants:
+                        addresses = register_constant_history.get(
+                            register, {register_constants[register]}
+                        )
+                        if len(addresses) == 1:
+                            row["target_memory_address"] = (
+                                f"0x{next(iter(addresses)):08X}"
+                            )
+                        else:
+                            row["target_memory_address_range"] = (
+                                f"0x{min(addresses):08X}-0x{max(addresses):08X}"
+                            )
                 if (
                     expression == "MEM32(eax + 0x14)"
                     and prcb_cache_guard_checked
@@ -207,10 +237,54 @@ def recover_indirect_sites(
                 else:
                     register_aliases.pop(register, None)
                     register_memory_sources.pop(register, None)
+                literal_match = REGISTER_LITERAL_RE.fullmatch(rhs)
+                if literal_match is not None:
+                    value_text = literal_match.group("value")
+                    value = int(value_text, 0)
+                    register_constants[register] = value
+                    register_constant_history[register] = {value}
+                else:
+                    register_match = REGISTER_NAME_RE.fullmatch(rhs)
+                    add_match = REGISTER_ADD_RE.fullmatch(rhs)
+                    if (
+                        register_match is not None
+                        and register_match.group("register") in register_constants
+                    ):
+                        source_register = register_match.group("register")
+                        register_constants[register] = register_constants[
+                            source_register
+                        ]
+                        register_constant_history[register] = set(
+                            register_constant_history.get(
+                                source_register, {register_constants[register]}
+                            )
+                        )
+                    elif (
+                        add_match is not None
+                        and add_match.group("register") in register_constants
+                    ):
+                        source_register = add_match.group("register")
+                        delta = int(add_match.group("value"), 0)
+                        source_history = set(
+                            register_constant_history.get(
+                                source_register, {register_constants[source_register]}
+                            )
+                        )
+                        register_constants[register] = (
+                            register_constants[source_register] + delta
+                        )
+                        register_constant_history[register] = source_history | {
+                            value + delta for value in source_history
+                        }
+                    else:
+                        register_constants.pop(register, None)
+                        register_constant_history.pop(register, None)
             for write_match in REGISTER_WRITE_RE.finditer(line):
                 register = write_match.group("register")
                 register_aliases.pop(register, None)
                 register_memory_sources.pop(register, None)
+                register_constants.pop(register, None)
+                register_constant_history.pop(register, None)
     if not sites:
         raise ValueError("no indirect calls found in directly reachable generated code")
     return sites
@@ -254,6 +328,27 @@ def classify_sites(
         aliased_slot = site.get("aliased_fixed_slot")
         if fixed_match is None and aliased_slot is None:
             row["classification"] = _dynamic_target_family(site)
+            if "target_memory_address" in row:
+                target_address = int(str(row["target_memory_address"]), 0)
+                target_offset = _file_offset(sections, len(data), target_address)
+                row["target_memory_raw_value"] = (
+                    None
+                    if target_offset is None
+                    else f"0x{_u32(data, target_offset):08X}"
+                )
+            elif "target_memory_address_range" in row:
+                start_text, end_text = str(row["target_memory_address_range"]).split("-")
+                start_address = int(start_text, 0)
+                end_address = int(end_text, 0)
+                raw_values: dict[str, str | None] = {}
+                for address in range(start_address, end_address + 1, 4):
+                    target_offset = _file_offset(sections, len(data), address)
+                    raw_values[f"0x{address:08X}"] = (
+                        None
+                        if target_offset is None
+                        else f"0x{_u32(data, target_offset):08X}"
+                    )
+                row["target_memory_raw_values"] = raw_values
             rows.append(row)
             continue
 
