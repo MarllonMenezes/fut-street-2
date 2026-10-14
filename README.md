@@ -14,6 +14,42 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.37
+
+O release 2.37 fecha um gate de forma para o callback de memória em
+`0x0024D3B1`. A auditoria recupera, no código C gerado, o range
+`[0x0030BC94, 0x0030BC98)`: span de `4` bytes, stride de `4` e exatamente `1`
+slot. Os endpoints literais, o incremento do registrador, a comparação do
+limite e o guard não-zero foram observados localmente. No caminho alternativo,
+há um candidato de chamada direta para `sub_002504AF` antes do retorno; a
+auditoria mantém essa relação como candidato de fluxo, não como semântica
+provada.
+
+A imagem estática mantém os valores do range zerados e não há writer direto
+provado no C gerado. Portanto o gate comprova uma forma delimitada de polling e
+branch, mas não prova registro externo, ABI do callback, destino runtime ou
+semântica original. Os `7` callbacks dinâmicos continuam sem destino final
+provado. A suíte Python passou em `117/117`, a prontidão permanece `NOT_READY`
+e a estimativa conservadora do PoC jogável continua em aproximadamente
+`31% concluído / 69% restante`. A análise permanece estática e não executa o
+XBE.
+
+## Estado verificável — release 2.36
+
+O release 2.36 classifica os valores observados nos `8` writers candidatos
+do campo de objeto `+0x584`, todos fora do subgrafo diretamente alcançável.
+A auditoria encontra `2` escritas constantes zero, `2` constantes que não
+coincidem com nenhum início de função gerada, `1` leitura de volta do próprio
+campo e `3` fontes não constantes ainda não resolvidas.
+
+Esse gate reduz a forma dos candidatos, mas não prova que qualquer writer
+alcance o mesmo objeto de `0x002512A4`, nem que as fontes não constantes sejam
+funções. Nenhuma constante foi promovida a callback; os `7` callbacks
+dinâmicos continuam sem destino runtime provado. A suíte Python passou em
+`116/116`, a prontidão permanece `NOT_READY` e a estimativa conservadora do
+PoC jogável continua em aproximadamente `31% concluído / 69% restante`. A
+análise permanece estática e não executa o XBE.
+
 ## Estado verificável — release 2.35
 
 O release 2.35 junta a evidência do frame de callback indexado com a raiz
@@ -31,22 +67,6 @@ tabela é implementada. A suíte Python passou em `115/115`, a prontidão
 permanece `NOT_READY` e a estimativa conservadora do PoC jogável continua em
 aproximadamente `31% concluído / 69% restante`. A análise permanece estática e
 não executa o XBE.
-
-## Estado verificável — release 2.36
-
-O release 2.36 classifica os valores observados nos `8` writers candidatos
-do campo de objeto `+0x584`, todos fora do subgrafo diretamente alcançável.
-A auditoria encontra `2` escritas constantes zero, `2` constantes que não
-coincidem com nenhum início de função gerada, `1` leitura de volta do próprio
-campo e `3` fontes não constantes ainda não resolvidas.
-
-Esse gate reduz a forma dos candidatos, mas não prova que qualquer writer
-alcance o mesmo objeto de `0x002512A4`, nem que as fontes não constantes sejam
-funções. Nenhuma constante foi promovida a callback; os `7` callbacks
-dinâmicos continuam sem destino runtime provado. A suíte Python passou em
-`116/116`, a prontidão permanece `NOT_READY` e a estimativa conservadora do
-PoC jogável continua em aproximadamente `31% concluído / 69% restante`. A
-análise permanece estática e não executa o XBE.
 
 ## Estado verificável — release 2.34
 

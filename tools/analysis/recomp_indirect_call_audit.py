@@ -3414,6 +3414,295 @@ def classify_dynamic_object_field_writer_values(
     }
 
 
+def recover_dynamic_memory_callback_range_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Recover a bounded range/branch shape around memory-backed callbacks.
+
+    The helper recognizes only local generated-C evidence: literal range
+    endpoints, a register increment, a bound comparison, and direct calls
+    observed before the indirect call.  A direct call is retained as a
+    fallback *candidate*; this does not prove control-flow dominance,
+    external registration, callback ABI, or original semantics.
+    """
+    target_rows = {
+        _address(row["call_site"]): row
+        for row in classified
+        if row.get("classification") == "dynamic-memory-target"
+    }
+    if not target_rows:
+        return {
+            "status": "no-dynamic-memory-callback-sites-observed",
+            "semantics": "not-claimed",
+            "site_count": 0,
+            "complete_sites": 0,
+            "fallback_candidate_sites": 0,
+            "rows": [],
+        }
+
+    range_re = re.compile(
+        r"^0x(?P<start>[0-9A-Fa-f]{1,8})-0x(?P<end>[0-9A-Fa-f]{1,8})$"
+    )
+    target_register_re = re.compile(
+        r"^MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)$"
+    )
+    increment_same_re = re.compile(
+        r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+        r"(?P=register)\s*\+\s*(?P<value>0x[0-9A-Fa-f]{1,8}|[0-9]+);"
+    )
+    increment_compound_re = re.compile(
+        r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+=\s*"
+        r"(?P<value>0x[0-9A-Fa-f]{1,8}|[0-9]+);"
+    )
+    call_site_re = re.compile(
+        r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*"
+        r"0x(?P<site>[0-9A-Fa-f]{8})u\)"
+    )
+    function_by_name = {
+        str(row.get("function_name", "")): _address(row["function"])
+        for row in target_rows.values()
+        if row.get("function_name")
+    }
+    rows: list[dict[str, Any]] = []
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current_function_name = ""
+        current_function_address: int | None = None
+        body_before: list[tuple[int, str]] = []
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current_function_name = symbol_match.group(1)
+                current_function_address = function_by_name.get(current_function_name)
+                body_before = []
+            if current_function_address is None:
+                continue
+
+            call_match = call_site_re.search(line)
+            if call_match is not None:
+                call_site = int(call_match.group("site"), 16)
+                row = target_rows.get(call_site)
+                if row is not None:
+                    range_match = range_re.fullmatch(
+                        str(row.get("target_memory_address_range", ""))
+                    )
+                    target_match = target_register_re.fullmatch(
+                        str(row.get("target_expression", ""))
+                    )
+                    start_address = (
+                        None
+                        if range_match is None
+                        else int(range_match.group("start"), 16)
+                    )
+                    end_address = (
+                        None
+                        if range_match is None
+                        else int(range_match.group("end"), 16)
+                    )
+                    target_register = (
+                        None
+                        if target_match is None
+                        else target_match.group("register")
+                    )
+
+                    literal_assignments: list[dict[str, Any]] = []
+                    for prior_line_number, prior_line in body_before:
+                        assignment_match = REGISTER_ASSIGNMENT_RE.match(prior_line)
+                        if assignment_match is None:
+                            continue
+                        literal_match = REGISTER_LITERAL_RE.fullmatch(
+                            assignment_match.group("rhs").strip()
+                        )
+                        if literal_match is None:
+                            continue
+                        literal_assignments.append(
+                            {
+                                "register": assignment_match.group("register"),
+                                "value": int(literal_match.group("value"), 0),
+                                "source": f"{source_path.name}:{prior_line_number}",
+                                "expression": prior_line.strip(),
+                            }
+                        )
+
+                    start_assignments = [
+                        item
+                        for item in literal_assignments
+                        if start_address is not None
+                        and item["value"] == start_address
+                    ]
+                    end_assignments = [
+                        item
+                        for item in literal_assignments
+                        if end_address is not None
+                        and item["value"] == end_address
+                    ]
+                    end_registers = {item["register"] for item in end_assignments}
+                    increment_rows: list[dict[str, Any]] = []
+                    for prior_line_number, prior_line in body_before:
+                        increment_match = increment_same_re.fullmatch(prior_line)
+                        if increment_match is None:
+                            increment_match = increment_compound_re.fullmatch(
+                                prior_line
+                            )
+                        if increment_match is None:
+                            continue
+                        if target_register is not None and (
+                            increment_match.group("register") != target_register
+                        ):
+                            continue
+                        increment_rows.append(
+                            {
+                                "register": increment_match.group("register"),
+                                "value": int(increment_match.group("value"), 0),
+                                "source": f"{source_path.name}:{prior_line_number}",
+                                "expression": prior_line.strip(),
+                            }
+                        )
+
+                    bound_comparison_rows: list[dict[str, Any]] = []
+                    for index, (_, prior_line) in enumerate(body_before):
+                        if "CMP_B(" not in prior_line:
+                            continue
+                        window = " ".join(
+                            body_line
+                            for _, body_line in body_before[max(0, index - 3) : index + 1]
+                        )
+                        if (
+                            target_register is not None
+                            and target_register in window
+                            and (not end_registers or any(
+                                register in window for register in end_registers
+                            ))
+                        ):
+                            bound_comparison_rows.append(
+                                {
+                                    "source": f"{source_path.name}:{body_before[index][0]}",
+                                    "expression": prior_line.strip(),
+                                }
+                            )
+
+                    fallback_candidates: list[dict[str, Any]] = []
+                    for prior_line_number, prior_line in body_before:
+                        direct_call = DIRECT_ABI_CALL_RE.search(prior_line)
+                        if direct_call is None:
+                            continue
+                        fallback_candidates.append(
+                            {
+                                "target": f"0x{int(direct_call.group('target'), 16):08X}",
+                                "name": direct_call.group("name"),
+                                "source": f"{source_path.name}:{prior_line_number}",
+                                "expression": prior_line.strip(),
+                            }
+                        )
+
+                    stride_values = {
+                        int(item["value"])
+                        for item in increment_rows
+                    }
+                    span_bytes = (
+                        None
+                        if start_address is None or end_address is None
+                        else end_address - start_address
+                    )
+                    stride_bytes = (
+                        next(iter(stride_values))
+                        if len(stride_values) == 1
+                        else None
+                    )
+                    slot_count = (
+                        None
+                        if span_bytes is None
+                        or stride_bytes in (None, 0)
+                        or span_bytes % stride_bytes != 0
+                        else span_bytes // stride_bytes
+                    )
+                    nonzero_guard_observed = (
+                        "conditional_nonzero_guard_evidence" in row
+                    )
+                    complete = all(
+                        (
+                            range_match is not None,
+                            target_register is not None,
+                            bool(start_assignments),
+                            bool(end_assignments),
+                            bool(increment_rows),
+                            bool(bound_comparison_rows),
+                            nonzero_guard_observed,
+                            slot_count is not None,
+                        )
+                    )
+                    rows.append(
+                        {
+                            "call_site": row["call_site"],
+                            "function": row["function"],
+                            "function_name": row.get(
+                                "function_name", current_function_name
+                            ),
+                            "source": f"{source_path.name}:{line_number}",
+                            "target_expression": row.get("target_expression"),
+                            "target_register": target_register,
+                            "range_start": (
+                                None
+                                if start_address is None
+                                else f"0x{start_address:08X}"
+                            ),
+                            "range_end_exclusive": (
+                                None
+                                if end_address is None
+                                else f"0x{end_address:08X}"
+                            ),
+                            "span_bytes": span_bytes,
+                            "stride_bytes": stride_bytes,
+                            "slot_count": slot_count,
+                            "start_assignments": start_assignments,
+                            "end_assignments": end_assignments,
+                            "increment_rows": increment_rows,
+                            "bound_comparison_rows": bound_comparison_rows,
+                            "nonzero_guard_observed": nonzero_guard_observed,
+                            "fallback_candidates": fallback_candidates,
+                            "fallback_candidate_status": (
+                                "direct-call-before-indirect-path-observed"
+                                if fallback_candidates
+                                else "no-direct-call-candidate-observed"
+                            ),
+                            "static_snapshot_values": row.get(
+                                "target_memory_raw_values", {}
+                            ),
+                            "status": (
+                                "verified-bounded-range-loop-and-guard-shape"
+                                if complete
+                                else "incomplete-bounded-range-loop-shape"
+                            ),
+                        }
+                    )
+            body_before.append((line_number, line))
+
+    complete_sites = sum(
+        row["status"] == "verified-bounded-range-loop-and-guard-shape"
+        for row in rows
+    )
+    fallback_candidate_sites = sum(bool(row["fallback_candidates"]) for row in rows)
+    return {
+        "status": (
+            "verified-bounded-dynamic-memory-callback-range-provenance"
+            if rows and complete_sites == len(rows)
+            else (
+                "partial-bounded-dynamic-memory-callback-range-provenance"
+                if rows
+                else "no-dynamic-memory-callback-range-provenance-observed"
+            )
+        ),
+        "semantics": "not-claimed",
+        "site_count": len(rows),
+        "complete_sites": complete_sites,
+        "fallback_candidate_sites": fallback_candidate_sites,
+        "rows": rows,
+    }
+
+
 def recover_dynamic_object_field_writer_overlap_provenance(
     writers: list[dict[str, Any]],
     functions: list[dict[str, Any]],
@@ -5919,6 +6208,21 @@ def audit(
         )
         if observed_register_constants:
             row["kernel_register_constant_arguments"] = observed_register_constants
+    dynamic_memory_callback_range_provenance = (
+        recover_dynamic_memory_callback_range_provenance(generated_dir, classified)
+    )
+    dynamic_memory_callback_range_by_site = {
+        item["call_site"]: item
+        for item in dynamic_memory_callback_range_provenance["rows"]
+    }
+    for row in classified:
+        memory_range_provenance = dynamic_memory_callback_range_by_site.get(
+            row["call_site"]
+        )
+        if memory_range_provenance is not None:
+            row["dynamic_memory_callback_range_provenance"] = (
+                memory_range_provenance
+            )
     dynamic_callback_initialization = classify_dynamic_callback_initialization(
         classified,
         prcb_host_layout_evidence,
@@ -6775,6 +7079,23 @@ def audit(
         "dynamic_callback_initialization_semantics": (
             dynamic_callback_initialization["semantics"]
         ),
+        "dynamic_memory_callback_range_status": (
+            dynamic_memory_callback_range_provenance["status"]
+        ),
+        "dynamic_memory_callback_range_sites": (
+            dynamic_memory_callback_range_provenance["site_count"]
+        ),
+        "dynamic_memory_callback_range_complete_sites": (
+            dynamic_memory_callback_range_provenance["complete_sites"]
+        ),
+        "dynamic_memory_callback_range_fallback_candidate_sites": (
+            dynamic_memory_callback_range_provenance[
+                "fallback_candidate_sites"
+            ]
+        ),
+        "dynamic_memory_callback_range_semantics": (
+            dynamic_memory_callback_range_provenance["semantics"]
+        ),
         "dynamic_callback_producer_boundary_status": (
             dynamic_callback_producer_boundary["status"]
         ),
@@ -7434,6 +7755,9 @@ def audit(
         "dynamic_object_field_writer_context": dynamic_object_field_writer_context,
         "dynamic_object_field_writer_value_classification": (
             dynamic_object_field_writer_value_classification
+        ),
+        "dynamic_memory_callback_range_provenance": (
+            dynamic_memory_callback_range_provenance
         ),
         "dynamic_object_field_writer_overlap_provenance": (
             dynamic_object_field_writer_overlap_provenance

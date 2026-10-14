@@ -17,6 +17,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_object_field_provenance,
     recover_dynamic_object_field_writer_context,
     classify_dynamic_object_field_writer_values,
+    recover_dynamic_memory_callback_range_provenance,
     recover_dynamic_object_field_writer_overlap_provenance,
     recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
@@ -984,6 +985,72 @@ void sub_00001000(void)
         self.assertEqual(evidence["constant_non_function_sites"], 1)
         self.assertEqual(evidence["same_field_readback_sites"], 1)
         self.assertEqual(evidence["unresolved_value_sites"], 1)
+
+    def test_recovers_bounded_dynamic_memory_callback_range_and_fallback_shape(
+        self,
+    ) -> None:
+        generated_source = """
+void sub_00001000(void)
+{
+    eax = 0x00100000;
+    ecx = eax;
+    eax = 0x00100004;
+    ecx = ecx + 4;
+    _fa = (uint32_t)(ecx);
+    _fb = (uint32_t)(eax);
+    if (CMP_B(_fa, _fb)) goto loc_00001010;
+    RECOMP_ABI_CALL(0x00002000u, sub_00002000);
+loc_00001010: ;
+    {
+        uint32_t _icall_target = MEM32(ecx);
+        RECOMP_ICALL_SAFE_AT(_icall_target, g_esp, 0x00001020u);
+    }
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source,
+                encoding="utf-8",
+            )
+            evidence = recover_dynamic_memory_callback_range_provenance(
+                generated,
+                [
+                    {
+                        "call_site": "0x00001020",
+                        "function": "0x00001000",
+                        "function_name": "sub_00001000",
+                        "target_expression": "MEM32(ecx)",
+                        "classification": "dynamic-memory-target",
+                        "target_memory_address_range": (
+                            "0x00100000-0x00100004"
+                        ),
+                        "target_memory_raw_values": {
+                            "0x00100000": "0x00000000",
+                            "0x00100004": "0x00000000",
+                        },
+                        "conditional_nonzero_guard_evidence": {
+                            "kind": "nonzero-guarded-indirect-call"
+                        },
+                    }
+                ],
+            )
+
+        self.assertEqual(
+            evidence["status"],
+            "verified-bounded-dynamic-memory-callback-range-provenance",
+        )
+        self.assertEqual(evidence["site_count"], 1)
+        self.assertEqual(evidence["complete_sites"], 1)
+        self.assertEqual(evidence["fallback_candidate_sites"], 1)
+        row = evidence["rows"][0]
+        self.assertEqual(row["range_start"], "0x00100000")
+        self.assertEqual(row["range_end_exclusive"], "0x00100004")
+        self.assertEqual(row["span_bytes"], 4)
+        self.assertEqual(row["stride_bytes"], 4)
+        self.assertEqual(row["slot_count"], 1)
+        self.assertEqual(row["fallback_candidates"][0]["name"], "sub_00002000")
 
     def test_recovers_bounded_indexed_writer_root_link_provenance(self) -> None:
         generated_source = """
