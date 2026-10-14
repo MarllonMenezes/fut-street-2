@@ -1346,6 +1346,24 @@ def recover_kernel_bridge_body_provenance(
     return evidence
 
 
+def classify_kernel_bridge_implementation_delegation(
+    resolver_target: str | None,
+    host_call_targets: list[str],
+    host_implementation_body_markers: list[dict[str, Any]],
+) -> str:
+    """Classify whether a bridge delegates or adapts its resolver target."""
+    if resolver_target is not None and resolver_target in host_call_targets:
+        return "direct-implementation-delegation"
+    if host_call_targets:
+        return "bridge-local-adaptation"
+    if any(
+        marker["kind"] == "explicit-stub-or-no-op"
+        for marker in host_implementation_body_markers
+    ):
+        return "bridge-local-adaptation-over-host-stub"
+    return "bridge-local-no-direct-host-call"
+
+
 def recover_kernel_stdcall_arg_bytes(source_path: Path) -> dict[int, int]:
     """Read the bridge's expected caller-stack byte count per ordinal."""
     lines = source_path.read_text(encoding="utf-8").splitlines()
@@ -3386,6 +3404,13 @@ def audit(
                 row["kernel_bridge_body_return_disposition"] = bridge_body[
                     "return_disposition"
                 ]
+                row["kernel_bridge_implementation_delegation_status"] = (
+                    classify_kernel_bridge_implementation_delegation(
+                        resolver_target,
+                        bridge_body["host_call_targets"],
+                        row.get("host_implementation_body_markers", []),
+                    )
+                )
                 expected_bytes = (
                     None
                     if kernel_stdcall_arg_bytes is None
@@ -3541,6 +3566,25 @@ def audit(
         if row.get("kernel_bridge_body_return_disposition")
         == "missing-g-eax-and-no-terminal-call"
     ]
+    bridge_delegation_target_statuses: dict[str, set[str]] = {}
+    for row in kernel_slots:
+        bridge_target = row.get("host_bridge_target")
+        delegation_status = row.get("kernel_bridge_implementation_delegation_status")
+        if bridge_target is None or delegation_status is None:
+            continue
+        bridge_delegation_target_statuses.setdefault(bridge_target, set()).add(
+            delegation_status
+        )
+    bridge_delegation_inconsistent_targets = [
+        target
+        for target, statuses in bridge_delegation_target_statuses.items()
+        if len(statuses) != 1
+    ]
+    bridge_delegation_target_counts = Counter(
+        next(iter(statuses))
+        for statuses in bridge_delegation_target_statuses.values()
+        if len(statuses) == 1
+    )
     abi_count_sites = [
         row for row in kernel_slots if row.get("kernel_abi_stack_status") == "argument-count-match"
     ]
@@ -3799,6 +3843,48 @@ def audit(
             None
             if kernel_bridge_body_provenance is None
             else len(bridge_body_return_disposition_missing_sites)
+        ),
+        "kernel_bridge_delegation_status": (
+            "not-supplied"
+            if kernel_bridge_body_provenance is None
+            else (
+                "verified-source-bridge-delegation-classification"
+                if len(bridge_delegation_inconsistent_targets) == 0
+                and len(bridge_delegation_target_statuses)
+                == len(kernel_bridge_body_provenance)
+                else "incomplete-or-inconsistent-bridge-delegation-classification"
+            )
+        ),
+        "kernel_bridge_delegation_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_delegation_target_statuses)
+        ),
+        "kernel_bridge_direct_delegation_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_delegation_target_counts[
+                "direct-implementation-delegation"
+            ]
+        ),
+        "kernel_bridge_local_adaptation_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_delegation_target_counts["bridge-local-adaptation"]
+        ),
+        "kernel_bridge_local_no_direct_host_call_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_delegation_target_counts[
+                "bridge-local-no-direct-host-call"
+            ]
+        ),
+        "kernel_bridge_adaptation_over_host_stub_targets": (
+            None
+            if kernel_bridge_body_provenance is None
+            else bridge_delegation_target_counts[
+                "bridge-local-adaptation-over-host-stub"
+            ]
         ),
         "kernel_bridge_body_g_eax_assignment_targets": (
             None
@@ -4428,6 +4514,10 @@ def audit(
         "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
         "kernel_bridge_body_provenance": kernel_bridge_body_provenance or {},
+        "kernel_bridge_delegation_evidence": {
+            target: {"statuses": sorted(statuses)}
+            for target, statuses in bridge_delegation_target_statuses.items()
+        },
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
         "kernel_register_constant_arguments": kernel_register_constant_arguments,

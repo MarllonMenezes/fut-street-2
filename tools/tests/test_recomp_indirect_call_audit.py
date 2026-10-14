@@ -22,6 +22,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_indirect_call_skip_branches,
     recover_kernel_bridge_cases,
     recover_kernel_bridge_body_provenance,
+    classify_kernel_bridge_implementation_delegation,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -902,6 +903,28 @@ void xbe_entry_point(void)
         )
         self.assertEqual(
             len(evidence["bridge_IoCreateFile"]["explicit_no_op_markers"]), 1
+        )
+
+    def test_classifies_kernel_bridge_delegation_shape(self) -> None:
+        self.assertEqual(
+            classify_kernel_bridge_implementation_delegation(
+                "xbox_Foo", ["xbox_Foo"], []
+            ),
+            "direct-implementation-delegation",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_implementation_delegation(
+                "xbox_Foo", ["xbox_Helper"], []
+            ),
+            "bridge-local-adaptation",
+        )
+        self.assertEqual(
+            classify_kernel_bridge_implementation_delegation(
+                "xbox_Foo",
+                [],
+                [{"kind": "explicit-stub-or-no-op"}],
+            ),
+            "bridge-local-adaptation-over-host-stub",
         )
 
     def test_counts_kernel_call_push_arguments(self) -> None:
