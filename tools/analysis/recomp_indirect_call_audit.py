@@ -135,6 +135,20 @@ DYNAMIC_ABSOLUTE_WRITE_RE = re.compile(
 DYNAMIC_REGISTER_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*="
 )
+DYNAMIC_CALLBACK_OBJECT_LOAD_RE = re.compile(
+    r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+    r"MEM32\(esp\s*\+\s*0x20\);"
+)
+DYNAMIC_CALLBACK_FIELD_LOAD_RE = re.compile(
+    r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+    r"MEM32\((?P<object>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+    r"(?P<offset>0x[0-9A-Fa-f]+|[0-9]+)\);"
+)
+LOCAL_MEMORY_WRITE_RE = re.compile(
+    r"^\s*MEM32\((?P<base>eax|ebx|ecx|edx|esi|edi|ebp)\s*\+\s*"
+    r"(?P<offset>-?0x[0-9A-Fa-f]+|-?[0-9]+)\)\s*=\s*"
+    r"(?P<rhs>[^;]+);"
+)
 DYNAMIC_WRITER_ASSIGNMENT_RE = re.compile(r"=\s*(?P<value>[^;]+);")
 DYNAMIC_OBJECT_FIELD_ALIAS_RE = re.compile(
     r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584$"
@@ -1878,6 +1892,233 @@ def recover_dynamic_callback_caller_provenance(
     return results
 
 
+def recover_dynamic_callback_container_field_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    caller_provenance: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover bounded caller-local writes for an indexed callback container.
+
+    The indexed callback currently loads its table and index from object fields
+    at ``+8`` and ``+0xC``.  This helper first records those load shapes in the
+    callback body, then maps them onto a caller-provided pointer only when the
+    last pushed object argument has a simple ``register + constant`` shape.
+    It reports writes observed before the direct call; it does not prove CFG
+    dominance, object identity, field types, or an indirect callback target.
+    """
+    indexed_rows = [
+        row
+        for row in classified
+        if row.get("classification") == "dynamic-indexed-record-target"
+    ]
+    if not indexed_rows or not caller_provenance:
+        return []
+
+    target_rows: dict[int, list[dict[str, Any]]] = {}
+    for row in indexed_rows:
+        target_rows.setdefault(_address(row["function"]), []).append(row)
+
+    target_names = {
+        address: str(rows[0].get("function_name", ""))
+        for address, rows in target_rows.items()
+    }
+    target_address_by_name = {
+        name: address for address, name in target_names.items() if name
+    }
+    target_layouts: dict[int, dict[int, list[dict[str, Any]]]] = {}
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current_name = ""
+        current_address: int | None = None
+        function_lines: list[tuple[int, str]] = []
+
+        def flush_function() -> None:
+            if current_address not in target_rows or not function_lines:
+                return
+            object_registers: set[str] = set()
+            field_loads: dict[int, list[dict[str, Any]]] = {}
+            target_sites = {
+                _address(row["call_site"]): row
+                for row in target_rows[current_address]
+            }
+            for local_index, (line_number, body_line) in enumerate(function_lines):
+                object_load = DYNAMIC_CALLBACK_OBJECT_LOAD_RE.match(body_line)
+                if object_load is not None:
+                    object_registers.add(object_load.group("register"))
+                field_load = DYNAMIC_CALLBACK_FIELD_LOAD_RE.match(body_line)
+                if field_load is None or field_load.group("object") not in object_registers:
+                    continue
+                offset = int(field_load.group("offset"), 0)
+                if offset not in {0x8, 0xC}:
+                    continue
+                field_loads.setdefault(offset, []).append(
+                    {
+                        "source": f"{source_path.name}:{line_number}",
+                        "expression": body_line.strip(),
+                        "object_register": field_load.group("object"),
+                        "loaded_register": field_load.group("register"),
+                        "local_index": local_index,
+                    }
+                )
+            for call_site in target_sites:
+                matching_lines = [
+                    index
+                    for index, (_, body_line) in enumerate(function_lines)
+                    if f"0x{call_site:08X}u" in body_line
+                    and INDIRECT_CALL_RE.search(body_line) is not None
+                ]
+                if not matching_lines:
+                    continue
+                call_index = matching_lines[-1]
+                target_layouts[current_address] = {
+                    offset: [
+                        {
+                            key: value
+                            for key, value in item.items()
+                            if key != "local_index"
+                        }
+                        for item in loads
+                        if item["local_index"] <= call_index
+                    ]
+                    for offset, loads in field_loads.items()
+                    if any(item["local_index"] <= call_index for item in loads)
+                }
+                if target_layouts[current_address]:
+                    return
+
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                flush_function()
+                current_name = symbol_match.group(1)
+                current_address = target_address_by_name.get(current_name)
+                function_lines = [(line_number, line)]
+                continue
+            if current_name:
+                function_lines.append((line_number, line))
+        flush_function()
+
+    pointer_expression_re = re.compile(
+        r"^(?P<base>eax|ebx|ecx|edx|esi|edi|ebp)"
+        r"(?:\s*\+\s*(?P<offset>-?0x[0-9A-Fa-f]+|-?[0-9]+))?$"
+    )
+    results: list[dict[str, Any]] = []
+    source_cache: dict[str, list[str]] = {}
+    for caller in caller_provenance:
+        target_address = _address(caller["target"])
+        layout = target_layouts.get(target_address)
+        if not layout:
+            continue
+        source_text, line_text = str(caller["source"]).split(":", 1)
+        call_line_number = int(line_text)
+        if source_text not in source_cache:
+            source_cache[source_text] = (
+                generated_dir / source_text
+            ).read_text(encoding="utf-8").splitlines()
+        lines = source_cache[source_text]
+        call_index = call_line_number - 1
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]) is not None:
+                function_start = index
+                break
+
+        pushes = caller.get("pushes", [])
+        if not pushes:
+            continue
+        object_push = pushes[-1]
+        object_expression = str(object_push.get("operand", "")).strip()
+        source_assignment = object_push.get("source_assignment")
+        if isinstance(source_assignment, dict):
+            object_expression = str(source_assignment.get("rhs", object_expression)).strip()
+        pointer_match = pointer_expression_re.fullmatch(object_expression)
+        field_evidence: list[dict[str, Any]] = []
+        if pointer_match is None:
+            for field_offset in sorted(layout):
+                field_evidence.append(
+                    {
+                        "field_offset": f"0x{field_offset:X}",
+                        "target_loads": layout[field_offset],
+                        "writes": [],
+                        "status": "object-pointer-expression-unresolved",
+                    }
+                )
+            results.append(
+                {
+                    "caller": caller["caller"],
+                    "caller_name": caller["caller_name"],
+                    "source": caller["source"],
+                    "target": caller["target"],
+                    "target_name": target_names.get(target_address, caller.get("target_name", "")),
+                    "object_push": object_push,
+                    "object_pointer_expression": object_expression,
+                    "container_fields": field_evidence,
+                    "status": "object-pointer-expression-unresolved",
+                }
+            )
+            continue
+
+        pointer_base = pointer_match.group("base")
+        pointer_delta = (
+            int(pointer_match.group("offset"), 0)
+            if pointer_match.group("offset") is not None
+            else 0
+        )
+        for field_offset in sorted(layout):
+            expected_offset = pointer_delta + field_offset
+            writes: list[dict[str, Any]] = []
+            for index in range(function_start, call_index):
+                write_match = LOCAL_MEMORY_WRITE_RE.match(lines[index])
+                if write_match is None:
+                    continue
+                if write_match.group("base") != pointer_base:
+                    continue
+                if int(write_match.group("offset"), 0) != expected_offset:
+                    continue
+                rhs = write_match.group("rhs").strip()
+                writes.append(
+                    {
+                        "source": f"{source_text}:{index + 1}",
+                        "expression": lines[index].strip(),
+                        "rhs": rhs,
+                        "value_kind": _dynamic_writer_value_kind(rhs),
+                    }
+                )
+            field_evidence.append(
+                {
+                    "field_offset": f"0x{field_offset:X}",
+                    "address_expression": (
+                        f"{pointer_base} + {expected_offset}"
+                    ),
+                    "target_loads": layout[field_offset],
+                    "writes": writes,
+                    "status": (
+                        "caller-local-field-write-shape-observed"
+                        if writes
+                        else "no-proven-caller-local-field-write"
+                    ),
+                }
+            )
+        results.append(
+            {
+                "caller": caller["caller"],
+                "caller_name": caller["caller_name"],
+                "source": caller["source"],
+                "target": caller["target"],
+                "target_name": target_names.get(target_address, caller.get("target_name", "")),
+                "object_push": object_push,
+                "object_pointer_expression": object_expression,
+                "container_fields": field_evidence,
+                "status": (
+                    "caller-local-field-write-shape-observed"
+                    if any(field["writes"] for field in field_evidence)
+                    else "no-proven-caller-local-field-write"
+                ),
+            }
+        )
+    return results
+
+
 def classify_sites(
     sites: list[dict[str, Any]],
     xbe: dict[str, Any],
@@ -2259,6 +2500,11 @@ def audit(
     )
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
+    )
+    dynamic_callback_container_field_provenance = (
+        recover_dynamic_callback_container_field_provenance(
+            generated_dir, classified, dynamic_callback_caller_provenance
+        )
     )
     for row in classified:
         provenance = dynamic_source_provenance.get(str(row["call_site"]))
@@ -2828,6 +3074,19 @@ def audit(
             if dynamic_callback_caller_provenance
             else "no-direct-caller-push-shape-observed"
         ),
+        "dynamic_callback_container_field_provenance_sites": len(
+            dynamic_callback_container_field_provenance
+        ),
+        "dynamic_callback_container_field_write_sites": sum(
+            len(field["writes"])
+            for row in dynamic_callback_container_field_provenance
+            for field in row["container_fields"]
+        ),
+        "dynamic_callback_container_field_provenance_status": (
+            "caller-local-field-write-shape-observed"
+            if dynamic_callback_container_field_provenance
+            else "no-indexed-callback-container-provenance"
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -2892,6 +3151,9 @@ def audit(
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_source_provenance": dynamic_source_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
+        "dynamic_callback_container_field_provenance": (
+            dynamic_callback_container_field_provenance
+        ),
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,

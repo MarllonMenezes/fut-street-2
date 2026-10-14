@@ -11,6 +11,7 @@ from pathlib import Path
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
     recover_dynamic_callback_caller_provenance,
+    recover_dynamic_callback_container_field_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
@@ -289,6 +290,70 @@ void sub_00001000(void)
             evidence[0]["pushes"][1]["source_assignment"]["rhs"],
             "ebp + -16",
         )
+
+    def test_recovers_indexed_callback_container_field_shapes(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "sub_00001000",
+                "calls_to": [],
+            },
+            {
+                "start": "0x2000",
+                "end": "0x2010",
+                "name": "sub_00002000",
+                "calls_to": ["0x1000"],
+            },
+        ]
+        generated_source = """
+void sub_00001000(void)
+{
+    eax = MEM32(esp + 0x20);
+    ebx = MEM32(eax + 8);
+    esi = MEM32(eax + 0xC);
+    { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); PUSH32(esp, 0x0000100Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Fu); }
+}
+void sub_00002000(void)
+{
+    eax = ebp + -16;
+    MEM32(ebp + -4) = ebx;
+    PUSH32(esp, 0xFFFFFFFFu);
+    PUSH32(esp, eax);
+    PUSH32(esp, 0x0000200Au); RECOMP_ABI_CALL(0x00001000u, sub_00001000); /* call */
+}
+"""
+        rows = [
+            {
+                "call_site": "0x0000100F",
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "dynamic-indexed-record-target",
+                "target_expression": "MEM32(ebx + esi * 4 + 8)",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            callers = recover_dynamic_callback_caller_provenance(
+                generated, rows, functions, {0x1000, 0x2000}
+            )
+            evidence = recover_dynamic_callback_container_field_provenance(
+                generated, rows, callers
+            )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["object_pointer_expression"], "ebp + -16")
+        fields = {row["field_offset"]: row for row in evidence[0]["container_fields"]}
+        self.assertEqual(fields["0x8"]["status"], "no-proven-caller-local-field-write")
+        self.assertEqual(
+            fields["0xC"]["status"],
+            "caller-local-field-write-shape-observed",
+        )
+        self.assertEqual(fields["0xC"]["writes"][0]["rhs"], "ebx")
 
     def test_resolves_proven_bss_slot_initializer(self) -> None:
         functions = [
