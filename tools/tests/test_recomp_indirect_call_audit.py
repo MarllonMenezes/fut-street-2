@@ -12,6 +12,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     audit,
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
+    recover_indirect_call_skip_branches,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
 )
@@ -389,6 +390,42 @@ void xbe_entry_point(void)
 
         self.assertEqual(len(writes[0x11180]), 1)
         self.assertEqual(writes[0x11180][0]["kind"], "register-derived")
+
+    def test_records_branch_that_skips_indirect_call(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    if (CMP_EQ(_fa, _fb)) goto loc_00001010;
+    { uint32_t _icall_target = eax; PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
+loc_00001010: ;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_indirect_call_skip_branches(
+                generated,
+                [
+                    {
+                        "call_site": "0x1008",
+                        "source": "recomp_0000.c:5",
+                    }
+                ],
+            )
+
+        self.assertEqual(evidence["0x1008"]["kind"], "conditional-branch-skips-call")
+        self.assertEqual(evidence["0x1008"]["target_label"], "loc_00001010")
 
 
 if __name__ == "__main__":

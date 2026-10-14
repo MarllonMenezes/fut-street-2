@@ -75,6 +75,10 @@ DYNAMIC_ABSOLUTE_WRITE_RE = re.compile(
 DYNAMIC_REGISTER_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*="
 )
+LOCAL_BRANCH_RE = re.compile(
+    r"^\s*if\s*\((?P<condition>.+)\)\s+goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
+)
+LOCAL_LABEL_RE = re.compile(r"^\s*(?P<label>loc_[0-9A-Fa-f]+):\s*;")
 XBE_MAGIC = b"XBEH"
 SECTION_SIZE = 0x38
 KERNEL_XOR_KEYS = (0x5B6D40B6, 0xEFB1F152)
@@ -488,6 +492,80 @@ def recover_fixed_slot_writes(
             for write_match in REGISTER_WRITE_RE.finditer(line):
                 register_constants.pop(write_match.group("register"), None)
     return writes
+
+
+def recover_indirect_call_skip_branches(
+    generated_dir: Path,
+    sites: list[dict[str, Any]],
+    window: int = 32,
+) -> dict[str, dict[str, Any]]:
+    """Find nearby local branches whose target is after an indirect call.
+
+    This is deliberately weaker than proving a null guard: it records only
+    that generated control flow has a conditional jump before the call to a
+    local label after the call.  The condition may depend on other state, so
+    callers must not use this as a resolved-target claim.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    evidence: dict[str, dict[str, Any]] = {}
+    for site in sites:
+        source_text = str(site.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_start = index
+                break
+        label_lines = {}
+        for index in range(call_index + 1, len(lines)):
+            label_match = LOCAL_LABEL_RE.match(lines[index])
+            if label_match is not None:
+                label_lines[label_match.group("label")] = index
+
+        candidates: list[tuple[int, int, str, str]] = []
+        first_index = max(function_start, call_index - window)
+        for index in range(first_index, call_index):
+            branch_match = LOCAL_BRANCH_RE.match(lines[index])
+            if branch_match is None:
+                continue
+            label = branch_match.group("label")
+            target_index = label_lines.get(label)
+            if target_index is None or target_index <= call_index:
+                continue
+            candidates.append(
+                (
+                    index,
+                    target_index,
+                    branch_match.group("condition"),
+                    label,
+                )
+            )
+        if not candidates:
+            continue
+        branch_index, target_index, condition, label = max(
+            candidates, key=lambda item: item[0]
+        )
+        call_site = str(site["call_site"])
+        evidence[call_site] = {
+            "kind": "conditional-branch-skips-call",
+            "branch_source": f"{source_path.name}:{branch_index + 1}",
+            "condition": condition,
+            "target_label": label,
+            "target_source": f"{source_path.name}:{target_index + 1}",
+        }
+    return evidence
 
 
 def recover_prcb_cache_writes(
@@ -918,6 +996,13 @@ def audit(
         kernel_resolver_cases,
         dynamic_target_writers,
     )
+    skip_branch_evidence = recover_indirect_call_skip_branches(
+        generated_dir, classified
+    )
+    for row in classified:
+        evidence = skip_branch_evidence.get(str(row["call_site"]))
+        if evidence is not None:
+            row["conditional_skip_evidence"] = evidence
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -935,6 +1020,18 @@ def audit(
         family: len(rows)
         for family, rows in dynamic_target_outside_direct_writers.items()
     }
+    dynamic_classifications = {
+        "dynamic-memory-target",
+        "dynamic-object-field-target",
+        "dynamic-indexed-record-target",
+        "prcb-guarded-dynamic-callback",
+    }
+    dynamic_skip_branch_sites = [
+        row
+        for row in classified
+        if row["classification"] in dynamic_classifications
+        and "conditional_skip_evidence" in row
+    ]
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
         "entry_point": f"0x{entry:08X}",
@@ -978,6 +1075,8 @@ def audit(
             slot: len(rows)
             for slot, rows in runtime_fixed_slot_writer_inventory.items()
         },
+        "conditional_skip_branch_sites": len(skip_branch_evidence),
+        "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -1041,6 +1140,7 @@ def audit(
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
+        "conditional_skip_branches": skip_branch_evidence,
     }
 
 
