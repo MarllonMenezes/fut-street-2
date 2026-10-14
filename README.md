@@ -20,7 +20,31 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.20
+## Estado verificável — release 2.21
+
+O release 2.21 aprofunda a cadeia do callback indexado
+`sub_00273217/sub_00277AB1 -> sub_0026E70A`. A nova auditoria confirma, em
+`2/2` chamadores diretos do subgrafo, que o argumento-objeto é construído como
+`ebp - 0x10` depois de `sub_002710F4`; no helper, a forma observada é
+`MEM32(XBOX_FS_BASE) = eax` após `eax = ebp - 16`. Isso registra a proveniência
+estática do frame publicado em `FS`, não um tipo C nem um callback resolvido.
+
+O mesmo relatório mantém a separação estrutural já observada no consumidor:
+`objeto+0x8` fornece a tabela, `objeto+0xC` fornece o índice, o stride do
+registro é `0xC`, o guard está em `+0x4` e o alvo dinâmico em `+0x8`. Em
+`sub_00277AB1`, a expressão independente da raiz BSS
+`MEM32(ecx * 4 + 0x00361360)` também é observada, mas não há escrita direta
+que ligue essa raiz ao frame `ebp - 0x10`; portanto
+`dynamic_indexed_callback_frame_provenance_table_root_link_status` continua
+`not-proven-frame-object-to-indexed-table-root`. Os sete callbacks dinâmicos
+seguem sem destino final provado.
+
+A suíte Python passou `103/103`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
+### Release 2.20 — layout PRCB zerado no preflight
 
 O release 2.20 audita a dependência de layout que mantém os quatro callbacks
 protegidos pelo PRCB fora do preflight. Contra a fonte pinned

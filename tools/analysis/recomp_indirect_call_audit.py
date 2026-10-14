@@ -207,6 +207,15 @@ INDEXED_CALLBACK_CONSUMER_OBJECT_INDEX_OFFSET = 0xC
 INDEXED_CALLBACK_CONSUMER_RECORD_STRIDE = 0xC
 INDEXED_CALLBACK_CONSUMER_RECORD_GUARD_OFFSET = 0x4
 INDEXED_CALLBACK_CONSUMER_RECORD_TARGET_OFFSET = 0x8
+INDEXED_CALLBACK_FRAME_HELPER_FUNCTION = 0x002710F4
+INDEXED_CALLBACK_FRAME_LOCAL_OFFSET = -0x10
+INDEXED_CALLBACK_TABLE_ROOT_ACCESS_RE = re.compile(
+    r"MEM32\([^;\n]*\+\s*0x361360\)"
+)
+INDEXED_CALLBACK_FRAME_LOCAL_ASSIGNMENT_RE = re.compile(
+    r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+    r"ebp\s*\+\s*(?P<offset>-0x10|-16);"
+)
 LOCAL_BRANCH_RE = re.compile(
     r"^\s*if\s*\((?P<condition>.+)\)\s+goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
 )
@@ -2977,6 +2986,253 @@ def recover_dynamic_callback_caller_provenance(
     return results
 
 
+def recover_dynamic_indexed_callback_frame_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    caller_provenance: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Prove the frame-local object shape passed to the indexed consumer.
+
+    The two direct callers in the current entry-point subgraph pass ``ebp -
+    0x10`` to ``sub_0026E70A`` after calling ``sub_002710F4``.  The helper
+    writes that same frame address to ``XBOX_FS_BASE``.  This records the
+    bounded shape without treating the frame object as identical to the
+    separate indexed-table root at ``0x00361360`` or resolving its callback.
+    """
+    indexed_rows = [
+        row
+        for row in classified
+        if row.get("classification") == "dynamic-indexed-record-target"
+        and _address(row.get("function", 0)) == INDEXED_CALLBACK_CONSUMER_FUNCTION
+    ]
+    if not indexed_rows or not caller_provenance:
+        return {
+            "status": "no-indexed-callback-frame-provenance-observed",
+            "consumer_function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+            "frame_helper_function": f"0x{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}",
+            "sites": [],
+            "table_root_link_status": "not-assessed",
+        }
+
+    source_cache: dict[str, list[str]] = {}
+    helper_evidence: dict[str, Any] | None = None
+    helper_name = f"sub_{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}"
+    helper_call_text = (
+        f"0x{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}u, {helper_name}"
+    )
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current_name = ""
+        function_lines: list[tuple[int, str]] = []
+
+        def inspect_helper() -> None:
+            nonlocal helper_evidence
+            if current_name != helper_name or not function_lines:
+                return
+            fs_read = next(
+                (
+                    (line_number, line.strip())
+                    for line_number, line in function_lines
+                    if re.search(r"=\s*MEM32\(XBOX_FS_BASE\);", line)
+                ),
+                None,
+            )
+            frame_assignment = next(
+                (
+                    (line_number, line.strip(), match.group("register"))
+                    for line_number, line in function_lines
+                    for match in [INDEXED_CALLBACK_FRAME_LOCAL_ASSIGNMENT_RE.match(line)]
+                    if match is not None
+                ),
+                None,
+            )
+            frame_write = None
+            if frame_assignment is not None:
+                register = frame_assignment[2]
+                frame_write = next(
+                    (
+                        (line_number, line.strip())
+                        for line_number, line in function_lines
+                        if re.search(
+                            rf"MEM32\(XBOX_FS_BASE\)\s*=\s*{register};",
+                            line,
+                        )
+                    ),
+                    None,
+                )
+            helper_evidence = {
+                "source_file": source_path.name,
+                "function": f"0x{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}",
+                "fs_base_read": (
+                    None
+                    if fs_read is None
+                    else {
+                        "source": f"{source_path.name}:{fs_read[0]}",
+                        "expression": fs_read[1],
+                    }
+                ),
+                "frame_assignment": (
+                    None
+                    if frame_assignment is None
+                    else {
+                        "source": f"{source_path.name}:{frame_assignment[0]}",
+                        "expression": frame_assignment[1],
+                        "register": frame_assignment[2],
+                        "offset": f"0x{abs(INDEXED_CALLBACK_FRAME_LOCAL_OFFSET):X}",
+                    }
+                ),
+                "fs_base_write": (
+                    None
+                    if frame_write is None
+                    else {
+                        "source": f"{source_path.name}:{frame_write[0]}",
+                        "expression": frame_write[1],
+                    }
+                ),
+            }
+            helper_evidence["status"] = (
+                "verified-helper-publishes-ebp-minus-0x10-to-fs"
+                if fs_read is not None
+                and frame_assignment is not None
+                and frame_write is not None
+                else "incomplete-indexed-callback-frame-helper-shape"
+            )
+
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match is not None:
+                inspect_helper()
+                current_name = symbol_match.group(1)
+                function_lines = [(line_number, line)]
+                continue
+            if current_name:
+                function_lines.append((line_number, line))
+        inspect_helper()
+        if helper_evidence is not None and helper_evidence["status"].startswith(
+            "verified-"
+        ):
+            break
+
+    target_addresses = {
+        _address(row["function"])
+        for row in indexed_rows
+    }
+    source_rows: list[dict[str, Any]] = []
+    for caller in caller_provenance:
+        if _address(caller.get("target", 0)) not in target_addresses:
+            continue
+        source_text, separator, line_text = str(caller.get("source", "")).rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = generated_dir / source_text
+        if not source_path.exists():
+            continue
+        lines = source_cache.setdefault(
+            source_text, source_path.read_text(encoding="utf-8").splitlines()
+        )
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]) is not None:
+                function_start = index
+                break
+
+        helper_calls = [
+            {
+                "source": f"{source_text}:{index + 1}",
+                "expression": lines[index].strip(),
+            }
+            for index in range(function_start, call_index)
+            if helper_call_text in lines[index]
+        ]
+        frame_assignments = [
+            {
+                "source": f"{source_text}:{index + 1}",
+                "expression": lines[index].strip(),
+                "register": match.group("register"),
+                "offset": f"0x{abs(INDEXED_CALLBACK_FRAME_LOCAL_OFFSET):X}",
+            }
+            for index in range(function_start, call_index)
+            for match in [INDEXED_CALLBACK_FRAME_LOCAL_ASSIGNMENT_RE.match(lines[index])]
+            if match is not None
+        ]
+        object_push = (caller.get("pushes") or [{}])[-1]
+        object_register = str(object_push.get("operand", "")).strip()
+        matched_frame_assignment = next(
+            (
+                assignment
+                for assignment in frame_assignments
+                if assignment["register"] == object_register
+            ),
+            None,
+        )
+        root_accesses = [
+            {
+                "source": f"{source_text}:{index + 1}",
+                "expression": lines[index].strip(),
+            }
+            for index in range(function_start, call_index)
+            if INDEXED_CALLBACK_TABLE_ROOT_ACCESS_RE.search(lines[index]) is not None
+        ]
+        direct_frame_writes = [
+            {
+                "source": f"{source_text}:{index + 1}",
+                "expression": lines[index].strip(),
+            }
+            for index in range(function_start, call_index)
+            if re.search(r"MEM32\(ebp\s*\+\s*-16\)\s*=", lines[index])
+        ]
+        if matched_frame_assignment is None:
+            continue
+        status = (
+            "published-seh-frame-object"
+            if helper_calls and helper_evidence is not None
+            and helper_evidence.get("status", "").startswith("verified-")
+            else "frame-local-object-without-verified-helper"
+        )
+        source_rows.append(
+            {
+                "caller": caller.get("caller"),
+                "caller_name": caller.get("caller_name", ""),
+                "source": caller.get("source"),
+                "target": caller.get("target"),
+                "target_name": caller.get("target_name", ""),
+                "object_push": object_push,
+                "object_pointer_expression": "ebp + -16",
+                "frame_assignment": matched_frame_assignment,
+                "frame_helper_calls": helper_calls,
+                "indexed_table_root_accesses": root_accesses,
+                "direct_frame_writes": direct_frame_writes,
+                "status": status,
+            }
+        )
+
+    verified_sites = [
+        row for row in source_rows if row["status"] == "published-seh-frame-object"
+    ]
+    return {
+        "status": (
+            "verified-indexed-callback-frame-provenance"
+            if helper_evidence is not None
+            and helper_evidence.get("status")
+            == "verified-helper-publishes-ebp-minus-0x10-to-fs"
+            and source_rows
+            and len(verified_sites) == len(source_rows)
+            else "incomplete-indexed-callback-frame-provenance"
+        ),
+        "consumer_function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+        "frame_helper_function": f"0x{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}",
+        "frame_local_offset": f"0x{abs(INDEXED_CALLBACK_FRAME_LOCAL_OFFSET):X}",
+        "helper": helper_evidence or {},
+        "sites": source_rows,
+        "verified_sites": len(verified_sites),
+        "table_root_link_status": "not-proven-frame-object-to-indexed-table-root",
+    }
+
+
 def recover_fixed_callback_consumer_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -3927,6 +4183,11 @@ def audit(
     )
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
+    )
+    dynamic_indexed_callback_frame_provenance = (
+        recover_dynamic_indexed_callback_frame_provenance(
+            generated_dir, classified, dynamic_callback_caller_provenance
+        )
     )
     dynamic_callback_all_caller_provenance = (
         recover_dynamic_callback_caller_provenance(
@@ -5147,6 +5408,22 @@ def audit(
                 "table_root_link_status", "not-assessed"
             )
         ),
+        "dynamic_indexed_callback_frame_provenance_status": (
+            dynamic_indexed_callback_frame_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_frame_provenance_sites": len(
+            dynamic_indexed_callback_frame_provenance.get("sites", [])
+        ),
+        "dynamic_indexed_callback_frame_provenance_verified_sites": (
+            dynamic_indexed_callback_frame_provenance.get("verified_sites", 0)
+        ),
+        "dynamic_indexed_callback_frame_provenance_table_root_link_status": (
+            dynamic_indexed_callback_frame_provenance.get(
+                "table_root_link_status", "not-assessed"
+            )
+        ),
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_conditional_nonzero_guard_sites": len(
@@ -5474,6 +5751,9 @@ def audit(
         ),
         "dynamic_indexed_callback_consumer_layout": (
             dynamic_indexed_callback_consumer_layout
+        ),
+        "dynamic_indexed_callback_frame_provenance": (
+            dynamic_indexed_callback_frame_provenance
         ),
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,

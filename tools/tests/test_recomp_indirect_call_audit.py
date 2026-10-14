@@ -27,6 +27,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     classify_kernel_bridge_argument_use,
     recover_indexed_callback_table_provenance,
     recover_dynamic_indexed_callback_consumer_layout,
+    recover_dynamic_indexed_callback_frame_provenance,
     recover_indirect_tail_switch_provenance,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
@@ -1141,6 +1142,81 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["container_field_loads"]), 1)
         self.assertEqual(len(evidence["index_field_loads"]), 1)
         self.assertEqual(len(evidence["target_reads"]), 1)
+
+    def test_recovers_indexed_callback_frame_without_root_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            source = (
+                "void sub_002710F4(void)\n"
+                "{\n"
+                "    eax = MEM32(XBOX_FS_BASE);\n"
+                "    eax = ebp + -16;\n"
+                "    MEM32(XBOX_FS_BASE) = eax;\n"
+                "}\n"
+                "void sub_00277AB1(void)\n"
+                "{\n"
+                "    PUSH32(esp, 8);\n"
+                "    RECOMP_ABI_CALL(0x002710F4u, sub_002710F4);\n"
+                "    ecx = MEM32(ecx * 4 + 0x361360);\n"
+                "    eax = ebp + -16;\n"
+                "    PUSH32(esp, 0xFFFFFFFFu);\n"
+                "    PUSH32(esp, eax);\n"
+                "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+                "}\n"
+            )
+            source_path = generated / "recomp_0000.c"
+            source_path.write_text(source, encoding="utf-8")
+            call_line = next(
+                index
+                for index, line in enumerate(source.splitlines(), 1)
+                if "0x0026E70Au" in line
+            )
+
+            evidence = recover_dynamic_indexed_callback_frame_provenance(
+                generated,
+                [
+                    {
+                        "classification": "dynamic-indexed-record-target",
+                        "function": "0x0026E70A",
+                        "function_name": "sub_0026E70A",
+                    }
+                ],
+                [
+                    {
+                        "caller": "0x00277AB1",
+                        "caller_name": "sub_00277AB1",
+                        "source": f"recomp_0000.c:{call_line}",
+                        "target": "0x0026E70A",
+                        "target_name": "sub_0026E70A",
+                        "pushes": [
+                            {"operand": "0xFFFFFFFFu"},
+                            {
+                                "operand": "eax",
+                                "source_assignment": {
+                                    "register": "eax",
+                                    "rhs": "ebp + -16",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            )
+
+        self.assertEqual(
+            evidence["status"], "verified-indexed-callback-frame-provenance"
+        )
+        self.assertEqual(evidence["verified_sites"], 1)
+        self.assertEqual(
+            evidence["helper"]["status"],
+            "verified-helper-publishes-ebp-minus-0x10-to-fs",
+        )
+        self.assertEqual(len(evidence["sites"][0]["indexed_table_root_accesses"]), 1)
+        self.assertEqual(evidence["sites"][0]["direct_frame_writes"], [])
+        self.assertEqual(
+            evidence["table_root_link_status"],
+            "not-proven-frame-object-to-indexed-table-root",
+        )
 
     def test_counts_kernel_call_push_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
