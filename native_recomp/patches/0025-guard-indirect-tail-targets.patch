@@ -1,0 +1,119 @@
+diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -1158,5 +1158,9 @@
+ #define RECOMP_ITAIL(xbox_va) do { \
+     uint32_t _va = (uint32_t)(xbox_va); \
++    if (!RECOMP_ICALL_IS_CODE(_va)) { \
++        recomp_icall_not_code_log(_va); \
++        g_eax = 0; break; \
++    } \
+     recomp_func_t _fn = recomp_lookup_manual(_va); \
+     if (!_fn) _fn = recomp_lookup(_va); \
+     if (!_fn) _fn = recomp_lookup_kernel(_va); \
+diff --git a/tools/recomp/test_itail_guarded_runtime.py b/tools/recomp/test_itail_guarded_runtime.py
+new file mode 100644
+--- /dev/null
++++ b/tools/recomp/test_itail_guarded_runtime.py
+@@ -0,0 +1,101 @@
++"""An indirect tail target must pass the same code-range guard as ICALL."""
++
++import os
++import re
++import shutil
++import subprocess
++import tempfile
++
++import pytest
++
++
++ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
++HEADER = os.path.join(ROOT, "templates", "runtime", "recomp_types.h")
++
++
++def _cc():
++    return shutil.which("clang") or shutil.which("gcc") or shutil.which("cc")
++
++
++def _macro(name):
++    lines = open(HEADER, encoding="utf-8").read().splitlines()
++    for i, line in enumerate(lines):
++        if re.match(r"#define\s+%s\(" % re.escape(name), line):
++            out = [line]
++            while out[-1].rstrip().endswith("\\"):
++                i += 1
++                out.append(lines[i])
++            return "\n".join(out)
++    raise AssertionError(f"{name} not defined in {HEADER}")
++
++
++HARNESS = r"""
++#include <stdint.h>
++#include <stdio.h>
++typedef void (*recomp_func_t)(void);
++uint32_t g_xbox_code_lo = 0x00010000u, g_xbox_code_hi = 0x00020000u;
++uint32_t g_esp, g_eax;
++int manual_lookups, normal_lookups, kernel_lookups, not_code_logs;
++int called;
++void target(void);
++#define RECOMP_ABI_CALL(va, fn) (fn)()
++#define RECOMP_ICALL_OBSERVE(va, flags) ((void)0)
++#define RECOMP_ICALL_SEEN_RESOLVED 1
++#define RECOMP_ICALL_SEEN_UNRESOLVED 2
++void recomp_icall_not_code_log(uint32_t va) { (void)va; not_code_logs++; }
++void recomp_icall_fail_log(uint32_t va) { (void)va; }
++recomp_func_t recomp_lookup_manual(uint32_t va) {
++    manual_lookups++;
++    return va == 0x00012000u ? target : 0;
++}
++recomp_func_t recomp_lookup(uint32_t va) {
++    normal_lookups++;
++    return va == 0x00012000u ? target : 0;
++}
++recomp_func_t recomp_lookup_kernel(uint32_t va) {
++    kernel_lookups++;
++    return 0;
++}
++void target(void) { called++; }
++#define RECOMP_ITAIL_TARGET(_va) do { RECOMP_ITAIL(_va); } while (0)
++IS_CODE
++ITAIL_MACRO
++int main(void) {
++    RECOMP_ITAIL_TARGET(0x00012000u);
++    if (called != 1 || manual_lookups != 1 || normal_lookups || kernel_lookups)
++        return 1;
++    called = manual_lookups = normal_lookups = kernel_lookups = not_code_logs = 0;
++    RECOMP_ITAIL_TARGET(0x00F00000u);
++    if (called || manual_lookups || normal_lookups || kernel_lookups
++            || not_code_logs != 1 || g_eax != 0)
++        return 2;
++    puts("OK");
++    return 0;
++}
++"""
++
++
++def _run(source):
++    cc = _cc()
++    if not cc:
++        pytest.skip("no C compiler on PATH")
++    with tempfile.TemporaryDirectory(prefix="recomp-itail-") as tmp:
++        c_path = os.path.join(tmp, "itail.c")
++        exe_path = os.path.join(tmp, "itail.exe")
++        with open(c_path, "w", encoding="utf-8") as handle:
++            handle.write(source)
++        built = subprocess.run(
++            [cc, "-w", c_path, "-o", exe_path],
++            capture_output=True,
++            text=True,
++        )
++        assert built.returncode == 0, built.stdout + built.stderr
++        return subprocess.run([exe_path], capture_output=True, text=True)
++
++
++def test_itail_rejects_non_code_before_any_lookup():
++    source = HARNESS.replace("IS_CODE", _macro("RECOMP_ICALL_IS_CODE"))
++    source = source.replace("ITAIL_MACRO", _macro("RECOMP_ITAIL"))
++    result = _run(source)
++    assert result.returncode == 0, result.stdout + result.stderr
++    assert result.stdout.startswith("OK")

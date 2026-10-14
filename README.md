@@ -14,6 +14,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.60
+
+O release 2.60 adiciona o patch
+`native_recomp/patches/0025-guard-indirect-tail-targets.patch` à pilha do
+XboxRecomp. O macro `RECOMP_ITAIL`, usado por saltos indiretos em cauda, agora
+aplica a mesma guarda de intervalo de código usada pelos `ICALL`: alvos fora
+das seções executáveis e fora da faixa sintética de thunks kernel são
+registrados e rejeitados antes de qualquer lookup manual, normal ou kernel.
+
+O patch foi aplicado em uma cópia limpa da pilha 0001–0024; o teste
+comportamental do tail-dispatch passou e a suíte focal completa passou em
+`701` testes, com `2` skips. Isso endurece a segurança do dispatch, mas não
+resolve os `7` callbacks dinâmicos nem atribui destinos a eles. O XBE não é
+executado, `NOT_READY` permanece e a estimativa conservadora do PoC jogável
+continua em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.59
 
 O release 2.59 adiciona
