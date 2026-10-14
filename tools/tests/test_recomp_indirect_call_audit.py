@@ -84,6 +84,12 @@ void sub_00001020(void)
         self.assertEqual(summary["dynamic_register_or_object_targets"], 1)
         self.assertEqual(summary["prcb_guarded_dynamic_callback_sites"], 1)
         self.assertEqual(summary["unresolved_dynamic_sites"], 2)
+        self.assertEqual(summary["dynamic_call_stack_shape_sites"], 0)
+        self.assertEqual(summary["dynamic_call_stack_shape_missing_sites"], 2)
+        self.assertEqual(
+            summary["dynamic_call_stack_shape_status"],
+            "incomplete-push-count-evidence",
+        )
         self.assertEqual(summary["kernel_thunk_table_entries"], 1)
         self.assertEqual(result["sites"][0]["kernel_ordinal"], 0x42)
         self.assertEqual(result["sites"][2]["classification_source"], "linear-register-alias")

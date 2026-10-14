@@ -1296,6 +1296,14 @@ def audit(
         evidence = skip_branch_evidence.get(str(row["call_site"]))
         if evidence is not None:
             row["conditional_skip_evidence"] = evidence
+        observed_call_stack = kernel_call_argument_counts.get(str(row["call_site"]))
+        if observed_call_stack is not None:
+            row["indirect_call_observed_push_count"] = observed_call_stack[
+                "push_count"
+            ]
+            row["indirect_call_observed_pushed_bytes"] = observed_call_stack[
+                "pushed_bytes"
+            ]
         resolver_target = row.get("host_resolver_target")
         if kernel_implementation_evidence is not None and resolver_target:
             implementation = kernel_implementation_evidence.get(resolver_target)
@@ -1359,6 +1367,7 @@ def audit(
         for family, rows in dynamic_target_outside_direct_writers.items()
     }
     dynamic_classifications = {
+        "dynamic-register-or-object-target",
         "dynamic-memory-target",
         "dynamic-object-field-target",
         "dynamic-indexed-record-target",
@@ -1369,6 +1378,12 @@ def audit(
         for row in classified
         if row["classification"] in dynamic_classifications
         and "conditional_skip_evidence" in row
+    ]
+    dynamic_stack_rows = [
+        row for row in classified if row["classification"] in dynamic_classifications
+    ]
+    dynamic_stack_observed_rows = [
+        row for row in dynamic_stack_rows if "indirect_call_observed_pushed_bytes" in row
     ]
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
@@ -1480,6 +1495,15 @@ def audit(
         },
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
+        "dynamic_call_stack_shape_status": (
+            "observed-push-counts-not-abi-proof"
+            if len(dynamic_stack_observed_rows) == len(dynamic_stack_rows)
+            else "incomplete-push-count-evidence"
+        ),
+        "dynamic_call_stack_shape_sites": len(dynamic_stack_observed_rows),
+        "dynamic_call_stack_shape_missing_sites": (
+            len(dynamic_stack_rows) - len(dynamic_stack_observed_rows)
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
