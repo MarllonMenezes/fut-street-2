@@ -47,6 +47,10 @@ FIXED_SLOT_WRITE_RE = re.compile(
     r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
     r"0x(?P<value>[0-9A-Fa-f]{1,8})u?;"
 )
+FIXED_SLOT_ANY_WRITE_RE = re.compile(
+    r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
+    r"(?P<rhs>[^;]+);"
+)
 FIXED_REGISTER_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*=\s*"
     r"(?P<rhs>[^;]+);"
@@ -476,18 +480,24 @@ def recover_fixed_slot_writes(
             ):
                 continue
 
-            absolute_match = FIXED_SLOT_WRITE_RE.search(line)
+            absolute_match = FIXED_SLOT_ANY_WRITE_RE.search(line)
             if absolute_match is not None:
                 slot = int(absolute_match.group("slot"), 16)
                 if slot in tracked_slots:
+                    constant_match = FIXED_SLOT_WRITE_RE.search(line)
+                    value = (
+                        None
+                        if constant_match is None
+                        else f"0x{int(constant_match.group('value'), 16):08X}"
+                    )
                     add_write(
                         slot,
                         source_path,
                         line_number,
                         current,
-                        "absolute-constant",
+                        "absolute-constant" if value is not None else "absolute",
                         line.strip(),
-                        f"0x{int(absolute_match.group('value'), 16):08X}",
+                        value,
                     )
 
             register_match = FIXED_REGISTER_WRITE_RE.search(line)

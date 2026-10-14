@@ -614,6 +614,38 @@ void xbe_entry_point(void)
         self.assertEqual(len(writes[0x11180]), 1)
         self.assertEqual(writes[0x11180][0]["kind"], "register-derived")
 
+    def test_recovers_nonconstant_absolute_fixed_slot_write(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    MEM32(0x00011180) = eax;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writes = recover_fixed_slot_writes(
+                generated,
+                functions,
+                {0x1000},
+                {0x11180},
+            )
+
+        self.assertEqual(len(writes[0x11180]), 1)
+        self.assertEqual(writes[0x11180][0]["kind"], "absolute")
+        self.assertNotIn("value", writes[0x11180][0])
+
     def test_records_branch_that_skips_indirect_call(self) -> None:
         functions = [
             {
