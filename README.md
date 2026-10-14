@@ -14,6 +14,22 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.50
+
+O release 2.50 amplia o gate do seletor EAGL para preservar o envelope dos
+consumidores, não apenas sua contagem. Os `33` reads de `0x00345BCC` agora
+são associados a `31` funções entre `0x001A3E00` e `0x001A4B40`, e cada
+função tem sua família de chamadas diretas verificada a partir dos cabeçalhos
+do ASM. O inventário mantém `4` helpers sem chamada direta e as demais
+famílias repetíveis de acesso/estado, sem transformar esses nomes em uma
+interpretação semântica do rendering.
+
+Esse envelope reduz a superfície estática que precisa ser reproduzida, mas
+ainda não prova alias de runtime, escolha de buffer, instalação de shader,
+submissão de draw ou equivalência de GPU. O XBE não é executado; a prontidão
+permanece `NOT_READY` e a estimativa conservadora do PoC jogável continua em
+aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.49
 
 O release 2.49 estende
@@ -967,7 +983,8 @@ python tools/analysis/eagl_dynamic_buffer_selector_control.py `
 O resultado mantém `writer_sites=5`, `consumer_sites=33`,
 `runtime_selected_buffer=not-proven` e `rendering_binding=not-proven`; ele
 apenas impede assumir que `0x00345BCC` seja constante ou ignorar seus
-consumidores estáticos conhecidos.
+consumidores estáticos conhecidos. No release 2.50, a saída adicional inclui
+`consumer_function_count=31` e `consumer_function_envelope=0x001A3E00-0x001A4B40`.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os

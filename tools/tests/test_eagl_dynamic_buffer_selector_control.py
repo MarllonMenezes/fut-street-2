@@ -8,6 +8,8 @@ from pathlib import Path
 
 from tools.analysis.eagl_dynamic_buffer_selector_control import (
     EXPECTED_CONSUMERS,
+    EXPECTED_CONSUMER_CALLS,
+    EXPECTED_CONSUMER_FUNCTIONS,
     classify_consumers,
     classify_writers,
     recover_consumer_rows,
@@ -101,6 +103,31 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
             32,
         )
 
+    def test_classifies_the_function_envelope_and_call_families(self) -> None:
+        rows = []
+        for address, form in EXPECTED_CONSUMERS.items():
+            function = EXPECTED_CONSUMER_FUNCTIONS[address]
+            rows.append(
+                {
+                    "address": address,
+                    "destination": "eax",
+                    "mnemonic": "imul"
+                    if form == "scaled-selector-consumer"
+                    else "mov",
+                    "source": "synthetic.asm:1",
+                    "function": function,
+                    "function_calls": EXPECTED_CONSUMER_CALLS[function],
+                }
+            )
+
+        classified = classify_consumers(rows, require_function_envelope=True)
+
+        self.assertEqual(len({row["function"] for row in classified}), 31)
+        self.assertEqual(
+            sum(row["call_family"] == "no-direct-call" for row in classified),
+            4,
+        )
+
     def test_rejects_consumer_domain_drift(self) -> None:
         rows = [
             {
@@ -134,6 +161,27 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "consumer mnemonic mismatch"):
             classify_consumers(rows)
+
+    def test_rejects_function_envelope_drift(self) -> None:
+        rows = []
+        for address, form in EXPECTED_CONSUMERS.items():
+            function = EXPECTED_CONSUMER_FUNCTIONS[address]
+            rows.append(
+                {
+                    "address": address,
+                    "destination": "eax",
+                    "mnemonic": "imul"
+                    if form == "scaled-selector-consumer"
+                    else "mov",
+                    "source": "synthetic.asm:1",
+                    "function": function,
+                    "function_calls": EXPECTED_CONSUMER_CALLS[function],
+                }
+            )
+        rows[0]["function_calls"] = ("sub_001A0000",)
+
+        with self.assertRaisesRegex(ValueError, "consumer-call-family mismatch"):
+            classify_consumers(rows, require_function_envelope=True)
 
     def test_does_not_silently_ignore_an_unsupported_selector_read(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
