@@ -115,6 +115,7 @@ DYNAMIC_ABSOLUTE_WRITE_RE = re.compile(
 DYNAMIC_REGISTER_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*="
 )
+DYNAMIC_WRITER_ASSIGNMENT_RE = re.compile(r"=\s*(?P<value>[^;]+);")
 DYNAMIC_OBJECT_FIELD_ALIAS_RE = re.compile(
     r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584$"
 )
@@ -139,6 +140,17 @@ def _address(value: Any) -> int:
 
 def _u32(data: bytes, offset: int) -> int:
     return struct.unpack_from("<I", data, offset)[0]
+
+
+def _dynamic_writer_value_kind(value: str) -> str:
+    value = value.strip()
+    if REGISTER_LITERAL_RE.fullmatch(value) is not None:
+        return "constant"
+    if REGISTER_NAME_RE.fullmatch(value) is not None:
+        return "register"
+    if value.startswith("MEM32(") and value.endswith(")"):
+        return "memory-read"
+    return "computed-expression"
 
 
 def _section_for_address(sections: list[dict[str, int]], address: int) -> dict[str, int] | None:
@@ -1250,6 +1262,11 @@ def recover_dynamic_target_writes(
             "source": f"{source_path.name}:{line_number}",
             "expression": expression,
         }
+        value_match = DYNAMIC_WRITER_ASSIGNMENT_RE.search(expression)
+        if value_match is not None:
+            value = value_match.group("value").strip()
+            row["assigned_value_expression"] = value
+            row["assigned_value_kind"] = _dynamic_writer_value_kind(value)
         if address_expression is not None:
             row["address_expression"] = address_expression
         writers[family].append(row)
@@ -1748,6 +1765,14 @@ def audit(
         family: len(rows)
         for family, rows in dynamic_target_outside_direct_writers.items()
     }
+    dynamic_writer_value_kinds = {
+        family: dict(Counter(row["assigned_value_kind"] for row in rows))
+        for family, rows in dynamic_target_writers.items()
+    }
+    dynamic_outside_writer_value_kinds = {
+        family: dict(Counter(row["assigned_value_kind"] for row in rows))
+        for family, rows in dynamic_target_outside_direct_writers.items()
+    }
     dynamic_classifications = {
         "dynamic-register-or-object-target",
         "dynamic-memory-target",
@@ -1895,6 +1920,7 @@ def audit(
         ),
         "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
         "dynamic_target_direct_writer_counts": dynamic_writer_counts,
+        "dynamic_target_direct_writer_value_kinds": dynamic_writer_value_kinds,
         "dynamic_target_direct_writer_status": (
             "direct-writer-shape-observed"
             if sum(dynamic_writer_counts.values())
@@ -1904,6 +1930,9 @@ def audit(
             dynamic_outside_writer_counts.values()
         ),
         "dynamic_target_outside_direct_writer_counts": dynamic_outside_writer_counts,
+        "dynamic_target_outside_direct_writer_value_kinds": (
+            dynamic_outside_writer_value_kinds
+        ),
         "dynamic_target_outside_direct_writer_status": (
             "candidate-shapes-outside-direct-subgraph"
             if sum(dynamic_outside_writer_counts.values())

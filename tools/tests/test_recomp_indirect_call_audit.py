@@ -489,6 +489,17 @@ void xbe_entry_point(void)
         self.assertEqual(len(writers["dynamic-memory-target"]), 1)
         self.assertEqual(len(writers["dynamic-object-field-target"]), 2)
         self.assertEqual(len(writers["dynamic-indexed-record-target"]), 1)
+        self.assertEqual(
+            {
+                row["assigned_value_kind"]
+                for row in writers["dynamic-object-field-target"]
+            },
+            {"register"},
+        )
+        self.assertEqual(
+            writers["dynamic-indexed-record-target"][0]["assigned_value_expression"],
+            "eax",
+        )
         self.assertEqual(len(all_writers["dynamic-object-field-target"]), 2)
         self.assertEqual(len(all_writers["dynamic-indexed-record-target"]), 1)
 
