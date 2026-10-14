@@ -17,6 +17,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_bridge_cases,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
+    recover_kernel_register_constant_arguments,
     recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
@@ -408,6 +409,36 @@ void xbe_entry_point(void)
         self.assertEqual(
             constants["0x00001008"],
             {"3": "0x00000038", "4": "0x00000022"},
+        )
+
+    def test_recovers_register_constant_kernel_stack_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_00001000(void)\n"
+                "{\n"
+                "    esi = 0x00001000u;\n"
+                "    { uint32_t _icall_esp = g_esp;\n"
+                "    PUSH32(esp, eax);\n"
+                "    PUSH32(esp, esi);\n"
+                "    PUSH32(esp, 0x22u);\n"
+                "    { uint32_t _icall_target = MEM32(0x2A9000); "
+                "PUSH32(esp, 0x00001008u); "
+                "RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            constants = recover_kernel_register_constant_arguments(
+                generated,
+                [{"call_site": "0x00001008", "source": "recomp_0000.c:8"}],
+            )
+
+        self.assertEqual(
+            constants["0x00001008"],
+            {"1": "0x00001000"},
         )
 
     def test_recovers_kernel_file_information_cases(self) -> None:

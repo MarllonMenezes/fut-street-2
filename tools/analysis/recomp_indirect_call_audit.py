@@ -1266,6 +1266,164 @@ def recover_kernel_constant_arguments(
     return constants
 
 
+def recover_kernel_register_constant_arguments(
+    generated_dir: Path,
+    sites: list[dict[str, Any]],
+    window: int = 64,
+) -> dict[str, dict[str, str]]:
+    """Recover constants pushed through a tracked register assignment.
+
+    This is deliberately separate from literal-push recovery. It recognizes
+    only a register assigned a literal before its push in the bounded function
+    window and call block; it does not prove path coverage, types, or ABI
+    fidelity.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    constants: dict[str, dict[str, str]] = {}
+    for site in sites:
+        source_text = str(site.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        start = max(0, call_index - window)
+        for index in range(call_index, start - 1, -1):
+            if "uint32_t _icall_esp = g_esp;" in lines[index]:
+                start = index + 1
+                break
+        else:
+            continue
+        body_lines = lines[start:call_index]
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_start = index
+                break
+        function_end = len(lines)
+        for index in range(call_index + 1, len(lines)):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_end = index
+                break
+        epilogue_lines = lines[call_index + 1 : function_end]
+        prior_lines = lines[function_start:start]
+        first_non_push = next(
+            (
+                index
+                for index, body_line in enumerate(body_lines)
+                if "PUSH32(esp," not in body_line
+            ),
+            len(body_lines),
+        )
+        saved_registers = {
+            register
+            for body_line in body_lines[:first_non_push]
+            for register in ("ebx", "esi", "edi")
+            if re.fullmatch(
+                rf"\s*PUSH32\(esp,\s*{register}\);\s*", body_line
+            )
+            and not any(
+                re.fullmatch(
+                    rf"\s*PUSH32\(esp,\s*{register}\);\s*", prior_line
+                )
+                for prior_line in prior_lines
+            )
+            and any(
+                re.fullmatch(
+                    rf"\s*POP32\(esp,\s*{register}\);.*", epilogue_line
+                )
+                for epilogue_line in epilogue_lines
+            )
+        }
+        register_constants: dict[str, int] = {}
+        conditional_checkpoint: dict[str, int] | None = None
+        context_start = max(function_start, call_index - window)
+        for context_line in lines[context_start:start]:
+            if re.search(
+                r"\bif\s*\([^\n]*\)\s+goto\s+loc_[0-9A-Fa-f]+;",
+                context_line,
+            ):
+                conditional_checkpoint = register_constants.copy()
+                continue
+            if re.fullmatch(
+                r"\s*goto\s+loc_[0-9A-Fa-f]+;\s*", context_line
+            ):
+                if conditional_checkpoint is not None:
+                    register_constants = conditional_checkpoint.copy()
+                else:
+                    register_constants.clear()
+                continue
+            assignment = REGISTER_ASSIGNMENT_RE.match(context_line)
+            if assignment is not None:
+                register = assignment.group("register")
+                literal = REGISTER_LITERAL_RE.fullmatch(
+                    assignment.group("rhs").strip()
+                )
+                if literal is None:
+                    register_constants.pop(register, None)
+                else:
+                    register_constants[register] = int(
+                        literal.group("value"), 0
+                    )
+                continue
+            for register in REGISTER_WRITE_RE.findall(context_line):
+                register_constants.pop(register, None)
+        pushed_register_constants: list[int | None] = []
+        for index, body_line in enumerate(body_lines):
+            if re.search(
+                r"\bif\s*\([^\n]*\)\s+goto\s+loc_[0-9A-Fa-f]+;",
+                body_line,
+            ):
+                conditional_checkpoint = register_constants.copy()
+                continue
+            if re.fullmatch(
+                r"\s*goto\s+loc_[0-9A-Fa-f]+;\s*", body_line
+            ):
+                if conditional_checkpoint is not None:
+                    register_constants = conditional_checkpoint.copy()
+                else:
+                    register_constants.clear()
+                continue
+            match = PUSH32_RE.match(body_line)
+            if match is not None:
+                operand = match.group("operand").strip()
+                if not (
+                    index < first_non_push and operand in saved_registers
+                ):
+                    pushed_register_constants.append(
+                        register_constants.get(operand)
+                    )
+                continue
+            assignment = REGISTER_ASSIGNMENT_RE.match(body_line)
+            if assignment is not None:
+                register = assignment.group("register")
+                literal = REGISTER_LITERAL_RE.fullmatch(
+                    assignment.group("rhs").strip()
+                )
+                if literal is None:
+                    register_constants.pop(register, None)
+                else:
+                    register_constants[register] = int(
+                        literal.group("value"), 0
+                    )
+                continue
+            for register in REGISTER_WRITE_RE.findall(body_line):
+                register_constants.pop(register, None)
+        argument_constants: dict[str, str] = {}
+        for argument_index, value in enumerate(reversed(pushed_register_constants)):
+            if value is not None:
+                argument_constants[str(argument_index)] = f"0x{value:08X}"
+        constants[str(site["call_site"])] = argument_constants
+    return constants
+
+
 def recover_dynamic_target_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
@@ -1810,6 +1968,9 @@ def audit(
     kernel_constant_arguments = recover_kernel_constant_arguments(
         generated_dir, classified
     )
+    kernel_register_constant_arguments = recover_kernel_register_constant_arguments(
+        generated_dir, classified
+    )
     skip_branch_evidence = recover_indirect_call_skip_branches(
         generated_dir, classified
     )
@@ -1907,6 +2068,11 @@ def audit(
                         and class_names[0] in function_evidence["case_names"]
                         else "missing-host-case"
                     )
+        observed_register_constants = kernel_register_constant_arguments.get(
+            str(row["call_site"]), {}
+        )
+        if observed_register_constants:
+            row["kernel_register_constant_arguments"] = observed_register_constants
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -2150,6 +2316,12 @@ def audit(
                     "kernel_ordinal": row["kernel_ordinal"],
                     "target": row.get("host_resolver_target"),
                     "pushed_bytes": row.get("indirect_call_observed_pushed_bytes"),
+                    "constant_arguments": {
+                        **kernel_constant_arguments.get(str(row["call_site"]), {}),
+                        **kernel_register_constant_arguments.get(
+                            str(row["call_site"]), {}
+                        ),
+                    },
                 }
                 for row in kernel_implementation_explicit_stub_rows
             ]
@@ -2357,6 +2529,7 @@ def audit(
         "kernel_bridge_cases": kernel_bridge_cases or {},
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
+        "kernel_register_constant_arguments": kernel_register_constant_arguments,
         "kernel_symbolic_link_lifecycle_evidence": symbolic_link_lifecycle_evidence,
         "kernel_symbolic_link_guest_path_evidence": symbolic_link_guest_path_evidence,
         "kernel_symbolic_link_host_query_target": symbolic_link_host_query_target or {},
