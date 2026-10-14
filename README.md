@@ -22,7 +22,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável
 
-O último marco publicado é a etapa 1.64 (14/10/2026): além do preflight da etapa 1.63, uma auditoria estática versionada do caminho iniciado em `0x0024D8BE` confirmou `78/78` funções alcançáveis por chamadas diretas com tradução gerada, zero alvo direto externo e nenhum dos dois `RECOMP_UNIMPL` conhecidos (`OUT DX,AL` em `0x00298030` e `SGDT` em `0x00253FD8`) dentro desse subgrafo direto. A auditoria não infere chamadas indiretas, callbacks, imports ou execução; esses gates continuam pendentes. Contra o XBE local e diretórios isolados, o runtime preflight confirmou mapa de memória, dispatch, entry point `0x0024D8BE` e `128/128` thunks resolvidos (`128 bridged`, `0 stub`), encerrando antes de qualquer instrução guest. A geração estática permanece em `15.600/15.600` funções, zero falhas e `1.775.604` linhas em 63 arquivos de funções; o CMake recompilou 64 unidades C. A biblioteca passou `2/2` e o host passou `5/5`, incluindo rejeição de XBE ausente, `--help`, suporte runtime, estado `CLI`/`STI`, operações packed-word e rejeição de `RECOMP_VBLANK` antes de qualquer acesso ao XBE. `OUT DX,AL` e `SGDT` continuam sem lowering por dependerem de efeitos de hardware/GDT não comprovados. O XBE não foi executado; o runtime preflight é somente validação de preparação e a prontidão permanece `NOT_READY`. A estimativa conservadora para um possível PoC jogável sobe apenas para aproximadamente 28% concluído e 72% restante, principalmente chamadas indiretas e callbacks, execução do entry point, entrega real de interrupções, compatibilidade de kernel/hardware, rendering, assets, gameplay, animação e áudio.
+O último marco publicado é a etapa 1.65 (14/10/2026): a auditoria estática do caminho iniciado em `0x0024D8BE` agora cobre também 62 chamadas indiretas em 32 das 78 funções diretamente alcançáveis. Desses sites, 43 usam 19 slots únicos da tabela de 128 thunks do kernel, 4 são ponteiros fixos para funções conhecidas, 1 é um slot fixo inicializado em runtime e 14 dependem de registradores/objetos dinâmicos; nenhum alvo dinâmico foi declarado resolvido. A auditoria mantém `OUT DX,AL` em `0x00298030` e `SGDT` em `0x00253FD8` fora do lowering, e não infere callbacks, imports, semântica dos serviços ou execução. Contra o XBE local e diretórios isolados, o runtime preflight confirmou mapa de memória, dispatch, entry point `0x0024D8BE` e `128/128` thunks resolvidos (`128 bridged`, `0 stub`), encerrando antes de qualquer instrução guest. A geração estática permanece em `15.600/15.600` funções, zero falhas e `1.775.604` linhas em 63 arquivos de funções; o CMake recompilou 64 unidades C. A biblioteca passou `2/2` e o host passou `5/5`, incluindo rejeição de XBE ausente, `--help`, suporte runtime, estado `CLI`/`STI`, operações packed-word e rejeição de `RECOMP_VBLANK` antes de qualquer acesso ao XBE. `OUT DX,AL` e `SGDT` continuam sem lowering por dependerem de efeitos de hardware/GDT não comprovados. O XBE não foi executado; o runtime preflight é somente validação de preparação e a prontidão permanece `NOT_READY`. A estimativa conservadora para um possível PoC jogável sobe apenas para aproximadamente 29% concluído e 71% restante, principalmente callbacks e objetos dinâmicos, semântica real dos serviços kernel, execução do entry point, entrega de interrupções, compatibilidade de hardware, rendering, assets, gameplay, animação e áudio.
 
 ## Conteúdo
 
@@ -59,6 +59,17 @@ python tools/analysis/recomp_entry_call_graph_audit.py `
 ```
 
 Essa auditoria é limitada a chamadas diretas recuperadas estaticamente; ela não aprova chamadas indiretas, callbacks, imports, compatibilidade de hardware ou execução do jogo.
+
+Para classificar os sites indiretos do mesmo subgrafo, forneça também o XBE local:
+
+```powershell
+python tools/analysis/recomp_indirect_call_audit.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen `
+  --xbe C:/caminho/local/game_files/default.xbe
+```
+
+Os alvos dinâmicos continuam explicitamente não resolvidos; a saída não constitui prova de execução nem de fidelidade dos serviços Xbox.
 
 Esses comandos validam compilação e testes do código-fonte, não os gates do jogo original. Não execute nem distribua o XBE ou assets proprietários.
 
