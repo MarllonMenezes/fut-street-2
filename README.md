@@ -14,6 +14,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.56
+
+O release 2.56 adiciona
+`tools/analysis/eagl_static_render_chain_control.py`, um gate estático que
+fecha a consistência entre quatro relatórios independentes da cadeia EAGL:
+fontes de draw indexado, parâmetros de render, declaração de material e
+referências modelo/material. Contra os relatórios locais atuais, ele confirma
+`2364` linhas de draw, `2364` primitivas, `2364` modelos, `3` definições de
+material, `5` elementos de declaração e `46` instruções do programa VS, além
+de conferir a identidade da mesma XBE e os hashes dos artefatos relacionados.
+
+O gate reduz o risco de uma etapa consumir um relatório incompatível com a
+outra, mas não transforma a cadeia estática em rendering executável. O
+seletor em runtime, a ligação de atributos, a escolha de buffers, o binding
+completo e a semântica original continuam explicitamente não provados; o XBE
+não é executado, `NOT_READY` permanece e a estimativa conservadora do PoC
+jogável continua em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.55
 
 O release 2.55 adiciona
@@ -1090,6 +1108,21 @@ No release 2.51, ela também inclui
 `consumer_anchor_counts=0x3458d0:33,0x3458d4:33`.
 No release 2.52, inclui ainda `consumer_shape_counts`, com `28` composições
 genéricas e cinco formas especiais downstream.
+
+A consistência entre os relatórios estáticos da cadeia EAGL pode ser conferida
+com:
+
+```powershell
+python tools/analysis/eagl_static_render_chain_control.py `
+  --draw-summary C:/caminho/local/eagl-indexed-draw-source-control-summary.tsv `
+  --parameter-summary C:/caminho/local/eagl-render-parameter-static-control-summary.tsv `
+  --material-summary C:/caminho/local/eagl-material-declaration-control-summary.tsv `
+  --model-summary C:/caminho/local/eagl-model-material-reference-control-summary.tsv
+```
+
+Esse gate confere identidade, hashes, contagens e joins entre os quatro
+relatórios, mas mantém `runtime_selector=unresolved`,
+`full_rendering_binding=not-proven` e `original_semantics=not-claimed`.
 
 Os efeitos dos helpers do seletor podem ser conferidos com:
 
