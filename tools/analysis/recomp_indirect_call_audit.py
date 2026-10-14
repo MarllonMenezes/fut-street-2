@@ -94,6 +94,13 @@ DYNAMIC_ABSOLUTE_WRITE_RE = re.compile(
 DYNAMIC_REGISTER_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*="
 )
+DYNAMIC_OBJECT_FIELD_ALIAS_RE = re.compile(
+    r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584$"
+)
+DYNAMIC_INDEXED_RECORD_ALIAS_RE = re.compile(
+    r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+    r"(?P<index>eax|ebx|ecx|edx|esi|edi)\s*\*\s*4\s*\+\s*8$"
+)
 LOCAL_BRANCH_RE = re.compile(
     r"^\s*if\s*\((?P<condition>.+)\)\s+goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
 )
@@ -897,6 +904,8 @@ def recover_dynamic_target_writes(
     site.  Register-derived writes to the absolute dynamic-memory range are
     included only when the register has a tracked constant value in that
     range; generic ``+0x584`` and indexed-record shapes are kept separate.
+    A bounded symbolic alias is also tracked when code computes one of those
+    two address shapes into a register and then writes ``MEM32(register)``.
     Passing ``directly_reachable=None`` inventories all generated functions.
     """
     address_by_name = {
@@ -922,19 +931,22 @@ def recover_dynamic_target_writes(
         line_number: int,
         current: int,
         expression: str,
+        address_expression: str | None = None,
     ) -> None:
-        writers[family].append(
-            {
-                "function": f"0x{current:08X}",
-                "function_name": str(function_by_address[current].get("name", "")),
-                "source": f"{source_path.name}:{line_number}",
-                "expression": expression,
-            }
-        )
+        row = {
+            "function": f"0x{current:08X}",
+            "function_name": str(function_by_address[current].get("name", "")),
+            "source": f"{source_path.name}:{line_number}",
+            "expression": expression,
+        }
+        if address_expression is not None:
+            row["address_expression"] = address_expression
+        writers[family].append(row)
 
     for source_path in sorted(generated_dir.rglob("recomp_*.c")):
         current: int | None = None
         register_constants: dict[str, int] = {}
+        address_aliases: dict[str, tuple[str, str]] = {}
         for line_number, line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         ):
@@ -942,6 +954,7 @@ def recover_dynamic_target_writes(
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
                 register_constants = {}
+                address_aliases = {}
             if current is None or (
                 directly_reachable is not None
                 and current not in directly_reachable
@@ -992,14 +1005,41 @@ def recover_dynamic_target_writes(
                     current,
                     line.strip(),
                 )
+            if register_write_match is not None:
+                alias = address_aliases.get(register_write_match.group("register"))
+                if alias is not None:
+                    add_writer(
+                        alias[0],
+                        source_path,
+                        line_number,
+                        current,
+                        line.strip(),
+                        alias[1],
+                    )
 
             assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
             if assignment_match:
                 register = assignment_match.group("register")
                 rhs = assignment_match.group("rhs").strip()
+                object_alias_match = DYNAMIC_OBJECT_FIELD_ALIAS_RE.fullmatch(rhs)
+                indexed_alias_match = DYNAMIC_INDEXED_RECORD_ALIAS_RE.fullmatch(rhs)
                 literal_match = REGISTER_LITERAL_RE.fullmatch(rhs)
                 register_match = REGISTER_NAME_RE.fullmatch(rhs)
                 add_match = REGISTER_ADD_RE.fullmatch(rhs)
+                if object_alias_match is not None:
+                    address_aliases[register] = (
+                        "dynamic-object-field-target",
+                        rhs,
+                    )
+                    register_constants.pop(register, None)
+                elif indexed_alias_match is not None:
+                    address_aliases[register] = (
+                        "dynamic-indexed-record-target",
+                        rhs,
+                    )
+                    register_constants.pop(register, None)
+                else:
+                    address_aliases.pop(register, None)
                 if literal_match is not None:
                     register_constants[register] = int(
                         literal_match.group("value"), 0
@@ -1022,6 +1062,7 @@ def recover_dynamic_target_writes(
                     register_constants.pop(register, None)
             for write_match in REGISTER_WRITE_RE.finditer(line):
                 register_constants.pop(write_match.group("register"), None)
+                address_aliases.pop(write_match.group("register"), None)
     return writers
 
 

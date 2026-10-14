@@ -396,6 +396,56 @@ void xbe_entry_point(void)
         self.assertEqual(len(all_writers["dynamic-object-field-target"]), 2)
         self.assertEqual(len(all_writers["dynamic-indexed-record-target"]), 1)
 
+    def test_tracks_register_derived_dynamic_writer_shapes(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    eax = ecx + 0x584;
+    MEM32(eax) = edx;
+    edi = ebx + esi * 4 + 8;
+    MEM32(edi) = edx;
+    eax = MEM32(ecx + 0x584);
+    MEM32(eax) = edx;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writers = recover_dynamic_target_writes(
+                generated,
+                functions,
+                {0x1000},
+                [],
+            )
+
+        self.assertEqual(
+            [row["expression"] for row in writers["dynamic-object-field-target"]],
+            ["MEM32(eax) = edx;"],
+        )
+        self.assertEqual(
+            writers["dynamic-object-field-target"][0]["address_expression"],
+            "ecx + 0x584",
+        )
+        self.assertEqual(
+            [row["expression"] for row in writers["dynamic-indexed-record-target"]],
+            ["MEM32(edi) = edx;"],
+        )
+        self.assertEqual(
+            writers["dynamic-indexed-record-target"][0]["address_expression"],
+            "ebx + esi * 4 + 8",
+        )
+
     def test_can_inventory_fixed_slot_writers_outside_direct_path(self) -> None:
         functions = [
             {
