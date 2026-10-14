@@ -6,6 +6,7 @@ void nv2a_pb_scan(uint32_t start_va, uint32_t end_va);
 void nv2a_pb_scan_report(void);
 void recomp_icall_fail_log(uint32_t va);
 void recomp_icall_not_code_log(uint32_t va);
+uint8_t recomp_xbox_io_read8(uint16_t port);
 
 volatile uint32_t g_icall_trace[ICALL_TRACE_SIZE];
 volatile uint32_t g_icall_trace_idx;
@@ -29,5 +30,10 @@ int main(void)
     nv2a_pb_scan_report();
     recomp_icall_fail_log(0x80000000u);
     recomp_icall_not_code_log(0xFFFFFFFFu);
+
+    if (recomp_xbox_io_read8(0x80C0u) != 0x20u)
+        return 4;
+    if (recomp_xbox_io_read8(0x80C0u) != 0x00u)
+        return 5;
     return 0;
 }

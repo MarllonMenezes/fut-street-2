@@ -3,6 +3,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+static uint8_t g_tv_encoder_field_pin;
+
+uint8_t recomp_xbox_io_read8(uint16_t port)
+{
+    if (port == 0x80C0u) {
+        /* Independent Xbox compatibility evidence models the byte read as
+         * the TV encoder field-pin bit toggling on each sample. */
+        g_tv_encoder_field_pin =
+            (uint8_t)((g_tv_encoder_field_pin + 1u) & 1u);
+        return (uint8_t)(g_tv_encoder_field_pin << 5);
+    }
+
+    static int reported;
+    if (!reported) {
+        fprintf(stderr, "[IO] unsupported Xbox byte read from port 0x%04X\n",
+                (unsigned)port);
+        reported = 1;
+    }
+    return 0;
+}
+
 void recomp_icall_fail_log(uint32_t va)
 {
     fprintf(stderr, "[ICALL] unresolved guest target 0x%08X (calls=%llu)\n",
