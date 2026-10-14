@@ -215,6 +215,8 @@ void xbe_entry_point(void)
 {
     esi = MEM32(XBOX_FS_BASE + 0x20);
     MEM32(esi + 0x250) = eax;
+    edx = esi + 0x250;
+    MEM32(edx) = ebp;
     edi = MEM32(ebx + 0x250);
     MEM32(edi + 0x250) = ecx;
 }
@@ -227,9 +229,11 @@ void xbe_entry_point(void)
             )
             writes = recover_prcb_cache_writes(generated, functions, {0x1000})
 
-        self.assertEqual(len(writes), 1)
+        self.assertEqual(len(writes), 2)
         self.assertEqual(writes[0]["register"], "esi")
         self.assertEqual(writes[0]["field"], "FS:[0x20] + 0x250")
+        self.assertEqual(writes[1]["register"], "edx")
+        self.assertEqual(writes[1]["address_expression"], "esi + 0x250")
 
     def test_audits_explicit_host_kernel_resolver_case(self) -> None:
         functions = [

@@ -58,6 +58,9 @@ PRCB_BASE_LOAD_RE = re.compile(
 PRCB_CACHE_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250\)\s*="
 )
+PRCB_CACHE_ADDRESS_ALIAS_RE = re.compile(
+    r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250$"
+)
 KERNEL_RESOLVER_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"\(ULONG_PTR\)(?P<target>[^;]+);"
@@ -618,6 +621,7 @@ def recover_prcb_cache_writes(
     for source_path in sorted(generated_dir.rglob("recomp_*.c")):
         current: int | None = None
         prcb_base_registers: set[str] = set()
+        prcb_cache_address_aliases: dict[str, str] = {}
         for line_number, line in enumerate(
             source_path.read_text(encoding="utf-8").splitlines(), 1
         ):
@@ -625,6 +629,7 @@ def recover_prcb_cache_writes(
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
                 prcb_base_registers = set()
+                prcb_cache_address_aliases = {}
             if current is None or current not in directly_reachable:
                 continue
 
@@ -644,21 +649,50 @@ def recover_prcb_cache_writes(
                         "field": "FS:[0x20] + 0x250",
                     }
                 )
+            register_write_match = DYNAMIC_REGISTER_WRITE_RE.search(line)
+            if register_write_match is not None:
+                alias_register = register_write_match.group("register")
+                if alias_register in prcb_cache_address_aliases:
+                    writes.append(
+                        {
+                            "function": f"0x{current:08X}",
+                            "function_name": str(
+                                function_by_address[current].get("name", "")
+                            ),
+                            "source": f"{source_path.name}:{line_number}",
+                            "register": alias_register,
+                            "address_expression": prcb_cache_address_aliases[
+                                alias_register
+                            ],
+                            "field": "FS:[0x20] + 0x250",
+                        }
+                    )
 
             assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
             if assignment_match:
                 register = assignment_match.group("register")
                 rhs = assignment_match.group("rhs").strip()
                 load_match = PRCB_BASE_LOAD_RE.match(line)
+                add_match = PRCB_CACHE_ADDRESS_ALIAS_RE.fullmatch(rhs)
                 if load_match is not None:
                     prcb_base_registers.add(register)
+                    prcb_cache_address_aliases.pop(register, None)
                 elif REGISTER_NAME_RE.fullmatch(rhs) and rhs in prcb_base_registers:
                     prcb_base_registers.add(register)
+                    prcb_cache_address_aliases.pop(register, None)
+                elif (
+                    add_match is not None
+                    and add_match.group("base") in prcb_base_registers
+                ):
+                    prcb_base_registers.discard(register)
+                    prcb_cache_address_aliases[register] = rhs
                 else:
                     prcb_base_registers.discard(register)
+                    prcb_cache_address_aliases.pop(register, None)
 
             for register_match in REGISTER_WRITE_RE.finditer(line):
                 prcb_base_registers.discard(register_match.group("register"))
+                prcb_cache_address_aliases.pop(register_match.group("register"), None)
     return writes
 
 
