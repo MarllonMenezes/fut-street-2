@@ -20,27 +20,33 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.00
+## Estado verificável — release 2.01
 
-O release 2.00 mantém a proveniência local completa dos sete callbacks
-dinâmicos e dos nove chamadores diretos já inventariados, e acrescenta a
-checagem `dynamic_callback_container_field_provenance_sites=2`. Nos dois
-chamadores do subgrafo direto que alcançam o callback indexado `sub_0026E70A`,
-o argumento de objeto tem a forma local `ebp - 16`; o corpo do callback carrega
-os campos `+8` e `+0xC`, e os dois chamadores têm uma escrita observada para o
-campo mapeado `ebp - 4` (`+0xC`), com valor vindo de registrador. Não há escrita
-local provada para o campo `ebp - 8` (`+8`). Isso é somente evidência de forma
-de contêiner e de escrita linear anterior à chamada: não prova dominância de
-fluxo, identidade de objeto, tipo, ABI ou destino final do callback. Quatro
-outros call sites diretos de `sub_0026E70A` aparecem no C gerado fora do
-subgrafo direto e continuam fora dessa conclusão.
+O release 2.01 mantém a proveniência local completa dos sete callbacks
+dinâmicos e dos nove chamadores diretos já inventariados. A checagem do callback
+indexado `sub_0026E70A` continua em `dynamic_callback_container_field_provenance_sites=2`:
+nos dois chamadores do subgrafo direto, o argumento de objeto tem a forma local
+`ebp - 16`, os campos `+8` e `+0xC` são carregados pelo callback e há uma
+escrita observada para o campo mapeado `ebp - 4` (`+0xC`), com valor vindo de
+registrador; não há escrita local provada para `ebp - 8` (`+8`).
+
+A nova checagem do campo de objeto `+0x584` registra
+`dynamic_callback_object_field_provenance_sites=1` e
+`dynamic_callback_object_field_write_sites=0`: o chamador direto
+`sub_00251CD6` passa `edi`, carregado de `MEM32(ebp + 8)`, mas não há uma
+escrita provada de `MEM32(edi + 0x584)=...` antes da chamada. Essas duas
+checagens são somente evidência de forma, argumento e escrita linear; não
+provam dominância de fluxo, identidade de objeto, tipo, ABI, inicialização em
+runtime ou destino final do callback. Quatro outros call sites diretos de
+`sub_0026E70A` aparecem no C gerado fora do subgrafo direto e continuam fora
+dessa conclusão.
 
 O piloto read-only do REA também permanece documentado: o MCP local respondeu
 com `170/170` ferramentas e `6/6` prompts, mas não há Hopper, Ghidra ou IDA
 local; ao receber o `default.xbe`, `rea analyze` retornou
 `target_unavailable / unsupported binary format`. Portanto o REA não acrescenta
 evidência ao XBE neste release e não foi usado para criar bindings. A suíte
-Python passou `87/87`; a prontidão segue `NOT_READY` e a estimativa conservadora
+Python passou `88/88`; a prontidão segue `NOT_READY` e a estimativa conservadora
 do PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
 
 ## Histórico verificável

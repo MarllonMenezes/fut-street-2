@@ -144,6 +144,10 @@ DYNAMIC_CALLBACK_FIELD_LOAD_RE = re.compile(
     r"MEM32\((?P<object>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
     r"(?P<offset>0x[0-9A-Fa-f]+|[0-9]+)\);"
 )
+DYNAMIC_CALLBACK_OBJECT_TARGET_RE = re.compile(
+    r"^MEM32\((?:eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+    r"(?P<offset>0x[0-9A-Fa-f]+|[0-9]+)\)$"
+)
 LOCAL_MEMORY_WRITE_RE = re.compile(
     r"^\s*MEM32\((?P<base>eax|ebx|ecx|edx|esi|edi|ebp)\s*\+\s*"
     r"(?P<offset>-?0x[0-9A-Fa-f]+|-?[0-9]+)\)\s*=\s*"
@@ -2119,6 +2123,131 @@ def recover_dynamic_callback_container_field_provenance(
     return results
 
 
+def recover_dynamic_callback_object_field_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    caller_provenance: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover writes to fields used by dynamic object-field callbacks.
+
+    For a direct caller, the last pushed register is recorded as the possible
+    first cdecl argument, matching the observed generated call shape.  Only
+    exact ``MEM32(register + constant) = rhs`` writes before that call are
+    reported; this does not prove argument identity, path dominance, or the
+    callback target stored in the field.
+    """
+    target_fields: dict[int, set[int]] = {}
+    target_names: dict[int, str] = {}
+    for row in classified:
+        if row.get("classification") != "dynamic-object-field-target":
+            continue
+        target_match = DYNAMIC_CALLBACK_OBJECT_TARGET_RE.fullmatch(
+            str(
+                row.get(
+                    "target_source_expression",
+                    row.get("target_expression", ""),
+                )
+            )
+        )
+        if target_match is None:
+            continue
+        target_address = _address(row["function"])
+        target_fields.setdefault(target_address, set()).add(
+            int(target_match.group("offset"), 0)
+        )
+        target_names[target_address] = str(row.get("function_name", ""))
+    if not target_fields or not caller_provenance:
+        return []
+
+    results: list[dict[str, Any]] = []
+    source_cache: dict[str, list[str]] = {}
+    for caller in caller_provenance:
+        target_address = _address(caller["target"])
+        field_offsets = target_fields.get(target_address)
+        if not field_offsets:
+            continue
+        source_text, line_text = str(caller["source"]).split(":", 1)
+        call_index = int(line_text) - 1
+        if source_text not in source_cache:
+            source_cache[source_text] = (
+                generated_dir / source_text
+            ).read_text(encoding="utf-8").splitlines()
+        lines = source_cache[source_text]
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]) is not None:
+                function_start = index
+                break
+
+        pushes = caller.get("pushes", [])
+        if not pushes:
+            continue
+        object_push = pushes[-1]
+        object_register = str(object_push.get("operand", "")).strip()
+        if REGISTER_NAME_RE.fullmatch(object_register) is None:
+            object_register = ""
+
+        fields: list[dict[str, Any]] = []
+        for field_offset in sorted(field_offsets):
+            writes: list[dict[str, Any]] = []
+            if object_register:
+                for index in range(function_start, call_index):
+                    write_match = LOCAL_MEMORY_WRITE_RE.match(lines[index])
+                    if write_match is None:
+                        continue
+                    if write_match.group("base") != object_register:
+                        continue
+                    if int(write_match.group("offset"), 0) != field_offset:
+                        continue
+                    rhs = write_match.group("rhs").strip()
+                    writes.append(
+                        {
+                            "source": f"{source_text}:{index + 1}",
+                            "expression": lines[index].strip(),
+                            "rhs": rhs,
+                            "value_kind": _dynamic_writer_value_kind(rhs),
+                        }
+                    )
+            fields.append(
+                {
+                    "field_offset": f"0x{field_offset:X}",
+                    "address_expression": (
+                        f"{object_register} + 0x{field_offset:X}"
+                        if object_register
+                        else None
+                    ),
+                    "writes": writes,
+                    "status": (
+                        "caller-object-field-write-shape-observed"
+                        if writes
+                        else (
+                            "no-proven-caller-object-field-write"
+                            if object_register
+                            else "last-pushed-object-register-unresolved"
+                        )
+                    ),
+                }
+            )
+        results.append(
+            {
+                "caller": caller["caller"],
+                "caller_name": caller["caller_name"],
+                "source": caller["source"],
+                "target": caller["target"],
+                "target_name": target_names.get(target_address, caller.get("target_name", "")),
+                "object_push": object_push,
+                "object_register": object_register or None,
+                "fields": fields,
+                "status": (
+                    "caller-object-field-write-shape-observed"
+                    if any(field["writes"] for field in fields)
+                    else "caller-object-field-shape-observed"
+                ),
+            }
+        )
+    return results
+
+
 def classify_sites(
     sites: list[dict[str, Any]],
     xbe: dict[str, Any],
@@ -2503,6 +2632,11 @@ def audit(
     )
     dynamic_callback_container_field_provenance = (
         recover_dynamic_callback_container_field_provenance(
+            generated_dir, classified, dynamic_callback_caller_provenance
+        )
+    )
+    dynamic_callback_object_field_provenance = (
+        recover_dynamic_callback_object_field_provenance(
             generated_dir, classified, dynamic_callback_caller_provenance
         )
     )
@@ -3087,6 +3221,27 @@ def audit(
             if dynamic_callback_container_field_provenance
             else "no-indexed-callback-container-provenance"
         ),
+        "dynamic_callback_object_field_provenance_sites": len(
+            dynamic_callback_object_field_provenance
+        ),
+        "dynamic_callback_object_field_write_sites": sum(
+            len(field["writes"])
+            for row in dynamic_callback_object_field_provenance
+            for field in row["fields"]
+        ),
+        "dynamic_callback_object_field_provenance_status": (
+            "caller-object-field-write-shape-observed"
+            if any(
+                field["writes"]
+                for row in dynamic_callback_object_field_provenance
+                for field in row["fields"]
+            )
+            else (
+                "caller-object-field-shape-observed"
+                if dynamic_callback_object_field_provenance
+                else "no-object-field-callback-provenance"
+            )
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -3153,6 +3308,9 @@ def audit(
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "dynamic_callback_container_field_provenance": (
             dynamic_callback_container_field_provenance
+        ),
+        "dynamic_callback_object_field_provenance": (
+            dynamic_callback_object_field_provenance
         ),
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
