@@ -1,0 +1,45 @@
+#include "graphics_kelvin_state.h"
+#include <stdio.h>
+#include <string.h>
+
+int main(void)
+{
+    FutGraphicsKelvinState state = {0};
+    if (fut_graphics_kelvin_state(&state, 0x9FC, 1) != FUT_KELVIN_APPLIED || !state.provoking_first) return 1;
+    if (fut_graphics_kelvin_state(&state, 0x9FC, 0) != FUT_KELVIN_APPLIED || state.provoking_first) return 2;
+    /* The four texgen planes have gaps occupied by texture matrices; they
+     * must not be flattened to one contiguous range in the constants. */
+    for (unsigned stage = 0; stage < 4; ++stage) {
+        for (unsigned word = 0; word < 16; ++word) {
+            uint32_t value = 0xA0000000u + stage * 16 + word;
+            if (fut_graphics_kelvin_state(&state, 0x840 + stage * 64 + word * 4, value) != FUT_KELVIN_APPLIED ||
+                state.constants[0x40 + stage * 8 + word / 4][word % 4] != value) return 3;
+        }
+        for (unsigned word = 0; word < 16; ++word)
+            if (state.constants[0x44 + stage * 8 + word / 4][word % 4]) return 4;
+    }
+    if (fut_graphics_kelvin_state(&state, 0xA5C, 0x7FC01234u) != FUT_KELVIN_APPLIED ||
+        state.constants[0x38][3] != 0x7FC01234u ||
+        fut_graphics_kelvin_state(&state, 0x9D8, 0x80000000u) != FUT_KELVIN_APPLIED ||
+        state.constants[0x39][2] != 0x80000000u) return 5;
+    if (fut_graphics_kelvin_state(&state, 0x1EA4, 60) != FUT_KELVIN_APPLIED) return 6;
+    for (unsigned i = 0; i < 12; ++i) {
+        if (fut_graphics_kelvin_state(&state, 0xB80 + i * 4, 100 + i) != FUT_KELVIN_APPLIED ||
+            state.constants[60 + i / 4][i % 4] != 100 + i) return 7;
+    }
+    if (state.constant_load != 63) return 8;
+    if (fut_graphics_kelvin_state(&state, 0x1EA4, 191) != FUT_KELVIN_APPLIED) return 9;
+    for (unsigned i = 0; i < 4; ++i)
+        if (fut_graphics_kelvin_state(&state, 0xB80 + i * 4, i) != FUT_KELVIN_APPLIED) return 10;
+    FutGraphicsKelvinState before = state;
+    if (fut_graphics_kelvin_state(&state, 0xB90, 0) != FUT_KELVIN_REJECTED ||
+        memcmp(&before, &state, sizeof(state))) return 11;
+    const uint32_t rejected[][2] = {{0x9FC,2},{0x128,0},{0x1EA4,192},{0x1E68,0},{0x16BC,2}};
+    for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i)
+        if (fut_graphics_kelvin_state(&state, rejected[i][0], rejected[i][1]) != FUT_KELVIN_REJECTED ||
+            memcmp(&before, &state, sizeof(state))) return 12;
+    if (fut_graphics_kelvin_state(&state, 0x194C, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
+        memcmp(&before, &state, sizeof(state))) return 13;
+    puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
+    return 0;
+}

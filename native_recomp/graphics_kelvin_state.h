@@ -1,0 +1,19 @@
+#ifndef FUT_GRAPHICS_KELVIN_STATE_H
+#define FUT_GRAPHICS_KELVIN_STATE_H
+
+#include <stdint.h>
+
+typedef struct {
+    uint32_t constants[192][4];
+    unsigned constant_load;
+    int constants_dirty;
+    unsigned provoking_first, edge_flag, compress_depth;
+    unsigned flip_read, flip_write, flip_modulo;
+    uint32_t shader_other_input, shadow_slope_threshold, clear_color, pattern_color;
+} FutGraphicsKelvinState;
+
+typedef enum { FUT_KELVIN_APPLIED, FUT_KELVIN_NOT_HANDLED, FUT_KELVIN_REJECTED } FutGraphicsKelvinStatus;
+FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
+    uint32_t method, uint32_t value);
+
+#endif

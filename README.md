@@ -14,6 +14,40 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.64
+
+A primeira submissão de inicialização agora termina: `640` bytes e `128`
+parâmetros foram aceitos, as constantes foram carregadas no D3D11 e o marcador
+`5` foi escrito em `0x82801000` somente após uma consulta de conclusão da GPU
+nativa. A posição DMA GET avançou após o término da submissão. O jogo
+recompilado produziu uma segunda submissão, com `2.876` bytes, que interrompe
+em `0x194C` (`SET_VERTEX_DATA4UB`, atributos constantes de vértice).
+
+`graphics_kelvin_state.c` mantém os `192` slots originais de constantes como
+bits brutos. Implementa a seleção do provoking vertex, os slots de eye/fog,
+as matrizes de texgen, a sequência de carga de constantes e o estado inicial
+de flip/clear e outros controles observados. Os estados que servirão a draws
+futuros ficam retidos no backend; esta etapa não executa desenhos. As posições
+de eye/fog/texgen foram conferidas com a
+[referência de processamento de vértices do xemu](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/pgraph.c).
+Em `0x09FC`, `1` significa first provoking vertex e `0` significa last.
+
+`graphics_native_constants.c` envia os slots para um constant buffer nativo
+em VS `b1`, compatível com o tradutor de microcode existente. Usa `D3D11_QUERY_EVENT`
+e espera a conclusão com limite e cancelamento; a
+[API GetData do D3D11](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11devicecontext-getdata)
+é a evidência de término, não uma cópia artificial de ponteiros. O helper não
+escreve memória guest: o host publica o marcador apenas após sucesso.
+
+Build Release e testes do host passaram `12/12`. O teste nativo usa D3D11
+WARP para upload e readback, verificando todos os bits do buffer, incluindo
+NaN, sinal de zero e infinito, além do binding em `b1` e cancelamento. Os testes
+de estado verificam os espaços entre matrizes de texgen, avanço de carga,
+limites e ausência de mutação após rejeição. Os testes públicos passaram
+`161/161`; a ISO manteve o hash original. O próximo alvo é o bloco de atributos
+e programa de vértice da segunda submissão. `NOT_READY` permanece, sem primeiro
+frame nem PoC jogável aprovado.
+
 ## Estado verificável — release 2.63
 
 O primeiro binding gráfico deixou de bloquear a execução. O backend resolve

@@ -58,6 +58,10 @@
 !/native_recomp/graphics_native_backend.h
 !/native_recomp/graphics_objects.c
 !/native_recomp/graphics_objects.h
+!/native_recomp/graphics_kelvin_state.c
+!/native_recomp/graphics_kelvin_state.h
+!/native_recomp/graphics_native_constants.c
+!/native_recomp/graphics_native_constants.h
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c

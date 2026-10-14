@@ -9,6 +9,8 @@
 #include "graphics_command_stream.h"
 #include "graphics_native_backend.h"
 #include "graphics_objects.h"
+#include "graphics_kelvin_state.h"
+#include "graphics_native_constants.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -44,11 +46,23 @@ static void fail_backend(const char *reason)
 }
 
 typedef struct {
+    ID3D11Device *device;
     ID3D11DeviceContext *context;
+    FutNativeConstants native_constants;
     FutGraphicsBindings bindings;
+    FutGraphicsKelvinState kelvin;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
+
+static int native_finish(NativeGraphicsState *state)
+{
+    if (!fut_native_constants_finish(&state->native_constants,
+        state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
+        return 0;
+    state->kelvin.constants_dirty = 0;
+    return 1;
+}
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size)
 {
@@ -94,6 +108,31 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 view.guest_address + value, view.size);
         return 1;
     }
+    const unsigned class_id = state->bindings.objects[subchannel].words[0] & 0xFFu;
+    if (class_id == 0x44u && method == 0x310u) {
+        state->kelvin.pattern_color = value;
+        return 1;
+    }
+    if (class_id == 0x97u) {
+        if (method == 0x1D70u) {
+            FutGraphicsDmaView view;
+            if (!(state->bindings.reference_masks[subchannel] & (1u << 9)) ||
+                !fut_graphics_dma_view(&state->bindings.references[subchannel][9], &view) ||
+                state->semaphore_offset > view.size || view.size - state->semaphore_offset < 4 ||
+                !native_finish(state) || !write32(view.guest_address + state->semaphore_offset, value))
+                return 0;
+            fprintf(stderr, "[GRAPHICS] native GPU completion confirmed; semaphore=%08X value=%u\n",
+                    view.guest_address + state->semaphore_offset, value);
+            return 1;
+        }
+        FutGraphicsKelvinStatus applied = fut_graphics_kelvin_state(&state->kelvin, method, value);
+        if (applied == FUT_KELVIN_APPLIED)
+            return 1;
+        if (applied == FUT_KELVIN_REJECTED) {
+            fprintf(stderr, "[GRAPHICS] invalid/unsupported state method=%04X value=%08X\n", method, value);
+            return 0;
+        }
+    }
     fprintf(stderr, "[GRAPHICS] native handler missing: sub=%u method=%04X "
             "value=%08X offset=%zu\n", subchannel, method, value, offset);
     return 0;
@@ -117,8 +156,11 @@ static DWORD WINAPI native_worker(void *unused)
     fprintf(stderr, "[GRAPHICS] native D3D11 device initialized: feature_level=%04X\n",
             (unsigned)feature_level);
     NativeGraphicsState state = {0};
+    state.device = device;
     state.context = context;
     state.bindings.read = object_memory_read;
+    if (FAILED(fut_native_constants_init(&state.native_constants, device, context)))
+        fail_backend("cannot create native shader constants/completion query");
 
     uint32_t ring_start = 0, ring_end = 0, channel = 0, cursor = 0;
     while (WaitForSingleObject(backend_stop, 5) == WAIT_TIMEOUT) {
@@ -167,10 +209,13 @@ static DWORD WINAPI native_worker(void *unused)
                     cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size);
             fail_backend("implement the reported native graphics method before continuing");
         }
-        /* No successful method implementation exists yet. A future backend
-         * must wait for native GPU completion before updating GET/fences. */
-        fail_backend("native completion is not implemented");
+        if (!native_finish(&state) || !write32(channel + 0x44u, put))
+            fail_backend("native completion or submission cursor update failed");
+        fprintf(stderr, "[GRAPHICS] submission completed: start=%08X end=%08X methods=%zu\n",
+                cursor, submitted, decoded.methods);
+        cursor = submitted;
     }
+    fut_native_constants_destroy(&state.native_constants);
     ID3D11DeviceContext_Release(context);
     ID3D11Device_Release(device);
     return 0;

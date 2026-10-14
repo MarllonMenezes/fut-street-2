@@ -55,6 +55,7 @@ target_include_directories(fut_street_2_recompiled_code PUBLIC
 add_library(fut_street_2_no_emulation_runtime_support STATIC
     graphics_command_stream.c
     graphics_objects.c
+    graphics_kelvin_state.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -62,6 +63,10 @@ target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 if(BUILD_TESTING)
+    add_executable(graphics_kelvin_state_test tests/graphics_kelvin_state_test.c)
+    target_include_directories(graphics_kelvin_state_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(graphics_kelvin_state_test PRIVATE fut_street_2_no_emulation_runtime_support)
+    add_test(NAME graphics_kelvin_state COMMAND graphics_kelvin_state_test)
     add_executable(graphics_objects_test tests/graphics_objects_test.c)
     target_include_directories(graphics_objects_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(graphics_objects_test PRIVATE fut_street_2_no_emulation_runtime_support)
@@ -144,7 +149,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -169,6 +174,11 @@ if(FUT_STREET2_BUILD_HOST_APP)
         ${RECOMP_HOST_LIBRARIES})
 
     if(BUILD_TESTING)
+        add_executable(graphics_native_constants_test tests/graphics_native_constants_test.c graphics_native_constants.c)
+        target_include_directories(graphics_native_constants_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_constants_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11)
+        add_test(NAME graphics_native_constants COMMAND graphics_native_constants_test)
+        set_tests_properties(graphics_native_constants PROPERTIES TIMEOUT 15)
         add_test(NAME no_emulation_kernel_file_contract
             COMMAND no_emulation_kernel_file_contract_test)
     endif()
