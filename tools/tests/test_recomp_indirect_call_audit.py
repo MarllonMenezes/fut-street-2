@@ -8,7 +8,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.analysis.recomp_indirect_call_audit import audit
+from tools.analysis.recomp_indirect_call_audit import (
+    audit,
+    recover_prcb_cache_writes,
+)
 
 
 class RecompIndirectCallAuditTests(unittest.TestCase):
@@ -184,6 +187,36 @@ void sub_00001020(void)
             result["summary"]["runtime_initialized_known_function_pointer_sites"],
             1,
         )
+
+    def test_distinguishes_prcb_cache_write_from_reused_offset(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    esi = MEM32(XBOX_FS_BASE + 0x20);
+    MEM32(esi + 0x250) = eax;
+    edi = MEM32(ebx + 0x250);
+    MEM32(edi + 0x250) = ecx;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writes = recover_prcb_cache_writes(generated, functions, {0x1000})
+
+        self.assertEqual(len(writes), 1)
+        self.assertEqual(writes[0]["register"], "esi")
+        self.assertEqual(writes[0]["field"], "FS:[0x20] + 0x250")
 
 
 if __name__ == "__main__":

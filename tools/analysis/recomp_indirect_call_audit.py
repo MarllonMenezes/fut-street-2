@@ -47,6 +47,13 @@ FIXED_SLOT_WRITE_RE = re.compile(
     r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
     r"0x(?P<value>[0-9A-Fa-f]{1,8})u?;"
 )
+PRCB_BASE_LOAD_RE = re.compile(
+    r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+    r"MEM32\(XBOX_FS_BASE \+ 0x20\);"
+)
+PRCB_CACHE_WRITE_RE = re.compile(
+    r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250\)\s*="
+)
 XBE_MAGIC = b"XBEH"
 SECTION_SIZE = 0x38
 KERNEL_XOR_KEYS = (0x5B6D40B6, 0xEFB1F152)
@@ -339,6 +346,74 @@ def recover_runtime_fixed_slot_initializers(
     return initializers
 
 
+def recover_prcb_cache_writes(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int],
+) -> list[dict[str, Any]]:
+    """Find direct-path writes to the PRCB cache after its FS-based load.
+
+    The ``+0x250`` offset is reused by unrelated structures, so a matching
+    write is counted only while a register is proven to contain
+    ``MEM32(XBOX_FS_BASE + 0x20)`` (or a direct register copy of that value).
+    A zero result means that no writer was proven in the generated functions;
+    it does not claim that the Xbox kernel cannot populate the cache.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    writes: list[dict[str, Any]] = []
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current: int | None = None
+        prcb_base_registers: set[str] = set()
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+                prcb_base_registers = set()
+            if current is None or current not in directly_reachable:
+                continue
+
+            write_match = PRCB_CACHE_WRITE_RE.search(line)
+            if (
+                write_match is not None
+                and write_match.group("register") in prcb_base_registers
+            ):
+                writes.append(
+                    {
+                        "function": f"0x{current:08X}",
+                        "function_name": str(
+                            function_by_address[current].get("name", "")
+                        ),
+                        "source": f"{source_path.name}:{line_number}",
+                        "register": write_match.group("register"),
+                        "field": "FS:[0x20] + 0x250",
+                    }
+                )
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match:
+                register = assignment_match.group("register")
+                rhs = assignment_match.group("rhs").strip()
+                load_match = PRCB_BASE_LOAD_RE.match(line)
+                if load_match is not None:
+                    prcb_base_registers.add(register)
+                elif REGISTER_NAME_RE.fullmatch(rhs) and rhs in prcb_base_registers:
+                    prcb_base_registers.add(register)
+                else:
+                    prcb_base_registers.discard(register)
+
+            for register_match in REGISTER_WRITE_RE.finditer(line):
+                prcb_base_registers.discard(register_match.group("register"))
+    return writes
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -452,6 +527,9 @@ def audit(
     runtime_initializers = recover_runtime_fixed_slot_initializers(
         generated_dir, functions, directly_reachable
     )
+    prcb_cache_writes = recover_prcb_cache_writes(
+        generated_dir, functions, directly_reachable
+    )
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
@@ -497,6 +575,12 @@ def audit(
         "prcb_guarded_dynamic_callback_sites": classifications[
             "prcb-guarded-dynamic-callback"
         ],
+        "prcb_cache_direct_writer_sites": len(prcb_cache_writes),
+        "prcb_cache_direct_writer_status": (
+            "direct-writer-observed"
+            if prcb_cache_writes
+            else "no-proven-direct-writer"
+        ),
         "unresolved_dynamic_sites": classifications[
             "dynamic-register-or-object-target"
         ]
@@ -525,7 +609,11 @@ def audit(
         "status": "verified-static-indirect-target-classification",
         "original_semantics": "not-claimed",
     }
-    return {"summary": summary, "sites": classified}
+    return {
+        "summary": summary,
+        "sites": classified,
+        "prcb_cache_writes": prcb_cache_writes,
+    }
 
 
 def _parser() -> argparse.ArgumentParser:
