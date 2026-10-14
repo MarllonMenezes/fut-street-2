@@ -20,6 +20,27 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.22
+
+O release 2.22 amplia a auditoria do objeto passado ao consumidor indexado
+`sub_0026E70A`: o C gerado contém `6` chamadas diretas inventariadas. Quatro
+usam o formato frame-local `ebp - 0x10` (`3` com o helper
+`sub_002710F4` observado na mesma função e `1` herdando o frame publicado),
+uma usa um registrador carregado de `MEM32(ebp + 0xC)` e uma usa um registrador
+com atribuição local zero. No subgrafo iniciado em `0x0024D8BE`, os `2/2`
+chamadores observados continuam no formato frame-local publicado.
+
+Isso fecha a classificação da forma dos argumentos, não a semântica do
+objeto: não prova que os seis sites sejam alcançados, que o objeto zerado seja
+válido ou que qualquer destino dinâmico seja executado. A tabela independente
+em `0x00361360` continua sem alias estático provado para o frame, e o alvo do
+consumidor continua sendo `MEM32(ebx + esi * 4 + 8)`. Os sete callbacks
+dinâmicos permanecem sem destino final provado.
+
+A suíte Python passou `104/104`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise segue estática e não executa o XBE.
+
 ## Estado verificável — release 2.21
 
 O release 2.21 aprofunda a cadeia do callback indexado

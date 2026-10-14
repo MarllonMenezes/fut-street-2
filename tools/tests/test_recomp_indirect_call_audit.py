@@ -28,6 +28,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_indexed_callback_table_provenance,
     recover_dynamic_indexed_callback_consumer_layout,
     recover_dynamic_indexed_callback_frame_provenance,
+    recover_dynamic_indexed_callback_object_provenance,
     recover_indirect_tail_switch_provenance,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
@@ -1216,6 +1217,120 @@ void xbe_entry_point(void)
         self.assertEqual(
             evidence["table_root_link_status"],
             "not-proven-frame-object-to-indexed-table-root",
+        )
+
+    def test_inventories_nonframe_indexed_callback_object_shapes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            source = (
+                "void sub_002710F4(void)\n"
+                "{\n"
+                "    eax = MEM32(XBOX_FS_BASE);\n"
+                "    eax = ebp + -16;\n"
+                "    MEM32(XBOX_FS_BASE) = eax;\n"
+                "}\n"
+                "void sub_00273217(void)\n"
+                "{\n"
+                "    RECOMP_ABI_CALL(0x002710F4u, sub_002710F4);\n"
+                "    eax = ebp + -16;\n"
+                "    PUSH32(esp, 0xFFFFFFFFu);\n"
+                "    PUSH32(esp, eax);\n"
+                "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+                "}\n"
+                "void sub_00271148(void)\n"
+                "{\n"
+                "    ebx = MEM32(ebp + 0xC);\n"
+                "    PUSH32(esp, esi);\n"
+                "    PUSH32(esp, ebx);\n"
+                "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+                "    ebx = 0;\n"
+                "    PUSH32(esp, 0xFFFFFFFFu);\n"
+                "    PUSH32(esp, ebx);\n"
+                "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+                "}\n"
+            )
+            source_path = generated / "recomp_0000.c"
+            source_path.write_text(source, encoding="utf-8")
+            call_lines = [
+                index
+                for index, line in enumerate(source.splitlines(), 1)
+                if "0x0026E70Au" in line
+            ]
+
+            evidence = recover_dynamic_indexed_callback_object_provenance(
+                generated,
+                [
+                    {
+                        "classification": "dynamic-indexed-record-target",
+                        "function": "0x0026E70A",
+                        "function_name": "sub_0026E70A",
+                    }
+                ],
+                [
+                    {
+                        "caller": "0x00273217",
+                        "caller_name": "sub_00273217",
+                        "source": f"recomp_0000.c:{call_lines[0]}",
+                        "target": "0x0026E70A",
+                        "target_name": "sub_0026E70A",
+                        "pushes": [
+                            {"operand": "0xFFFFFFFFu"},
+                            {
+                                "operand": "eax",
+                                "source_assignment": {
+                                    "register": "eax",
+                                    "rhs": "ebp + -16",
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "caller": "0x00271148",
+                        "caller_name": "sub_00271148",
+                        "source": f"recomp_0000.c:{call_lines[1]}",
+                        "target": "0x0026E70A",
+                        "target_name": "sub_0026E70A",
+                        "pushes": [
+                            {"operand": "esi"},
+                            {
+                                "operand": "ebx",
+                                "source_assignment": {
+                                    "register": "ebx",
+                                    "rhs": "MEM32(ebp + 0xC)",
+                                },
+                            },
+                        ],
+                    },
+                    {
+                        "caller": "0x00271148",
+                        "caller_name": "sub_00271148",
+                        "source": f"recomp_0000.c:{call_lines[2]}",
+                        "target": "0x0026E70A",
+                        "target_name": "sub_0026E70A",
+                        "pushes": [
+                            {"operand": "0xFFFFFFFFu"},
+                            {
+                                "operand": "ebx",
+                                "source_assignment": {
+                                    "register": "ebx",
+                                    "rhs": "0",
+                                },
+                            },
+                        ],
+                    },
+                ],
+            )
+
+        self.assertEqual(evidence["site_count"], 3)
+        self.assertEqual(evidence["frame_mapped_sites"], 1)
+        self.assertEqual(
+            evidence["object_shape_status_counts"],
+            {
+                "published-seh-frame-object": 1,
+                "caller-stack-object-register": 1,
+                "zero-object-register": 1,
+            },
         )
 
     def test_counts_kernel_call_push_arguments(self) -> None:

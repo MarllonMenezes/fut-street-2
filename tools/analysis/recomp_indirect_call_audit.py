@@ -3233,6 +3233,144 @@ def recover_dynamic_indexed_callback_frame_provenance(
     }
 
 
+def recover_dynamic_indexed_callback_object_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+    caller_provenance: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Inventory every observed object argument into the indexed consumer.
+
+    The frame-specific helper above deliberately records only the stronger
+    ``ebp - 0x10`` shape.  This companion inventory keeps the remaining
+    caller shapes visible instead of dropping them: the current generated C
+    also passes a register loaded from a caller stack argument and a register
+    whose latest local assignment is zero.  These are source shapes only; no
+    object identity, branch reachability, or callback target is inferred.
+    """
+    frame_provenance = recover_dynamic_indexed_callback_frame_provenance(
+        generated_dir, classified, caller_provenance
+    )
+    if not caller_provenance:
+        return {
+            "status": "no-indexed-callback-object-provenance-observed",
+            "consumer_function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+            "sites": [],
+            "object_shape_status_counts": {},
+            "table_root_link_status": "not-assessed",
+        }
+
+    indexed_function_addresses = {
+        _address(row["function"])
+        for row in classified
+        if row.get("classification") == "dynamic-indexed-record-target"
+        and _address(row.get("function", 0)) == INDEXED_CALLBACK_CONSUMER_FUNCTION
+    }
+    indexed_callers = [
+        caller
+        for caller in caller_provenance
+        if _address(caller.get("target", 0)) in indexed_function_addresses
+    ]
+    frame_by_source = {
+        str(row.get("source")): row
+        for row in frame_provenance.get("sites", [])
+    }
+    rows: list[dict[str, Any]] = []
+    for caller in caller_provenance:
+        if _address(caller.get("target", 0)) not in indexed_function_addresses:
+            continue
+        source = str(caller.get("source", ""))
+        frame_row = frame_by_source.get(source)
+        if frame_row is not None:
+            row = dict(frame_row)
+            row["object_shape_status"] = (
+                "published-seh-frame-object"
+                if row.get("status") == "published-seh-frame-object"
+                else "inherited-frame-local-object"
+            )
+            rows.append(row)
+            continue
+
+        pushes = caller.get("pushes") or []
+        if not pushes:
+            continue
+        object_push = pushes[-1]
+        operand = str(object_push.get("operand", "")).strip()
+        source_assignment = object_push.get("source_assignment")
+        object_expression = operand
+        if isinstance(source_assignment, dict):
+            object_expression = str(
+                source_assignment.get("rhs", object_expression)
+            ).strip()
+        normalized = re.sub(r"\s+", "", object_expression).lower()
+        if normalized in {"0", "0u", "0x0", "0x0u"}:
+            shape_status = "zero-object-register"
+        elif normalized == "mem32(ebp+0xc)":
+            shape_status = "caller-stack-object-register"
+        elif REGISTER_NAME_RE.fullmatch(operand) is not None and not isinstance(
+            source_assignment, dict
+        ):
+            shape_status = "register-object-without-source-assignment"
+        else:
+            shape_status = "object-expression-unresolved"
+        rows.append(
+            {
+                "caller": caller.get("caller"),
+                "caller_name": caller.get("caller_name", ""),
+                "source": source,
+                "target": caller.get("target"),
+                "target_name": caller.get("target_name", ""),
+                "object_push": object_push,
+                "object_pointer_expression": object_expression,
+                "object_shape_status": shape_status,
+            }
+        )
+
+    status_counts = dict(Counter(row["object_shape_status"] for row in rows))
+    frame_helper_backed_sites = status_counts.get("published-seh-frame-object", 0)
+    frame_object_sites = frame_helper_backed_sites + status_counts.get(
+        "inherited-frame-local-object", 0
+    )
+    recognized_statuses = {
+        "published-seh-frame-object",
+        "inherited-frame-local-object",
+        "caller-stack-object-register",
+        "zero-object-register",
+    }
+    verified = (
+        bool(rows)
+        and frame_provenance.get("status")
+        in {
+            "verified-indexed-callback-frame-provenance",
+            "incomplete-indexed-callback-frame-provenance",
+        }
+        and frame_provenance.get("helper", {}).get("status")
+        == "verified-helper-publishes-ebp-minus-0x10-to-fs"
+        and len(rows) == len(indexed_callers)
+        and set(status_counts).issubset(recognized_statuses)
+    )
+    return {
+        "status": (
+            "verified-indexed-callback-object-provenance"
+            if verified
+            else "incomplete-indexed-callback-object-provenance"
+        ),
+        "consumer_function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+        "frame_helper_function": f"0x{INDEXED_CALLBACK_FRAME_HELPER_FUNCTION:08X}",
+        "frame_provenance": frame_provenance,
+        "sites": rows,
+        "site_count": len(rows),
+        "frame_mapped_sites": frame_helper_backed_sites,
+        "frame_object_sites": frame_object_sites,
+        "frame_helper_backed_sites": frame_helper_backed_sites,
+        "object_shape_status_counts": status_counts,
+        "table_root_link_status": (
+            "not-proven-frame-object-to-indexed-table-root"
+            if frame_object_sites
+            else "not-assessed"
+        ),
+    }
+
+
 def recover_fixed_callback_consumer_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -4199,6 +4337,11 @@ def audit(
         for row in dynamic_callback_all_caller_provenance
         if _address(row["caller"]) not in directly_reachable
     ]
+    dynamic_indexed_callback_object_provenance = (
+        recover_dynamic_indexed_callback_object_provenance(
+            generated_dir, classified, dynamic_callback_all_caller_provenance
+        )
+    )
     fixed_callback_consumer_provenance = (
         recover_fixed_callback_consumer_provenance(
             generated_dir, classified, functions
@@ -5424,6 +5567,39 @@ def audit(
                 "table_root_link_status", "not-assessed"
             )
         ),
+        "dynamic_indexed_callback_object_provenance_status": (
+            dynamic_indexed_callback_object_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_object_provenance_sites": (
+            dynamic_indexed_callback_object_provenance.get("site_count", 0)
+        ),
+        "dynamic_indexed_callback_object_provenance_frame_mapped_sites": (
+            dynamic_indexed_callback_object_provenance.get(
+                "frame_mapped_sites", 0
+            )
+        ),
+        "dynamic_indexed_callback_object_provenance_frame_object_sites": (
+            dynamic_indexed_callback_object_provenance.get(
+                "frame_object_sites", 0
+            )
+        ),
+        "dynamic_indexed_callback_object_provenance_frame_helper_backed_sites": (
+            dynamic_indexed_callback_object_provenance.get(
+                "frame_helper_backed_sites", 0
+            )
+        ),
+        "dynamic_indexed_callback_object_provenance_shape_counts": (
+            dynamic_indexed_callback_object_provenance.get(
+                "object_shape_status_counts", {}
+            )
+        ),
+        "dynamic_indexed_callback_object_provenance_table_root_link_status": (
+            dynamic_indexed_callback_object_provenance.get(
+                "table_root_link_status", "not-assessed"
+            )
+        ),
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_conditional_nonzero_guard_sites": len(
@@ -5754,6 +5930,9 @@ def audit(
         ),
         "dynamic_indexed_callback_frame_provenance": (
             dynamic_indexed_callback_frame_provenance
+        ),
+        "dynamic_indexed_callback_object_provenance": (
+            dynamic_indexed_callback_object_provenance
         ),
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,
