@@ -16,6 +16,8 @@ from tools.analysis.recomp_host_preflight_evidence_gate import (
 
 
 COMMON = (
+    "Loaded 11/11 sections\n"
+    "xbox_MemoryLayoutInit: complete\n"
     "Dynamic-call guards OK: PRCB cache=0; no guest code executed.\n"
     "Static preflight OK: XBE memory layout initialized and translated entry "
     "point resolved; no guest code executed.\n"
@@ -32,6 +34,8 @@ class RecompHostPreflightEvidenceGateTests(unittest.TestCase):
 
     def test_verifies_runtime_bridge_contract(self) -> None:
         output = (
+            "Loaded 11/11 sections\n"
+            "xbox_MemoryLayoutInit: complete\n"
             "Dynamic-call guards OK: PRCB cache=0; no guest code executed.\n"
             f"{BRIDGE_MARKER}\n{RUNTIME_MARKER}\n"
         )

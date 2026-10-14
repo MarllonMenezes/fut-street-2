@@ -19,6 +19,8 @@ from typing import Any, Callable, Sequence
 
 FORBIDDEN_ENVIRONMENT = ("RECOMP_AC97_READY", "RECOMP_PB_EXEC", "RECOMP_VBLANK")
 COMMON_MARKERS = (
+    "Loaded 11/11 sections",
+    "xbox_MemoryLayoutInit: complete",
     "Dynamic-call guards OK:",
     "no guest code executed.",
     "translated entry point resolved",

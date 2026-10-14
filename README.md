@@ -14,6 +14,21 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.58
+
+O release 2.58 endurece
+`tools/analysis/recomp_host_preflight_evidence_gate.py`: uma saída aprovada
+agora precisa demonstrar explicitamente `Loaded 11/11 sections` e
+`xbox_MemoryLayoutInit: complete`, além das guardas dinâmicas, do entry point
+e, no modo runtime, da ponte `128/128`. Isso evita que um marcador final seja
+aceito sem a etapa correspondente de carregamento da imagem.
+
+A correção foi repetida contra o host local nos modos estático e runtime, sem
+`--launch` e sem execução guest. É uma melhoria de força do gate, não uma
+aprovação de boot ou fidelidade; `NOT_READY` permanece e a estimativa
+conservadora do PoC jogável continua em aproximadamente `31% concluído / 69%
+restante`.
+
 ## Estado verificável — release 2.57
 
 O release 2.57 adiciona
