@@ -13,6 +13,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_caller_provenance,
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
+    recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_fixed_callback_consumer_provenance,
@@ -395,6 +396,59 @@ void sub_00002000(void)
         self.assertEqual([item["operand"] for item in evidence[0]["pushes"]], ["ebx"])
         self.assertEqual(
             evidence[0]["status"], "fixed-callback-consumer-push-shape-observed"
+        )
+
+    def test_recovers_callback_return_use_shape(self) -> None:
+        generated_source = """
+void sub_00001000(void)
+{
+    { uint32_t _icall_target = eax; PUSH32(esp, 0x0000100Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000100Fu); }
+loc_0000100F: ;
+    _fa = (uint32_t)(eax) & 0xFFFFFFFFu;
+    _fb = (uint32_t)(0) & 0xFFFFFFFFu;
+    if (CMP_EQ(_fa, _fb)) goto loc_00001020;
+loc_00001020: ;
+}
+void sub_00002000(void)
+{
+    { uint32_t _icall_target = eax; PUSH32(esp, 0x0000200Fu); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x0000200Fu); }
+loc_0000200F: ;
+    eax = esi;
+}
+"""
+        classified = [
+            {
+                "call_site": "0x0000100F",
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "prcb-guarded-dynamic-callback",
+                "target_expression": "MEM32(eax + 0x14)",
+            },
+            {
+                "call_site": "0x0000200F",
+                "function": "0x00002000",
+                "function_name": "sub_00002000",
+                "classification": "runtime-initialized-fixed-slot",
+                "target_expression": "eax",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_callback_return_use_provenance(
+                generated, classified
+            )
+
+        self.assertEqual(
+            evidence["0x0000100F"]["status"],
+            "callback-return-compared-after-call",
+        )
+        self.assertEqual(
+            evidence["0x0000200F"]["status"],
+            "callback-return-overwritten-before-observation",
         )
 
     def test_recovers_indexed_callback_container_field_shapes(self) -> None:

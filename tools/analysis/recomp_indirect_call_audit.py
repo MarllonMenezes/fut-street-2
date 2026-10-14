@@ -2039,6 +2039,120 @@ def recover_fixed_callback_consumer_provenance(
     return results
 
 
+def recover_callback_return_use_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Record the bounded first use of unresolved callback return values.
+
+    The scan stops at the next call, branch transfer, or return and only
+    reports the generated C shape immediately following the indirect call.
+    It does not infer a C type, signedness, ABI, or callback implementation.
+    """
+    callback_classes = {
+        "dynamic-register-or-object-target",
+        "dynamic-memory-target",
+        "dynamic-object-field-target",
+        "dynamic-indexed-record-target",
+        "prcb-guarded-dynamic-callback",
+        "runtime-initialized-fixed-slot",
+    }
+    targets = {
+        str(row["call_site"]): row
+        for row in classified
+        if row.get("classification") in callback_classes
+    }
+    if not targets:
+        return {}
+    results: dict[str, dict[str, Any]] = {}
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current_name = ""
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current_name = symbol_match.group(1)
+            site_match = re.search(
+                r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*"
+                r"0x(?P<site>[0-9A-Fa-f]{8})u\)",
+                line,
+            )
+            if site_match is None:
+                continue
+            call_site = f"0x{int(site_match.group('site'), 16):08X}"
+            row = targets.get(call_site)
+            if row is None:
+                continue
+
+            status = "callback-return-not-observed-before-control-transfer"
+            first_effect: dict[str, Any] | None = None
+            return_read_sources: list[str] = []
+            return_compare_source: str | None = None
+            return_was_read = False
+            for follow_line_number in range(line_number + 1, len(lines) + 1):
+                follow = lines[follow_line_number - 1]
+                stripped = follow.strip()
+                if FUNCTION_SYMBOL_RE.match(follow):
+                    break
+                if not stripped or stripped == "}" or LOCAL_LABEL_RE.match(follow):
+                    continue
+                if (
+                    DIRECT_ABI_CALL_RE.search(follow) is not None
+                    or INDIRECT_CALL_RE.search(follow) is not None
+                    or stripped.startswith("goto ")
+                    or "return" in stripped
+                ):
+                    break
+                assignment = REGISTER_ASSIGNMENT_RE.match(follow)
+                if assignment is not None and assignment.group("register") == "eax":
+                    first_effect = {
+                        "kind": "return-overwritten-before-observation",
+                        "source": f"{source_path.name}:{follow_line_number}",
+                        "expression": stripped,
+                    }
+                    status = "callback-return-overwritten-before-observation"
+                    break
+                if (
+                    "(eax)" in follow
+                    or "LO8(eax)" in follow
+                    or re.search(r"PUSH32\(esp,\s*eax\)", follow) is not None
+                    or re.search(r"=\s*eax;", follow) is not None
+                ):
+                    return_was_read = True
+                    return_read_sources.append(
+                        f"{source_path.name}:{follow_line_number}"
+                    )
+                    if first_effect is None:
+                        first_effect = {
+                            "kind": "return-value-read",
+                            "source": f"{source_path.name}:{follow_line_number}",
+                            "expression": stripped,
+                        }
+                if return_was_read and re.match(r"^\s*if\s*\((?:CMP_|TEST_)", follow):
+                    return_compare_source = (
+                        f"{source_path.name}:{follow_line_number}"
+                    )
+                    status = "callback-return-compared-after-call"
+                    break
+                if return_was_read and len(return_read_sources) >= 6:
+                    status = "callback-return-read-after-call"
+                    break
+            if status == "callback-return-not-observed-before-control-transfer" and first_effect:
+                status = "callback-return-read-after-call"
+            results[call_site] = {
+                "call_site": call_site,
+                "function": row["function"],
+                "function_name": row.get("function_name", current_name),
+                "classification": row["classification"],
+                "target_expression": row.get("target_expression", ""),
+                "status": status,
+                "first_effect": first_effect,
+                "return_read_sources": return_read_sources,
+                "return_compare_source": return_compare_source,
+            }
+    return results
+
+
 def recover_dynamic_callback_container_field_provenance(
     generated_dir: Path,
     classified: list[dict[str, Any]],
@@ -2773,6 +2887,9 @@ def audit(
     prcb_callback_cache_provenance = recover_prcb_callback_cache_provenance(
         classified, dynamic_source_provenance
     )
+    callback_return_use_provenance = recover_callback_return_use_provenance(
+        generated_dir, classified
+    )
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
     )
@@ -2818,6 +2935,11 @@ def audit(
         prcb_provenance = prcb_callback_cache_provenance.get(str(row["call_site"]))
         if prcb_provenance is not None:
             row["prcb_callback_cache_provenance"] = prcb_provenance
+        return_provenance = callback_return_use_provenance.get(
+            str(row["call_site"])
+        )
+        if return_provenance is not None:
+            row["callback_return_use_provenance"] = return_provenance
     used_kernel_cases = (
         {}
         if kernel_resolver_cases is None
@@ -3397,6 +3519,30 @@ def audit(
             )
             else "incomplete-prcb-cache-callback-field-shape"
         ),
+        "callback_return_use_provenance_sites": len(
+            callback_return_use_provenance
+        ),
+        "callback_return_use_compared_sites": sum(
+            row["status"] == "callback-return-compared-after-call"
+            for row in callback_return_use_provenance.values()
+        ),
+        "callback_return_use_read_sites": sum(
+            row["status"] == "callback-return-read-after-call"
+            for row in callback_return_use_provenance.values()
+        ),
+        "callback_return_use_overwritten_sites": sum(
+            row["status"] == "callback-return-overwritten-before-observation"
+            for row in callback_return_use_provenance.values()
+        ),
+        "callback_return_use_unobserved_sites": sum(
+            row["status"] == "callback-return-not-observed-before-control-transfer"
+            for row in callback_return_use_provenance.values()
+        ),
+        "callback_return_use_status": (
+            "bounded-first-post-call-use-observed"
+            if callback_return_use_provenance
+            else "no-callback-return-use-observed"
+        ),
         "dynamic_callback_caller_provenance_sites": len(
             dynamic_callback_caller_provenance
         ),
@@ -3557,6 +3703,7 @@ def audit(
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_source_provenance": dynamic_source_provenance,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
+        "callback_return_use_provenance": callback_return_use_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
         "dynamic_callback_all_caller_provenance": (
             dynamic_callback_all_caller_provenance

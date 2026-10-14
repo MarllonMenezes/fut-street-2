@@ -20,9 +20,9 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.04
+## Estado verificável — release 2.05
 
-O release 2.04 mantém a proveniência local completa dos sete callbacks
+O release 2.05 mantém a proveniência local completa dos sete callbacks
 dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
 inventaria todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
 dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
@@ -54,6 +54,15 @@ evidência estática do consumidor e da forma de entrada, não prova de tipo,
 implementação do callback, preenchimento runtime do slot ou segurança de
 invocação.
 
+A auditoria também registra o primeiro uso limitado do valor retornado por cada
+callback unresolved: `callback_return_use_provenance_sites=9`, cobrindo os sete
+callbacks dinâmicos e os dois consumidores BSS. Um retorno é comparado depois
+da chamada (`0x00274FC5`, consumidor de `0x00360A70`), dois são sobrescritos
+antes de qualquer observação (`0x00252C7D` e `0x00252CF1`) e seis não têm uso
+observável antes da próxima transferência de controle. Essa classificação é
+somente uma janela sintática pós-chamada; não prova tipo, signedness, ABI ou
+semântica do retorno.
+
 A checagem do callback indexado continua em
 `dynamic_callback_container_field_provenance_sites=2`: nos dois chamadores do
 subgrafo direto, o argumento de objeto tem a forma local `ebp - 16`, os campos
@@ -72,7 +81,7 @@ com `170/170` ferramentas e `6/6` prompts, mas não há Hopper, Ghidra ou IDA
 local; ao receber o `default.xbe`, `rea analyze` retornou
 `target_unavailable / unsupported binary format`. Portanto o REA não acrescenta
 evidência ao XBE neste release e não foi usado para criar bindings. A suíte
-Python passou `90/90`; a prontidão segue `NOT_READY` e a estimativa conservadora
+Python passou `91/91`; a prontidão segue `NOT_READY` e a estimativa conservadora
 do PoC jogável permanece em aproximadamente `31% concluído / 69% restante`.
 
 ## Histórico verificável
