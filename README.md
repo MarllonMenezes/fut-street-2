@@ -22,7 +22,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável
 
-O último marco publicado é a etapa 1.56 (14/10/2026): a pilha de patches 0001–0018 passou 557 testes (38 ignorados); a geração traduziu 15.600/15.600 funções, sem falhas, em 61 unidades C, e o build CMake Release e o CTest do alvo não-emulação passaram (2/2). Três sites provados de CPUID/PUSHFD/POPFD deixaram de ser TODOs; permanecem 13 sites sem lowering em 7 mnemônicos. Isso **não** demonstra boot, execução correta nem equivalência com o jogo. O XBE não foi executado nesse marco; headless e replay do protótipo auxiliar não validam o jogo recompilado. A prontidão permanece `NOT_READY`.
+O último marco publicado é a etapa 1.57 (14/10/2026): a pilha de patches 0001–0019 passou 558 testes (38 ignorados); a geração traduziu 15.600/15.600 funções, sem falhas, em 61 unidades C, e o build CMake Release e o CTest do alvo não-emulação passaram (2/2). A recuperação estática identificou como dados duas tabelas de destinos com índice enviesado, removendo os falsos `STI`/`DAA` em `0x0026FBC9` e `0x00270EA2`; permanecem 11 sites sem lowering em 6 mnemônicos (`CLI`, `STI`, `IN`, `OUT`, `SGDT`, `LJMP`). Isso **não** demonstra boot, execução correta nem equivalência com o jogo. O XBE não foi executado nesse marco; a prontidão permanece `NOT_READY`. Estimativa conservadora para um possível PoC jogável: aproximadamente 22% concluído e 78% restante, principalmente boot, compatibilidade de kernel/hardware, rendering, assets, gameplay, animação e áudio.
 
 ## Conteúdo
 

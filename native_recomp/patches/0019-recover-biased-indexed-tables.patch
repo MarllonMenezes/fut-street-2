@@ -1,0 +1,139 @@
+diff --git a/tools/disasm/engine.py b/tools/disasm/engine.py
+index f71cc7f..e70b46b 100644
+--- a/tools/disasm/engine.py
++++ b/tools/disasm/engine.py
+@@ -311,0 +312,17 @@ class DisasmEngine:
++            biased_base = None
++            if entries == 0 and self._proves_nonzero_table_index(tbl):
++                # Some MSVC switch layouts mask an input after proving its
++                # low bits are non-zero, then dispatch with that masked value.
++                # The displacement names slot 0 (often overlapping the jmp's
++                # own bytes), while only slots 1..N can execute. Treat the
++                # first reachable slot as the table base; this keeps the
++                # overlap bytes out of the instruction stream without
++                # pretending that the unreachable slot is an arm.
++                biased_base = tbl + 4
++                entries = 0
++                while entries < max_entries:
++                    target = self.image.read_u32_at_va(
++                        biased_base + entries * 4)
++                    if target is None or not (lo <= target < hi):
++                        break
++                    entries += 1
+@@ -345,0 +363,4 @@ class DisasmEngine:
++            if biased_base is not None:
++                # A biased table has no valid backward walk: slot 0 is the
++                # unreachable displacement slot, not a preceding arm.
++                back = 0
+@@ -355 +376,2 @@ class DisasmEngine:
+-            end = tbl + entries * 4
++            data_start = biased_base if biased_base is not None else tbl
++            end = data_start + entries * 4
+@@ -359,2 +381,3 @@ class DisasmEngine:
+-                    tbl - 16, data_end):
+-                if insn.end_address > tbl and insn.address < data_end:
++                    data_start - 16, data_end):
++                if (insn.end_address > data_start
++                        and insn.address < data_end):
+@@ -364 +387,3 @@ class DisasmEngine:
+-            self.jump_tables[tbl] = end
++            self.jump_tables[data_start] = end
++            if biased_base is not None:
++                self._jt_base[tbl] = data_start
+@@ -373,0 +399,55 @@ class DisasmEngine:
++    def _proves_nonzero_table_index(self, table: int) -> bool:
++        """Prove that the indexed jump cannot select displacement slot 0.
++
++        This is deliberately narrower than generic data-flow recovery. The
++        accepted shape is the one emitted by the Xbox CRT helpers: a
++        non-zero low-bit test branches to a block that copies the tested
++        register, masks it with ``and <index>, 3``, and dispatches through
++        the same index register. Without all of those local facts, leaving
++        the candidate untouched is safer than deleting executable bytes.
++        """
++        for site, _ in self._jt_sites.get(table, ()):
++            dispatch = self.instructions.get(site)
++            if dispatch is None or dispatch.jump_table_index_reg is None:
++                continue
++            index_name = self._cs.reg_name(dispatch.jump_table_index_reg)
++            window = self.get_instructions_in_range(
++                max(0, site - 96), site)
++            for test in window:
++                if test.mnemonic != "test":
++                    continue
++                test_ops = [part.strip().lower()
++                            for part in test.op_str.split(",", 1)]
++                if len(test_ops) != 2 or test_ops[1] not in ("3", "0x3"):
++                    continue
++                source_name = test_ops[0]
++                for branch in window:
++                    if (branch.address <= test.address
++                            or branch.address >= site
++                            or branch.mnemonic not in ("jne", "jnz")
++                            or branch.jump_target is None):
++                        continue
++                    if not (test.end_address <= branch.address
++                            and test.address < branch.jump_target < site):
++                        continue
++                    copied = self.instructions.get(branch.jump_target)
++                    if copied is None or copied.mnemonic != "mov":
++                        continue
++                    copied_ops = [part.strip().lower()
++                                  for part in copied.op_str.split(",", 1)]
++                    if (len(copied_ops) != 2
++                            or copied_ops[0] != index_name
++                            or copied_ops[1] != source_name):
++                        continue
++                    for masked in window:
++                        if (masked.address <= copied.address
++                                or masked.address >= site
++                                or masked.mnemonic != "and"):
++                            continue
++                        masked_ops = [part.strip().lower()
++                                      for part in masked.op_str.split(",", 1)]
++                        if (len(masked_ops) == 2
++                                and masked_ops[0] == index_name
++                                and masked_ops[1] in ("3", "0x3")):
++                            return True
++        return False
+diff --git a/tools/disasm/test_biased_indexed_table.py b/tools/disasm/test_biased_indexed_table.py
+new file mode 100644
+index 0000000..eb225f1
+--- /dev/null
++++ b/tools/disasm/test_biased_indexed_table.py
+@@ -0,0 +1,35 @@
++"""A proven non-zero masked index starts at slot 1 of an inline table."""
++import struct
++
++from tools.disasm.test_returning_body_switch import BASE, _engine
++
++
++def test_nonzero_masked_index_skips_overlapped_slot_zero():
++    # test edi, 3; jne target; ...; target: mov eax, edi; and eax, 3;
++    # jmp [eax*4 + TABLE]. The branch proves eax is 1..3 at dispatch.
++    test = b"\xF7\xC7\x03\x00\x00\x00"
++    branch_size = 2
++    target_offset = len(test) + branch_size + 3
++    branch = b"\x75" + bytes((target_offset - (len(test) + branch_size),))
++    padding = b"\x90" * 3
++    copy_mask = b"\x8B\xC7\x83\xE0\x03"
++    dispatch_size = 7
++    table = (BASE + len(test) + len(branch) + len(padding)
++             + len(copy_mask) + dispatch_size)
++    dispatch = b"\xFF\x24\x85" + struct.pack("<I", table)
++    table_end = table + 16
++    arms = (table_end, table_end + 3, table_end + 9)
++    table_bytes = struct.pack("<I", 0xDEADBEEF) + struct.pack("<III", *arms)
++    arm_bytes = b"\x31\xC0\xC3" + b"\xB8\x01\x00\x00\x00\xC3"
++    arm_bytes += b"\xB8\x02\x00\x00\x00\xC3"
++    data = test + branch + padding + copy_mask + dispatch
++    data += b"\x90" * (table - (BASE + len(data)))
++    data += table_bytes + arm_bytes + b"\xCC" * 16
++
++    engine, _ = _engine(data)
++
++    assert engine.jump_tables.get(table + 4) == table + 16
++    assert engine._jt_base[table] == table + 4
++    assert engine.jump_table_entries(table) == list(arms)
++    assert all(engine.get_instruction(addr) is None
++               for addr in range(table + 4, table + 16))
