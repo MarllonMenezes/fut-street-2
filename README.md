@@ -14,6 +14,23 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.53
+
+O release 2.53 adiciona
+`tools/analysis/eagl_selector_helper_effect_control.py`, que verifica os
+helpers alcançados pelo envelope do seletor contra formas estáticas dos seus
+callees. O gate cobre `12` helpers e `40` arestas de chamada observadas. Entre
+os efeitos preservados estão a leitura/retorno de `0x00345D88`, a atualização
+dos pares indexados `0x00345C80`/`0x00345CC0`, as gravações em
+`0x00345D00`/`0x00345D08` e o rearranjo SIMD de quatro lanes de origem para
+oito destinos em `sub_00254349`.
+
+Isso é uma auditoria de instruções, chamadas e destinos globais observados;
+não identifica esses valores como estados GPU, materiais, shaders ou
+buffers. O XBE não é executado, `runtime_selected_buffer` e
+`rendering_binding` continuam não provados, e a estimativa conservadora do
+PoC permanece em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.52
 
 O release 2.52 classifica a forma downstream dos `33` consumidores do
@@ -1020,6 +1037,16 @@ No release 2.51, ela também inclui
 `consumer_anchor_counts=0x3458d0:33,0x3458d4:33`.
 No release 2.52, inclui ainda `consumer_shape_counts`, com `28` composições
 genéricas e cinco formas especiais downstream.
+
+Os efeitos dos helpers do seletor podem ser conferidos com:
+
+```powershell
+python tools/analysis/eagl_selector_helper_effect_control.py `
+  --asm C:/caminho/local/disasm/asm/text.asm `
+  --xbe C:/caminho/local/game_files/default.xbe
+```
+
+O gate verifica somente formas estáticas e não executa o XBE.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os
