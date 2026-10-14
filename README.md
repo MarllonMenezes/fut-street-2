@@ -14,6 +14,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.44
+
+O release 2.44 adiciona `tools/run-host-preflight-gate.ps1`, um gate
+reutilizável que executa somente `--preflight` no host compilado e recusa
+variáveis de emulação ou hardware sintético. No artefato 25f local, o modo
+estático passou carregando `11/11` seções do XBE, inicializando o mapa de
+memória, validando os guards dos callbacks em zero e resolvendo o entry point,
+sem executar código guest. O modo de runtime também passou sem chamar o entry
+point: o bridge resolveu `128/128` thunks e confirmou dispatch, memória e entry
+point traduzido.
+
+Esse marco aprova apenas a preparação do host e a fronteira de entrada; não
+aprova boot, execução do jogo, rendering, assets, gameplay, animação ou áudio.
+`SGDT`/`OUT`, callbacks dinâmicos e a semântica completa dos serviços Xbox
+continuam pendentes. A prontidão permanece `NOT_READY` e a estimativa
+conservadora do PoC jogável continua em aproximadamente `31% concluído / 69%
+restante`; o XBE não é executado.
+
 ## Estado verificável — release 2.43
 
 O release 2.43 transforma o link do host opcional em um gate reproduzível por
