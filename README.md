@@ -14,6 +14,24 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.47
+
+O release 2.47 adiciona
+`tools/analysis/recomp_fixed_callback_slot_evidence_gate.py`. No C gerado
+integral, o inventário reproduzível mantém `0` writers provados para os slots
+BSS `0x00360A70` e `0x00360AA8`, e exatamente `1` writer para
+`0x00360AB4`, que grava o endereço conhecido `0x002774F9`. Os três call sites
+observados também permanecem estáveis: `0x00274FC5`, `0x00276E59` e
+`0x00277532`, com a classificação correspondente de cada slot.
+
+O gate separa `2` slots sem inicializador local provado de `1` ponteiro de
+função já identificado. Isso é evidência estática do inventário de writers e
+da classificação dos call sites; não prova que o kernel não preencha os dois
+slots em runtime, nem que qualquer callback seja seguro para execução. O XBE,
+o C gerado e o runtime host não são executados. A prontidão permanece
+`NOT_READY` e a estimativa conservadora do PoC jogável continua em
+aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.46
 
 O release 2.46 adiciona
@@ -890,6 +908,19 @@ python tools/analysis/recomp_dynamic_callback_evidence_gate.py `
 Esse gate é específico dos sete sites atualmente auditados e mantém a
 distinção entre evidência estática e inicialização de runtime; saída aprovada
 não significa que qualquer callback esteja resolvido ou executável.
+
+O inventário complementar dos slots BSS fixos pode ser repetido com:
+
+```powershell
+python tools/analysis/recomp_fixed_callback_slot_evidence_gate.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen `
+  --xbe C:/caminho/local/game_files/default.xbe `
+  --kernel-source C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c
+```
+
+Ele mantém a ausência de writer provado separada da resolução do único slot
+que tem inicializador de função observado.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os
