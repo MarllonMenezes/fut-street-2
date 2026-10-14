@@ -21,6 +21,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
+    recover_symbolic_link_open_query_close_sequences,
 )
 
 
@@ -744,6 +745,30 @@ loc_00001010: ;
             evidence["0x00001008"]["target_label"],
             "loc_00001006",
         )
+
+    def test_records_symbolic_link_open_query_close_order(self) -> None:
+        rows = [
+            {
+                "function": "0x00001000",
+                "function_name": "sub_00001000",
+                "classification": "kernel-thunk-slot",
+                "kernel_ordinal": ordinal,
+                "call_site": call_site,
+                "source": source,
+                "host_resolver_target": target,
+            }
+            for ordinal, call_site, source, target in (
+                (203, "0x00001010", "recomp_0000.c:10", "xbox_NtOpenSymbolicLinkObject"),
+                (215, "0x00001020", "recomp_0000.c:20", "xbox_NtQuerySymbolicLinkObject"),
+                (187, "0x00001030", "recomp_0000.c:30", "xbox_NtClose"),
+            )
+        ]
+
+        evidence = recover_symbolic_link_open_query_close_sequences(rows)
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["status"], "open-query-close-order-observed")
+        self.assertEqual(evidence[0]["ordinals"], [203, 215, 187])
 
 
 if __name__ == "__main__":

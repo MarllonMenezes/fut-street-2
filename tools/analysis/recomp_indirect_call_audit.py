@@ -1561,6 +1561,49 @@ def classify_sites(
     return rows
 
 
+def recover_symbolic_link_open_query_close_sequences(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover local ordinal order for symbolic-link helper calls.
+
+    This is only call-order evidence. It does not prove that the handles
+    passed between calls are identical or that the host shim matches Xbox
+    object, path, buffer, and lifetime semantics.
+    """
+    by_function: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        if row.get("classification") != "kernel-thunk-slot":
+            continue
+        if int(row.get("kernel_ordinal", -1)) not in (187, 203, 215):
+            continue
+        by_function.setdefault(str(row["function"]), []).append(row)
+
+    evidence: list[dict[str, Any]] = []
+    for function, function_rows in sorted(by_function.items()):
+        ordered = sorted(function_rows, key=lambda row: _address(row["call_site"]))
+        ordinals = [int(row["kernel_ordinal"]) for row in ordered]
+        if ordinals != [203, 215, 187]:
+            continue
+        evidence.append(
+            {
+                "function": function,
+                "function_name": ordered[0].get("function_name", ""),
+                "status": "open-query-close-order-observed",
+                "ordinals": ordinals,
+                "sites": [
+                    {
+                        "call_site": row["call_site"],
+                        "source": row["source"],
+                        "kernel_ordinal": row["kernel_ordinal"],
+                        "target": row.get("host_resolver_target"),
+                    }
+                    for row in ordered
+                ],
+            }
+        )
+    return evidence
+
+
 def audit(
     functions_path: Path,
     generated_dir: Path,
@@ -1806,6 +1849,9 @@ def audit(
             for marker in row.get("host_implementation_body_markers", [])
         )
     ]
+    symbolic_link_lifecycle_evidence = (
+        recover_symbolic_link_open_query_close_sequences(classified)
+    )
     kernel_file_info_rows = [
         row
         for row in kernel_slots
@@ -2039,6 +2085,14 @@ def audit(
                 for row in kernel_implementation_status_marker_rows
             ]
         ),
+        "kernel_symbolic_link_lifecycle_functions": len(
+            symbolic_link_lifecycle_evidence
+        ),
+        "kernel_symbolic_link_lifecycle_status": (
+            "open-query-close-order-observed"
+            if symbolic_link_lifecycle_evidence
+            else "no-open-query-close-order-observed"
+        ),
         "kernel_implementation_missing_targets": (
             None
             if kernel_implementation_evidence is None
@@ -2184,6 +2238,7 @@ def audit(
         "kernel_bridge_cases": kernel_bridge_cases or {},
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
+        "kernel_symbolic_link_lifecycle_evidence": symbolic_link_lifecycle_evidence,
     }
 
 
