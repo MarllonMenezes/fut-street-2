@@ -1,0 +1,149 @@
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -314,5 +314,44 @@
+             if not (self.engine.probes_as_prologue(nxt)
+                     or self.engine.probes_as_constant_stub(nxt)):
+                 continue
++            # A switch table can begin with the two bytes of the common x86
++            # hotpatch preamble (8B FF). If aligned dwords immediately after
++            # it point backward to known executable instruction starts, the
++            # bytes are table data rather than a gap function. When owners of
++            # the preceding range are known, require every target to belong
++            # to one of them; four consecutive pointers are required so an
++            # ordinary hotpatch prologue is preserved.
++            previous_owners = {
++                (func.start, func.end) for func in self.functions.values()
++                if func.end == nxt
++            }
++            previous_owners.update(
++                (alias_start, alias_end)
++                for alias_start, alias_end in self._alias_entries.items()
++                if alias_end == nxt
++            )
++            if (self.image.read_bytes_at_va(nxt, 2) == b"\x8B\xFF"
++                    and (nxt + 2) % 4 == 0):
++                table_entries = 0
++                while table_entries < 64:
++                    entry = self.image.read_u32_at_va(
++                        nxt + 2 + table_entries * 4
++                    )
++                    entry_section = (
++                        self.image.get_section_at_va(entry)
++                        if entry is not None else None
++                    )
++                    if (entry is None or entry >= nxt
++                            or entry not in self.engine.instructions
++                            or entry_section is None
++                            or not entry_section.executable):
++                        break
++                    if (previous_owners
++                            and not any(start <= entry < end
++                                        for start, end in previous_owners)):
++                        break
++                    table_entries += 1
++                if table_entries >= 4:
++                    continue
+             self._add_candidate(nxt, config.CONFIDENCE_CC_BOUNDARY,
+                                 "gap_prologue")
+diff --git a/tools/disasm/test_gap_prologue.py b/tools/disasm/test_gap_prologue.py
+--- a/tools/disasm/test_gap_prologue.py
++++ b/tools/disasm/test_gap_prologue.py
+@@ -42,3 +42,17 @@
+ class _Image:
++    def __init__(self, data=b"", base=0):
++        self.data = data
++        self.base = base
++
+     def get_section_at_va(self, addr):
+         return _Section()
++
++    def read_bytes_at_va(self, addr, size):
++        offset = addr - self.base
++        if offset < 0 or offset + size > len(self.data):
++            return None
++        return self.data[offset:offset + size]
++
++    def read_u32_at_va(self, addr):
++        data = self.read_bytes_at_va(addr, 4)
++        return int.from_bytes(data, "little") if data is not None else None
+@@ -79,3 +93,4 @@
+     det.functions = {f.start: f for f in functions}
+     det._candidates = {}
++    det._alias_entries = {}
+     det.added = []
+@@ -79,2 +94,74 @@
+         self.assertTrue(det._pass_gap_prologues([]))
+         self.assertIn((0x00476EB0, "gap_prologue"), det.added)
++
++    def test_hotpatch_bytes_followed_by_table_into_previous_body_are_not_function(self):
++        start = 0x1000
++        end = 0x1012
++        targets = (0x1000, 0x1004, 0x1008, 0x100C)
++        table = b"\x8B\xFF" + b"".join(
++            target.to_bytes(4, "little") for target in targets
++        )
++        insns = [_Insn(end - 1, 1, is_ret=True)]
++        insns.extend(_Insn(target, 1) for target in targets)
++        det = _detector(
++            insns,
++            [_Func(start, end), _Func(0x1100, 0x1110)],
++            prologues={end},
++        )
++        det.image = _Image(b"\x90" * (end - start) + table, base=start)
++
++        self.assertFalse(det._pass_gap_prologues([]))
++        self.assertEqual(det.added, [])
++
++    def test_hotpatch_prologue_without_backreferences_is_preserved(self):
++        start = 0x1000
++        end = 0x1012
++        insns = [_Insn(end - 1, 1, is_ret=True)]
++        det = _detector(
++            insns,
++            [_Func(start, end), _Func(0x1100, 0x1110)],
++            prologues={end},
++        )
++        det.image = _Image(b"\x90" * (end - start) + b"\x8B\xFF\x55\x8B\xEC", base=start)
++
++        self.assertTrue(det._pass_gap_prologues([]))
++        self.assertIn((end, "gap_prologue"), det.added)
++
++    def test_table_after_alias_body_is_not_a_new_gap_function(self):
++        start = 0x1000
++        end = 0x1012
++        targets = (0x1000, 0x1004, 0x1008, 0x100C)
++        table = b"\x8B\xFF" + b"".join(
++            target.to_bytes(4, "little") for target in targets
++        )
++        insns = [_Insn(end - 1, 1, is_ret=True)]
++        insns.extend(_Insn(target, 1) for target in targets)
++        det = _detector(
++            insns,
++            [_Func(0x1100, 0x1110)],
++            prologues={end},
++        )
++        det._alias_entries = {start: end}
++        det.image = _Image(b"\x90" * (end - start) + table, base=start)
++
++        self.assertFalse(det._pass_gap_prologues([]))
++        self.assertEqual(det.added, [])
++
++    def test_backward_code_table_without_materialized_owner_is_not_function(self):
++        start = 0x1000
++        end = 0x1012
++        targets = (0x0F00, 0x0F04, 0x0F08, 0x0F0C)
++        table = b"\x8B\xFF" + b"".join(
++            target.to_bytes(4, "little") for target in targets
++        )
++        insns = [_Insn(end - 1, 1, is_ret=True)]
++        insns.extend(_Insn(target, 1) for target in targets)
++        det = _detector(
++            insns,
++            [_Func(0x1100, 0x1110)],
++            prologues={end},
++        )
++        det.image = _Image(b"\x90" * (end - start) + table, base=start)
++
++        self.assertFalse(det._pass_gap_prologues([]))
++        self.assertEqual(det.added, [])

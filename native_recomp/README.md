@@ -280,3 +280,28 @@ unvalidated.
 git -C C:/path/to/xboxrecomp apply --unidiff-zero `
   'D:/projeto zeta/native_recomp/patches/0015-reject-unreferenced-cc-boundary-over-embedded-string.patch'
 ```
+
+Patch `0016-reject-gap-prologue-over-switch-table.patch` follows patches
+0001–0015. A data table can start with `8B FF`, coincidentally resembling the
+common x86 hotpatch prologue. At a gap immediately after a detected body, the
+patch rejects that weak function candidate only when four consecutive aligned
+dwords point backward to known executable instruction starts; if owners are
+known, every pointer must also lie in one of those bodies. This accounts for
+late aliases without requiring an owner to have been materialized yet and
+preserves ordinary hotpatch prologues. Synthetic tests cover previous-body
+and alias owners, an unowned backward table, and the positive hotpatch control.
+
+On the pinned v0.13.1 FIFA Street 2 pipeline, the clean stack 0001–0016 passed
+549 translator tests (38 skipped) and generated 15,602/15,602 entries, with
+zero generation failures, 61 C chunks, four unresolved stubs, and 28
+untranslated instruction sites across 16 mnemonics. The audit has no direct
+xrefs to the four remaining stubs; they are still unresolved and must not be
+papered over. The CMake Release build linked the host; CTest passed 4/4 and
+`--help` passed. The .NET Release self-test passed 105/105. No XBE was launched,
+so runtime, boot, rendering, assets, gameplay, animation, and audio remain
+unvalidated.
+
+```powershell
+git -C C:/path/to/xboxrecomp apply --unidiff-zero `
+  'D:/projeto zeta/native_recomp/patches/0016-reject-gap-prologue-over-switch-table.patch'
+```

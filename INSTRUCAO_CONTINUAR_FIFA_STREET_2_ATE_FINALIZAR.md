@@ -345,6 +345,22 @@ focados `520 passed, 38 skipped`; build CMake Release/link, CTest `4/4` e
 gates `NOT_READY`. ISO somente leitura, SHA-256
 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
 
+Atualização de continuidade (etapa 1.54, 2026-10-13): patch 0016 rejeita um
+`gap_prologue` falso sobre uma tabela de ponteiros que começa com bytes
+`8B FF`; exige pelo menos quatro dwords alinhados apontando para instruções
+executáveis anteriores e, quando disponíveis, contidos nos owners conhecidos.
+Pilha limpa XboxRecomp v0.13.1, patches 0001–0016: 549 passed/38 skipped;
+geração 15602/15602, zero falhas, 4 stubs e 28 sites sem lowering/16
+mnemônicos. Stubs restantes: `0x000B6E86`, `0x0022747C`, `0x00227480`,
+`0x00233497`; audit sem XRefs diretos, mas isso não prova inalcançabilidade.
+CMake Release/link, CTest 4/4, `--help`, self-test .NET 105/105 passaram.
+Suíte Python passou após mover cache/temp de teste para D:, pois C: está sem
+espaço; nenhum arquivo foi apagado. Não executar XBE/`--launch`; runtime
+headless/replay original não foram alegados. Gates rendering, assets, gameplay,
+animação e áudio continuam `NOT_READY`; próximo foco é resolver os stubs e os
+28 sites com evidência, sem forçar contagens a zero. ISO somente leitura,
+SHA-256 `F47069436C3A5605C21FB9C796C5ED7155C50D761A5EDCBBD73C8DCEBFA005B2`.
+
 Atualização de continuidade (etapa 1.53, 2026-10-13): patch XboxRecomp 0015
 elimina um falso limite de função `cc_boundary` criado pela interpretação de
 bytes de string como branches. Pilha limpa v0.13.1, patches 0001–0015:

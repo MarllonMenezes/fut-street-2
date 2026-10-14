@@ -20,14 +20,15 @@ implementa o runtime específico.
 
 ## Estado verificável
 
-Na geração mais recente registrada em 2026-10-13, o XboxRecomp v0.13.1
-produziu C para 15.672/15.672 funções detectadas, sem falhas de geração; a
+Na etapa 1.54 (2026-10-13), o XboxRecomp v0.13.1 produziu C para 15.602/15.602
+entradas detectadas, sem falhas de geração; a
 mudança de contagem reflete a descoberta de corpos e aliases compartilhados,
-não é uma métrica isolada de cobertura. As 64 unidades foram compiladas em
-Release e o host linkou. A auditoria marca 23 destinos stubados e 88 instruções
-sem lowering (28 mnemônicos). CTest passou 4/4 e o smoke `--help` passou. Um
-bring-up controlado anterior alcançou a entrada traduzida e atividade de
-worker/timer, mas não validou boot/menu; nenhum XBE foi executado no marco 1.53.
+não é uma métrica isolada de cobertura. As unidades C traduzidas foram
+compiladas em Release e o host linkou. A auditoria marca 4 destinos stubados e
+28 instruções sem lowering (16 mnemônicos); CTest passou 4/4 e o smoke
+`--help` passou. Um
+bring-up controlado histórico alcançou a entrada traduzida e atividade de
+worker/timer, mas não validou boot/menu; nenhum XBE foi executado no marco 1.54.
 Não existe executável jogável validado. Portanto, isso é avanço de
 tradução/compilação —
 não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
@@ -36,8 +37,8 @@ não prova de fidelidade ou conclusão de gates. Estado global: `NOT_READY`.
 
 1. **Congelar a base reproduzível:** fixar a versão/commit do XboxRecomp e os
    patches locais; guardar relatórios e o código derivado apenas localmente.
-2. **Fechar a tradução alcançável com evidência:** classificar os 23 stubs, os
-   88 sites sem lowering e os imports; priorizar o que for alcançado no boot,
+2. **Fechar a tradução alcançável com evidência:** classificar os 4 stubs, os
+   28 sites sem lowering e os imports; priorizar o que for alcançado no boot,
    sem confundir contagens estáticas com código executado. Corrigir o
    detector/lifter quando houver um caso reproduzível; criar override só com
    evidência de endereço, bytes, ABI, fluxo
