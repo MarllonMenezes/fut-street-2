@@ -20,6 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.29
+
+O release 2.29 amplia a auditoria do alcance de tradução para arestas
+`fallthrough` que não aparecem necessariamente em `calls_to`. A geração C
+contém `38` transferências explícitas desse tipo; os `38/38` alvos existem
+tanto na metadata de funções quanto nas definições C geradas. Nenhuma das
+arestas parte das `78` funções diretamente alcançáveis pelo entry point
+`0x0024D8BE`, portanto o resultado não altera artificialmente o subgrafo
+direto nem inventa alcance de runtime.
+
+O caso relevante para o consumidor indexado é a aresta estática
+`sub_00271140 (0x00271140) -> 0x00271148`; ela foi registrada, mas permanece
+fora do subgrafo direto. Isso preserva a distinção entre uma transferência
+presente na fonte traduzida e uma função provada alcançável pelo entry point.
+As arestas não resolvem o alvo dinâmico em `sub_0026E70A`, e os sete callbacks
+dinâmicos continuam sem destino final provado.
+
+A suíte Python passou `110/110`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.28
 
 O release 2.28 audita a multiplicidade dos writers do campo de objeto

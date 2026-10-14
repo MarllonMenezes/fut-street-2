@@ -17,10 +17,16 @@ from typing import Any
 
 
 GENERATED_FUNCTION_RE = re.compile(r"\bvoid\s+sub_([0-9A-Fa-f]{8})\s*\(void\)\s*\{")
+GENERATED_FUNCTION_NAME_RE = re.compile(
+    r"\bvoid\s+(sub_[0-9A-Fa-f]{8})\s*\(void\)"
+)
 GENERATED_SYMBOL_RE = re.compile(r"\bvoid\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(void\)\s*\{")
 UNIMPLEMENTED_RE = re.compile(
     r"RECOMP_UNIMPL\(\s*\"(?P<text>[^\"]*)\"\s*,\s*"
     r"0x(?P<address>[0-9A-Fa-f]{8})u\s*\)"
+)
+FALLTHROUGH_RE = re.compile(
+    r"/\*\s*fallthrough\s+0x(?P<target>[0-9A-Fa-f]{8})\s*\*/"
 )
 
 
@@ -121,6 +127,51 @@ def recover_unimplemented_site_evidence(
     return [sites[address] for address in sorted(sites)]
 
 
+def recover_generated_fallthrough_edges(
+    generated_dir: Path,
+    functions: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Recover explicit generated-C fallthrough edges.
+
+    XboxRecomp can preserve a sequential transfer as a direct call-shaped
+    helper followed by ``return``.  These edges are evidence from generated
+    source only; they are not merged into the metadata ``calls_to`` graph
+    because that would silently change the meaning of direct reachability.
+    """
+    known_functions = (
+        set() if functions is None else {_address(row["start"]) for row in functions}
+    )
+    edges: list[dict[str, Any]] = []
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current_function: str | None = None
+        current_address: int | None = None
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = GENERATED_FUNCTION_NAME_RE.search(line)
+            if symbol_match is not None:
+                current_function = symbol_match.group(1)
+                current_address = int(current_function[4:], 16)
+            match = FALLTHROUGH_RE.search(line)
+            if match is None:
+                continue
+            target = int(match.group("target"), 16)
+            edges.append(
+                {
+                    "source_function": (
+                        None
+                        if current_address is None
+                        else f"0x{current_address:08X}"
+                    ),
+                    "source_function_name": current_function,
+                    "target": f"0x{target:08X}",
+                    "source": f"{source_path.name}:{line_number}",
+                    "target_in_metadata": target in known_functions,
+                }
+            )
+    return edges
+
+
 def _owners(functions: list[dict[str, Any]], address: int) -> list[int]:
     owners = []
     for function in functions:
@@ -141,6 +192,21 @@ def audit(
     reachable, external_targets = recover_direct_reachable(functions, entry)
     generated = recover_generated_functions(generated_dir, functions)
     missing = sorted(reachable - generated)
+    fallthrough_edges = recover_generated_fallthrough_edges(generated_dir, functions)
+    direct_reachable_fallthrough_edges = [
+        row
+        for row in fallthrough_edges
+        if row["source_function"] is not None
+        and _address(row["source_function"]) in reachable
+    ]
+    fallthrough_targets_missing_from_metadata = [
+        row["target"] for row in fallthrough_edges if not row["target_in_metadata"]
+    ]
+    fallthrough_targets_missing_from_generated = [
+        row["target"]
+        for row in fallthrough_edges
+        if _address(row["target"]) not in generated
+    ]
 
     unimplemented_rows = []
     for site_evidence in recover_unimplemented_site_evidence(generated_dir):
@@ -163,6 +229,26 @@ def audit(
         "direct_external_call_targets": len(external_targets),
         "generated_function_definitions": len(generated),
         "directly_reachable_missing_translations": len(missing),
+        "generated_fallthrough_edges": len(fallthrough_edges),
+        "direct_reachable_fallthrough_edges": len(
+            direct_reachable_fallthrough_edges
+        ),
+        "fallthrough_targets_missing_from_metadata": sorted(
+            set(fallthrough_targets_missing_from_metadata)
+        ),
+        "fallthrough_targets_missing_from_generated": sorted(
+            set(fallthrough_targets_missing_from_generated)
+        ),
+        "fallthrough_status": (
+            "no-generated-fallthrough-edges-observed"
+            if not fallthrough_edges
+            else (
+                "generated-fallthrough-target-coverage-incomplete"
+                if fallthrough_targets_missing_from_metadata
+                or fallthrough_targets_missing_from_generated
+                else "generated-fallthrough-targets-covered"
+            )
+        ),
         "unimplemented_sites": len(unimplemented_rows),
         "unimplemented_sites_in_directly_reachable_function_scopes": sum(
             row["in_directly_reachable_function_scope"] for row in unimplemented_rows
@@ -188,6 +274,7 @@ def audit(
         "summary": summary,
         "missing_direct_reachable_translations": [f"0x{address:08X}" for address in missing],
         "unimplemented_sites": unimplemented_rows,
+        "fallthrough_edges": fallthrough_edges,
     }
 
 

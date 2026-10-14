@@ -7,7 +7,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.analysis.recomp_entry_call_graph_audit import audit
+from tools.analysis.recomp_entry_call_graph_audit import (
+    audit,
+    recover_generated_fallthrough_edges,
+)
 
 
 class RecompEntryCallGraphAuditTests(unittest.TestCase):
@@ -78,6 +81,52 @@ class RecompEntryCallGraphAuditTests(unittest.TestCase):
         self.assertEqual(
             result["summary"]["status"], "incomplete-direct-call-translation-coverage"
         )
+
+    def test_audits_generated_fallthrough_edges_without_promoting_reachability(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "sub_00001000",
+                "calls_to": [],
+            },
+            {
+                "start": "0x1020",
+                "end": "0x1030",
+                "name": "sub_00001020",
+                "calls_to": [],
+            },
+        ]
+        generated_source = (
+            "void sub_00001000(void) {\n"
+            "    g_seh_ebp = ebp; sub_00001020(); return; /* fallthrough 0x00001020 */\n"
+            "}\n"
+            "void sub_00001020(void) {}\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            functions_path = root / "functions.json"
+            generated = root / "generated"
+            generated.mkdir()
+            functions_path.write_text(json.dumps(functions), encoding="utf-8")
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+
+            edges = recover_generated_fallthrough_edges(generated, functions)
+            result = audit(functions_path, generated, 0x1000)
+
+        self.assertEqual(len(edges), 1)
+        self.assertEqual(edges[0]["source_function"], "0x00001000")
+        self.assertEqual(edges[0]["target"], "0x00001020")
+        self.assertTrue(edges[0]["target_in_metadata"])
+        self.assertEqual(result["summary"]["generated_fallthrough_edges"], 1)
+        self.assertEqual(result["summary"]["direct_reachable_fallthrough_edges"], 1)
+        self.assertEqual(
+            result["summary"]["fallthrough_status"],
+            "generated-fallthrough-targets-covered",
+        )
+        self.assertEqual(result["summary"]["directly_reachable_functions"], 1)
 
 
 if __name__ == "__main__":
