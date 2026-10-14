@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
+    recover_dynamic_target_writes,
     recover_prcb_cache_writes,
 )
 
@@ -269,6 +270,42 @@ void xbe_entry_point(void)
             result["sites"][0]["host_resolver_target"],
             "xbox_IoCreateFile",
         )
+
+    def test_keeps_dynamic_writer_shapes_separate(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    eax = 0x00011010;
+    MEM32(eax) = ebx;
+    MEM32(ecx + 0x584) = eax;
+    MEM32(ebx + esi * 4 + 8) = eax;
+    MEM32(edi + 0x584) = eax;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writers = recover_dynamic_target_writes(
+                generated,
+                functions,
+                {0x1000},
+                [(0x11010, 0x11010)],
+            )
+
+        self.assertEqual(len(writers["dynamic-memory-target"]), 1)
+        self.assertEqual(len(writers["dynamic-object-field-target"]), 2)
+        self.assertEqual(len(writers["dynamic-indexed-record-target"]), 1)
 
 
 if __name__ == "__main__":

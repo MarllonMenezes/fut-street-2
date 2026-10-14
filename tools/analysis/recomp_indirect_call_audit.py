@@ -58,6 +58,19 @@ KERNEL_RESOLVER_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"\(ULONG_PTR\)(?P<target>[^;]+);"
 )
+DYNAMIC_OBJECT_FIELD_WRITE_RE = re.compile(
+    r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584\)\s*="
+)
+DYNAMIC_INDEXED_RECORD_WRITE_RE = re.compile(
+    r"MEM32\((?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+    r"(?P<index>eax|ebx|ecx|edx|esi|edi)\s*\*\s*4\s*\+\s*8\)\s*="
+)
+DYNAMIC_ABSOLUTE_WRITE_RE = re.compile(
+    r"MEM32\(0x(?P<address>[0-9A-Fa-f]{1,8})\)\s*="
+)
+DYNAMIC_REGISTER_WRITE_RE = re.compile(
+    r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\)\s*="
+)
 XBE_MAGIC = b"XBEH"
 SECTION_SIZE = 0x38
 KERNEL_XOR_KEYS = (0x5B6D40B6, 0xEFB1F152)
@@ -444,6 +457,143 @@ def recover_kernel_resolver_cases(source_path: Path) -> dict[int, str]:
     return cases
 
 
+def recover_dynamic_target_writes(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int],
+    memory_ranges: list[tuple[int, int]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Inventory direct-path writes matching unresolved callback sources.
+
+    The result records shape-level writer evidence only.  It does not prove
+    that a writer reaches the same object or record instance as a callback
+    site.  Register-derived writes to the absolute dynamic-memory range are
+    included only when the register has a tracked constant value in that
+    range; generic ``+0x584`` and indexed-record shapes are kept separate.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    writers: dict[str, list[dict[str, Any]]] = {
+        "dynamic-object-field-target": [],
+        "dynamic-indexed-record-target": [],
+    }
+    if memory_ranges:
+        writers["dynamic-memory-target"] = []
+
+    def in_memory_range(address: int) -> bool:
+        return any(start <= address <= end for start, end in memory_ranges)
+
+    def add_writer(
+        family: str,
+        source_path: Path,
+        line_number: int,
+        current: int,
+        expression: str,
+    ) -> None:
+        writers[family].append(
+            {
+                "function": f"0x{current:08X}",
+                "function_name": str(function_by_address[current].get("name", "")),
+                "source": f"{source_path.name}:{line_number}",
+                "expression": expression,
+            }
+        )
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current: int | None = None
+        register_constants: dict[str, int] = {}
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+                register_constants = {}
+            if current is None or current not in directly_reachable:
+                continue
+
+            object_match = DYNAMIC_OBJECT_FIELD_WRITE_RE.search(line)
+            if object_match is not None:
+                add_writer(
+                    "dynamic-object-field-target",
+                    source_path,
+                    line_number,
+                    current,
+                    line.strip(),
+                )
+            indexed_match = DYNAMIC_INDEXED_RECORD_WRITE_RE.search(line)
+            if indexed_match is not None:
+                add_writer(
+                    "dynamic-indexed-record-target",
+                    source_path,
+                    line_number,
+                    current,
+                    line.strip(),
+                )
+            absolute_match = DYNAMIC_ABSOLUTE_WRITE_RE.search(line)
+            if absolute_match is not None and in_memory_range(
+                int(absolute_match.group("address"), 16)
+            ):
+                add_writer(
+                    "dynamic-memory-target",
+                    source_path,
+                    line_number,
+                    current,
+                    line.strip(),
+                )
+            register_write_match = DYNAMIC_REGISTER_WRITE_RE.search(line)
+            if (
+                register_write_match is not None
+                and register_write_match.group("register") in register_constants
+                and in_memory_range(
+                    register_constants[register_write_match.group("register")]
+                )
+            ):
+                add_writer(
+                    "dynamic-memory-target",
+                    source_path,
+                    line_number,
+                    current,
+                    line.strip(),
+                )
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match:
+                register = assignment_match.group("register")
+                rhs = assignment_match.group("rhs").strip()
+                literal_match = REGISTER_LITERAL_RE.fullmatch(rhs)
+                register_match = REGISTER_NAME_RE.fullmatch(rhs)
+                add_match = REGISTER_ADD_RE.fullmatch(rhs)
+                if literal_match is not None:
+                    register_constants[register] = int(
+                        literal_match.group("value"), 0
+                    )
+                elif (
+                    register_match is not None
+                    and register_match.group("register") in register_constants
+                ):
+                    register_constants[register] = register_constants[
+                        register_match.group("register")
+                    ]
+                elif (
+                    add_match is not None
+                    and add_match.group("register") in register_constants
+                ):
+                    register_constants[register] = register_constants[
+                        add_match.group("register")
+                    ] + int(add_match.group("value"), 0)
+                else:
+                    register_constants.pop(register, None)
+            for write_match in REGISTER_WRITE_RE.finditer(line):
+                register_constants.pop(write_match.group("register"), None)
+    return writers
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -466,6 +616,7 @@ def classify_sites(
     function_starts: set[int],
     runtime_initializers: dict[int, list[dict[str, Any]]] | None = None,
     kernel_resolver_cases: dict[int, str] | None = None,
+    dynamic_target_writers: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify each site without resolving dynamic object or register calls."""
     data: bytes = xbe["data"]
@@ -475,6 +626,7 @@ def classify_sites(
     runtime_initializers = runtime_initializers or {}
     resolver_audited = kernel_resolver_cases is not None
     kernel_resolver_cases = kernel_resolver_cases or {}
+    dynamic_target_writers = dynamic_target_writers or {}
     rows: list[dict[str, Any]] = []
     for site in sites:
         row = dict(site)
@@ -487,6 +639,15 @@ def classify_sites(
         aliased_slot = site.get("aliased_fixed_slot")
         if fixed_match is None and aliased_slot is None:
             row["classification"] = _dynamic_target_family(site)
+            writer_sites = dynamic_target_writers.get(row["classification"])
+            if writer_sites is not None:
+                row["direct_writer_status"] = (
+                    "direct-writer-shape-observed"
+                    if writer_sites
+                    else "no-proven-direct-writer"
+                )
+                if writer_sites:
+                    row["direct_writer_sites"] = writer_sites
             if "target_memory_address" in row:
                 target_address = int(str(row["target_memory_address"]), 0)
                 target_offset = _file_offset(sections, len(data), target_address)
@@ -576,6 +737,19 @@ def audit(
         if kernel_source is None
         else recover_kernel_resolver_cases(kernel_source)
     )
+    dynamic_memory_ranges = []
+    for site in sites:
+        range_text = site.get("target_memory_address_range")
+        if range_text is None:
+            continue
+        start_text, end_text = str(range_text).split("-")
+        dynamic_memory_ranges.append((int(start_text, 0), int(end_text, 0)))
+    dynamic_target_writers = recover_dynamic_target_writes(
+        generated_dir,
+        functions,
+        directly_reachable,
+        dynamic_memory_ranges,
+    )
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
@@ -583,6 +757,7 @@ def audit(
         {_address(function["start"]) for function in functions},
         runtime_initializers,
         kernel_resolver_cases,
+        dynamic_target_writers,
     )
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
@@ -593,6 +768,10 @@ def audit(
     resolver_missing_sites = [
         row for row in kernel_slots if row.get("host_resolver_status") == "missing-case"
     ]
+    dynamic_writer_counts = {
+        family: len(rows)
+        for family, rows in dynamic_target_writers.items()
+    }
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
         "entry_point": f"0x{entry:08X}",
@@ -615,6 +794,13 @@ def audit(
         ),
         "kernel_resolver_missing_sites": (
             None if kernel_resolver_cases is None else len(resolver_missing_sites)
+        ),
+        "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
+        "dynamic_target_direct_writer_counts": dynamic_writer_counts,
+        "dynamic_target_direct_writer_status": (
+            "direct-writer-shape-observed"
+            if sum(dynamic_writer_counts.values())
+            else "no-proven-direct-writer"
         ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
