@@ -80,6 +80,13 @@ KERNEL_IMPLEMENTATION_STUB_MARKER_RE = re.compile(
 KERNEL_IMPLEMENTATION_STATUS_MARKER_RE = re.compile(
     r"\bSTATUS_NOT_IMPLEMENTED\b"
 )
+SYMBOLIC_LINK_OBJECT_NAME_ASSIGNMENT_RE = re.compile(
+    r"MEM32\([^;]*\+\s*-16\)\s*=\s*"
+    r"0x(?P<address>[0-9A-Fa-f]{1,8})u?;"
+)
+SYMBOLIC_LINK_HOST_TARGET_RE = re.compile(
+    r'\bconst\s+char\s*\*\s*target\s*=\s*"(?P<target>[^"]+)";'
+)
 KERNEL_BRIDGE_FUNCTION_RE = re.compile(
     r"^\s*static\s+bridge_func_t\s+bridge_for_ordinal\s*\(ULONG\s+ordinal\)\s*$"
 )
@@ -1604,6 +1611,96 @@ def recover_symbolic_link_open_query_close_sequences(
     return evidence
 
 
+def recover_symbolic_link_guest_paths(
+    generated_dir: Path,
+    xbe: dict[str, Any],
+    rows: list[dict[str, Any]],
+    window: int = 80,
+) -> dict[str, dict[str, Any]]:
+    """Recover constant XBOX_ANSI_STRING paths before ordinal 203 calls.
+
+    The result is static guest-memory and generated-source evidence only. It
+    does not prove that the runtime passes the same pointer on every path or
+    that the host symbolic-link implementation has Xbox-compatible lifetime
+    semantics.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    evidence: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if row.get("classification") != "kernel-thunk-slot":
+            continue
+        if int(row.get("kernel_ordinal", -1)) != 203:
+            continue
+        source_text = str(row["source"])
+        source_name, line_text = source_text.rsplit(":", 1)
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        line_number = int(line_text)
+        matches = [
+            match
+            for line in lines[max(0, line_number - window - 1) : line_number - 1]
+            for match in SYMBOLIC_LINK_OBJECT_NAME_ASSIGNMENT_RE.finditer(line)
+        ]
+        if not matches:
+            continue
+        object_name_address = int(matches[-1].group("address"), 16)
+        object_name_offset = _file_offset(
+            xbe["sections"], len(xbe["data"]), object_name_address
+        )
+        if object_name_offset is None or object_name_offset + 8 > len(xbe["data"]):
+            continue
+        length, maximum_length, buffer_address = struct.unpack_from(
+            "<HHI", xbe["data"], object_name_offset
+        )
+        if length > maximum_length or length > 0x1000:
+            continue
+        buffer_offset = _file_offset(
+            xbe["sections"], len(xbe["data"]), buffer_address
+        )
+        if buffer_offset is None or buffer_offset + length > len(xbe["data"]):
+            continue
+        path_text = xbe["data"][buffer_offset : buffer_offset + length].decode(
+            "latin-1"
+        )
+        evidence[str(row["call_site"])] = {
+            "status": "guest-ansi-string-recovered",
+            "call_site": row["call_site"],
+            "source": row["source"],
+            "object_name_address": f"0x{object_name_address:08X}",
+            "ansi_length": length,
+            "ansi_maximum_length": maximum_length,
+            "ansi_buffer_address": f"0x{buffer_address:08X}",
+            "path_text": path_text,
+        }
+    return evidence
+
+
+def recover_symbolic_link_host_query_target(
+    kernel_source: Path,
+) -> dict[str, Any] | None:
+    """Recover the literal target returned by the host query shim."""
+    source_path = kernel_source.parent / "kernel_file.c"
+    if not source_path.exists():
+        return None
+    text = source_path.read_text(encoding="utf-8")
+    match = SYMBOLIC_LINK_HOST_TARGET_RE.search(text)
+    if match is None:
+        return None
+    target_text = match.group("target").replace("\\\\", "\\")
+    return {
+        "status": "host-query-target-literal-observed",
+        "target_text": target_text,
+        "source": (
+            f"{source_path.relative_to(kernel_source.parent).as_posix()}:"
+            f"{text.count(chr(10), 0, match.start()) + 1}"
+        ),
+    }
+
+
 def audit(
     functions_path: Path,
     generated_dir: Path,
@@ -1852,6 +1949,14 @@ def audit(
     symbolic_link_lifecycle_evidence = (
         recover_symbolic_link_open_query_close_sequences(classified)
     )
+    symbolic_link_guest_path_evidence = recover_symbolic_link_guest_paths(
+        generated_dir, xbe, classified
+    )
+    symbolic_link_host_query_target = (
+        None
+        if kernel_source is None
+        else recover_symbolic_link_host_query_target(kernel_source)
+    )
     kernel_file_info_rows = [
         row
         for row in kernel_slots
@@ -2093,6 +2198,20 @@ def audit(
             if symbolic_link_lifecycle_evidence
             else "no-open-query-close-order-observed"
         ),
+        "kernel_symbolic_link_guest_path_sites": len(
+            symbolic_link_guest_path_evidence
+        ),
+        "kernel_symbolic_link_guest_path_texts": sorted(
+            {
+                item["path_text"]
+                for item in symbolic_link_guest_path_evidence.values()
+            }
+        ),
+        "kernel_symbolic_link_host_query_target": (
+            None
+            if symbolic_link_host_query_target is None
+            else symbolic_link_host_query_target["target_text"]
+        ),
         "kernel_implementation_missing_targets": (
             None
             if kernel_implementation_evidence is None
@@ -2239,6 +2358,8 @@ def audit(
         "kernel_call_argument_counts": kernel_call_argument_counts,
         "kernel_constant_arguments": kernel_constant_arguments,
         "kernel_symbolic_link_lifecycle_evidence": symbolic_link_lifecycle_evidence,
+        "kernel_symbolic_link_guest_path_evidence": symbolic_link_guest_path_evidence,
+        "kernel_symbolic_link_host_query_target": symbolic_link_host_query_target or {},
     }
 
 

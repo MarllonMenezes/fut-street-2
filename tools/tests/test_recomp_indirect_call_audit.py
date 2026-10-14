@@ -22,6 +22,8 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
     recover_symbolic_link_open_query_close_sequences,
+    recover_symbolic_link_guest_paths,
+    recover_symbolic_link_host_query_target,
 )
 
 
@@ -769,6 +771,59 @@ loc_00001010: ;
         self.assertEqual(len(evidence), 1)
         self.assertEqual(evidence[0]["status"], "open-query-close-order-observed")
         self.assertEqual(evidence[0]["ordinals"], [203, 215, 187])
+
+    def test_recovers_symbolic_link_guest_path_and_host_query_target(self) -> None:
+        data = bytearray(0x400)
+        struct.pack_into("<HHI", data, 0x20, 6, 7, 0x10040)
+        data[0x40 : 0x40 + 6] = b"\\??\\D:"
+        xbe = {
+            "data": bytes(data),
+            "sections": [
+                {
+                    "virtual_address": 0x10000,
+                    "virtual_size": len(data),
+                    "file_address": 0,
+                    "file_size": len(data),
+                }
+            ],
+        }
+        rows = [
+            {
+                "classification": "kernel-thunk-slot",
+                "kernel_ordinal": 203,
+                "call_site": "0x00001008",
+                "source": "recomp_0000.c:6",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_00001000(void)\n"
+                "{\n"
+                "    eax = 0;\n"
+                "    MEM32(ebp + -16) = 0x00010020;\n"
+                "    PUSH32(esp, eax);\n"
+                "    RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u);\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            kernel_source = root / "kernel_thunks.c"
+            kernel_source.write_text("", encoding="utf-8")
+            (root / "kernel_file.c").write_text(
+                'const char* target = "\\\\Device\\\\CdRom0";\n',
+                encoding="utf-8",
+            )
+
+            guest_evidence = recover_symbolic_link_guest_paths(
+                generated, xbe, rows
+            )
+            host_evidence = recover_symbolic_link_host_query_target(kernel_source)
+
+        self.assertEqual(guest_evidence["0x00001008"]["path_text"], "\\??\\D:")
+        self.assertEqual(guest_evidence["0x00001008"]["object_name_address"], "0x00010020")
+        self.assertEqual(host_evidence["target_text"], "\\Device\\CdRom0")
 
 
 if __name__ == "__main__":
