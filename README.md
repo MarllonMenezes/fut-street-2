@@ -14,6 +14,21 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.52
+
+O release 2.52 classifica a forma downstream dos `33` consumidores do
+seletor EAGL. O gate recupera `28` helpers de composição de endereço e cinco
+formas especiais observadas no ASM: `sub_001A3E00` retorna o endereço
+derivado, `sub_001A3E40` carrega o índice e grava três globals, `sub_001A43A0`
+faz duas leituras float indexadas, `sub_001A4760` persiste o endereço em
+`0x00345FA4` e `sub_001A48F0` faz uma leitura word indexada.
+
+Essas são classificações de instruções e destinos observados; não são nomes
+de atributos, buffers, materiais ou comandos GPU. O XBE não é executado, os
+bindings de runtime permanecem não provados e a prontidão continua
+`NOT_READY`, com a estimativa conservadora do PoC em aproximadamente `31%
+concluído / 69% restante`.
+
 ## Estado verificável — release 2.51
 
 O release 2.51 fecha mais uma fronteira estática do seletor EAGL: todas as
@@ -1003,6 +1018,8 @@ consumidores estáticos conhecidos. No release 2.50, a saída adicional inclui
 `consumer_function_count=31` e `consumer_function_envelope=0x001A3E00-0x001A4B40`.
 No release 2.51, ela também inclui
 `consumer_anchor_counts=0x3458d0:33,0x3458d4:33`.
+No release 2.52, inclui ainda `consumer_shape_counts`, com `28` composições
+genéricas e cinco formas especiais downstream.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os

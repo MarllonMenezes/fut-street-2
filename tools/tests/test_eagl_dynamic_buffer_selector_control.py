@@ -7,9 +7,11 @@ import unittest
 from pathlib import Path
 
 from tools.analysis.eagl_dynamic_buffer_selector_control import (
+    DEFAULT_CONSUMER_SHAPE,
     EXPECTED_CONSUMERS,
     EXPECTED_CONSUMER_CALLS,
     EXPECTED_CONSUMER_FUNCTIONS,
+    SPECIAL_CONSUMER_SHAPES,
     classify_consumers,
     classify_writers,
     recover_consumer_rows,
@@ -118,6 +120,9 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
                     "function": function,
                     "function_calls": EXPECTED_CONSUMER_CALLS[function],
                     "function_references": ("0x3458d0", "0x3458d4"),
+                    "function_shape": SPECIAL_CONSUMER_SHAPES.get(
+                        function, (DEFAULT_CONSUMER_SHAPE, ())
+                    )[0],
                 }
             )
 
@@ -178,6 +183,9 @@ class EaglDynamicBufferSelectorControlTests(unittest.TestCase):
                     "function": function,
                     "function_calls": EXPECTED_CONSUMER_CALLS[function],
                     "function_references": ("0x3458d0", "0x3458d4"),
+                    "function_shape": SPECIAL_CONSUMER_SHAPES.get(
+                        function, (DEFAULT_CONSUMER_SHAPE, ())
+                    )[0],
                 }
             )
         rows[0]["function_calls"] = ("sub_001A0000",)

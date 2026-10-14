@@ -192,6 +192,38 @@ EXPECTED_CONSUMER_CALLS = {
     "sub_001A4AF0": ("sub_001A4BF0",),
 }
 
+SPECIAL_CONSUMER_SHAPES = {
+    "sub_001A3E00": (
+        "selector-derived-address-returned",
+        ("add      eax, dword ptr [ecx + 4]",),
+    ),
+    "sub_001A3E40": (
+        "loaded-index-and-three-global-writes",
+        (
+            "imul     esi, edx",
+            "mov      dword ptr [0x3458d8], esi",
+            "mov      dword ptr [0x3458dc], esi",
+            "mov      dword ptr [0x3458e0], ecx",
+        ),
+    ),
+    "sub_001A43A0": (
+        "two-indexed-float-reads",
+        (
+            "movss    xmm0, dword ptr [eax + edx]",
+            "divss    xmm0, dword ptr [eax + edx + 0x18]",
+        ),
+    ),
+    "sub_001A4760": (
+        "selector-derived-address-persisted",
+        ("mov      dword ptr [0x345fa4], ecx",),
+    ),
+    "sub_001A48F0": (
+        "indexed-word-read",
+        ("movsx    eax, word ptr [eax]",),
+    ),
+}
+DEFAULT_CONSUMER_SHAPE = "selector-derived-address-composition"
+
 
 def _normalize_value(value: str) -> str:
     return re.sub(r"\s+", " ", value.strip().lower())
@@ -281,10 +313,28 @@ def recover_function_blocks(asm_path: Path) -> list[dict[str, Any]]:
     finish()
     for block in blocks:
         body = "\n".join(lines[block["line_start"] - 1 : block["line_end"]]).lower()
+        block["body_text"] = body
         block["references"] = tuple(
             token for token in ("0x3458d0", "0x3458d4") if token in body
         )
     return blocks
+
+
+def consumer_shape_for_function(function: dict[str, Any]) -> str:
+    """Classify a consumer body by observed downstream instruction shape."""
+    name = function["name"]
+    special = SPECIAL_CONSUMER_SHAPES.get(name)
+    if special is not None:
+        shape, required_fragments = special
+        missing = [fragment for fragment in required_fragments if fragment not in function["body_text"]]
+        if missing:
+            raise ValueError(
+                f"selector consumer shape drift in {name}: missing={missing!r}"
+            )
+        return shape
+    if not re.search(r"\b(?:add|lea)\b", function["body_text"]):
+        raise ValueError(f"selector consumer shape drift in {name}: no address composition")
+    return DEFAULT_CONSUMER_SHAPE
 
 
 def recover_consumer_rows(asm_path: Path) -> list[dict[str, Any]]:
@@ -320,6 +370,9 @@ def recover_consumer_rows(asm_path: Path) -> list[dict[str, Any]]:
             "function": function["name"] if function is not None else None,
             "function_calls": function["calls"] if function is not None else (),
             "function_references": function["references"] if function is not None else (),
+            "function_shape": (
+                consumer_shape_for_function(function) if function is not None else None
+            ),
         }
         rows.append(row)
     return rows
@@ -369,6 +422,16 @@ def classify_consumers(
                     f"selector consumer-anchor mismatch at {row['address']}: "
                     f"expected={expected_references!r}, observed={observed_references!r}"
                 )
+            if expected_function in SPECIAL_CONSUMER_SHAPES:
+                expected_shape = SPECIAL_CONSUMER_SHAPES[expected_function][0]
+            else:
+                expected_shape = DEFAULT_CONSUMER_SHAPE
+            observed_shape = row.get("function_shape")
+            if observed_shape != expected_shape:
+                raise ValueError(
+                    f"selector consumer-shape mismatch at {row['address']}: "
+                    f"expected={expected_shape!r}, observed={observed_shape!r}"
+                )
         calls = tuple(row.get("function_calls", ()))
         call_family = "no-direct-call" if not calls else "direct:" + "+".join(calls)
         classified.append({**row, "form": expected_form, "call_family": call_family})
@@ -402,6 +465,10 @@ def audit(asm_path: Path, xbe_path: Path) -> dict[str, Any]:
         anchor: sum(anchor in row["function_references"] for row in consumer_rows)
         for anchor in ("0x3458d0", "0x3458d4")
     }
+    consumer_shape_counts: dict[str, int] = {}
+    for row in consumer_rows:
+        shape = row["function_shape"]
+        consumer_shape_counts[shape] = consumer_shape_counts.get(shape, 0) + 1
 
     return {
         "summary": {
@@ -418,6 +485,7 @@ def audit(asm_path: Path, xbe_path: Path) -> dict[str, Any]:
             "consumer_function_envelope": "0x001A3E00-0x001A4B40",
             "consumer_anchor_counts": consumer_anchor_counts,
             "consumer_anchor_envelope": "selector-with-3458d4-and-3458d0-anchors",
+            "consumer_shape_counts": consumer_shape_counts,
             "selector_constant": False,
             "runtime_selected_buffer": "not-proven",
             "rendering_binding": "not-proven",
