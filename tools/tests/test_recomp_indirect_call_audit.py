@@ -15,6 +15,8 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_indirect_call_skip_branches,
     recover_kernel_bridge_cases,
     recover_kernel_call_argument_counts,
+    recover_kernel_constant_arguments,
+    recover_kernel_file_information_evidence,
     recover_kernel_implementation_evidence,
     recover_prcb_cache_writes,
     recover_runtime_fixed_slot_initializers,
@@ -361,6 +363,89 @@ void xbe_entry_point(void)
             )
 
         self.assertEqual(counts["0x00001008"], {"push_count": 2, "pushed_bytes": 8})
+
+    def test_recovers_constant_kernel_stack_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_00001000(void)\n"
+                "{\n"
+                "    { uint32_t _icall_esp = g_esp;\n"
+                "    PUSH32(esp, 0x22);\n"
+                "    PUSH32(esp, 0x38u);\n"
+                "    PUSH32(esp, eax);\n"
+                "    PUSH32(esp, ecx);\n"
+                "    PUSH32(esp, edx);\n"
+                "    { uint32_t _icall_target = MEM32(0x2A9000); "
+                "PUSH32(esp, 0x00001008u); "
+                "RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            constants = recover_kernel_constant_arguments(
+                generated,
+                [{"call_site": "0x00001008", "source": "recomp_0000.c:9"}],
+            )
+
+        self.assertEqual(
+            constants["0x00001008"],
+            {"3": "0x00000038", "4": "0x00000022"},
+        )
+
+    def test_recovers_kernel_file_information_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "kernel.h").write_text(
+                "typedef enum _XBOX_FILE_INFORMATION_CLASS {\n"
+                "    XboxFilePositionInformation = 14,\n"
+                "    XboxFileNetworkOpenInformation = 34,\n"
+                "} XBOX_FILE_INFORMATION_CLASS;\n",
+                encoding="utf-8",
+            )
+            (root / "kernel_file.c").write_text(
+                "NTSTATUS __stdcall xbox_NtQueryInformationFile(\n"
+                "    PVOID a)\n"
+                "{\n"
+                "    switch (a) {\n"
+                "    case XboxFilePositionInformation:\n"
+                "        return STATUS_SUCCESS;\n"
+                "    case XboxFileNetworkOpenInformation:\n"
+                "        return STATUS_SUCCESS;\n"
+                "    default: return STATUS_NOT_IMPLEMENTED;\n"
+                "    }\n"
+                "}\n"
+                "NTSTATUS __stdcall xbox_NtSetInformationFile(PVOID a)\n"
+                "{\n"
+                "    switch (a) {\n"
+                "    case XboxFilePositionInformation:\n"
+                "        return STATUS_SUCCESS;\n"
+                "    default: return STATUS_NOT_IMPLEMENTED;\n"
+                "    }\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_kernel_file_information_evidence(root)
+
+        self.assertEqual(evidence["status"], "source-cases-found")
+        self.assertEqual(
+            evidence["enum_values"]["XboxFileNetworkOpenInformation"],
+            34,
+        )
+        self.assertEqual(
+            evidence["functions"]["xbox_NtQueryInformationFile"]["case_values"],
+            {
+                "XboxFileNetworkOpenInformation": 34,
+                "XboxFilePositionInformation": 14,
+            },
+        )
+        self.assertEqual(
+            evidence["functions"]["xbox_NtSetInformationFile"]["case_names"],
+            ["XboxFilePositionInformation"],
+        )
 
     def test_keeps_dynamic_writer_shapes_separate(self) -> None:
         functions = [

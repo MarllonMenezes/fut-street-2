@@ -84,6 +84,20 @@ KERNEL_STDCALL_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"(?P<bytes>[0-9]+);"
 )
+PUSH32_RE = re.compile(r"^\s*PUSH32\(esp,\s*(?P<operand>.*)\);\s*$")
+KERNEL_FILE_ENUM_RE = re.compile(
+    r"^\s*(?P<name>XboxFile[A-Za-z0-9_]+)\s*=\s*"
+    r"(?P<value>0x[0-9A-Fa-f]+|[0-9]+)\s*,?\s*$"
+)
+KERNEL_FILE_FUNCTION_RE = re.compile(
+    r"(?ms)^\s*(?:[A-Za-z_][A-Za-z0-9_]*\s+)*"
+    r"(?P<name>xbox_Nt(?:Query|Set)InformationFile)\s*"
+    r"\([^;{}]*\)\s*\{"
+)
+KERNEL_FILE_CASE_RE = re.compile(
+    r"\bcase\s+(?P<name>XboxFile[A-Za-z0-9_]+)\s*:"
+)
+CONSTANT_OPERAND_RE = re.compile(r"^(?P<value>0x[0-9A-Fa-f]+|[0-9]+)u?$")
 DYNAMIC_OBJECT_FIELD_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584\)\s*="
 )
@@ -764,6 +778,89 @@ def recover_kernel_implementation_evidence(
     return evidence
 
 
+def recover_kernel_file_information_evidence(
+    source_root: Path,
+) -> dict[str, Any]:
+    """Recover enum values and implemented file-information switch cases.
+
+    This is source-coverage evidence for the host implementations selected by
+    the observed call sites.  It does not prove that the host structures,
+    handles, status codes, or side effects are fully Xbox-compatible.
+    """
+    enum_values: dict[str, int] = {}
+    enum_path = source_root / "kernel.h"
+    if enum_path.exists():
+        for line in enum_path.read_text(encoding="utf-8").splitlines():
+            match = KERNEL_FILE_ENUM_RE.match(line)
+            if match is not None:
+                enum_values[match.group("name")] = int(match.group("value"), 0)
+
+    functions: dict[str, dict[str, Any]] = {
+        name: {
+            "status": "missing-source-cases",
+            "case_names": [],
+            "case_values": {},
+            "sources": [],
+        }
+        for name in (
+            "xbox_NtQueryInformationFile",
+            "xbox_NtSetInformationFile",
+        )
+    }
+    source_path = source_root / "kernel_file.c"
+    if not source_path.exists():
+        return {
+            "status": "missing-kernel-file-source",
+            "enum_values": enum_values,
+            "functions": functions,
+        }
+
+    source_text = source_path.read_text(encoding="utf-8")
+    for function_match in KERNEL_FILE_FUNCTION_RE.finditer(source_text):
+        function_name = function_match.group("name")
+        body_start = function_match.end() - 1
+        depth = 0
+        body_end: int | None = None
+        for index in range(body_start, len(source_text)):
+            character = source_text[index]
+            if character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    body_end = index
+                    break
+        if body_end is None:
+            continue
+
+        evidence = functions[function_name]
+        function_line = source_text.count("\n", 0, function_match.start()) + 1
+        relative_source = source_path.relative_to(source_root).as_posix()
+        evidence["sources"].append(f"{relative_source}:{function_line}")
+        for case_match in KERNEL_FILE_CASE_RE.finditer(
+            source_text, function_match.end(), body_end
+        ):
+            case_name = case_match.group("name")
+            if case_name not in enum_values:
+                continue
+            if case_name not in evidence["case_names"]:
+                evidence["case_names"].append(case_name)
+            evidence["case_values"][case_name] = enum_values[case_name]
+        if evidence["case_names"]:
+            evidence["status"] = "source-cases-found"
+
+    for evidence in functions.values():
+        evidence["case_names"].sort()
+        evidence["sources"] = sorted(set(evidence["sources"]))
+    return {
+        "status": "source-cases-found"
+        if all(item["status"] == "source-cases-found" for item in functions.values())
+        else "missing-source-cases",
+        "enum_values": enum_values,
+        "functions": functions,
+    }
+
+
 def recover_kernel_bridge_cases(source_path: Path) -> dict[int, str]:
     """Read ordinal-to-bridge wrappers from ``kernel_bridge.c``.
 
@@ -923,6 +1020,105 @@ def recover_kernel_call_argument_counts(
             "pushed_bytes": push_count * 4,
         }
     return counts
+
+
+def recover_kernel_constant_arguments(
+    generated_dir: Path,
+    sites: list[dict[str, Any]],
+    window: int = 64,
+) -> dict[str, dict[str, str]]:
+    """Recover constant guest stack arguments before indirect kernel calls.
+
+    The generated code pushes arguments from last to first.  Reversing the
+    observed push sequence maps the constants to the bridge's ``STACK_ARG``
+    indices.  This is only a constant-value observation; it does not prove
+    types, evaluation on every path, ABI fidelity, or service semantics.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    constants: dict[str, dict[str, str]] = {}
+    for site in sites:
+        source_text = str(site.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        start = max(0, call_index - window)
+        for index in range(call_index, start - 1, -1):
+            if "uint32_t _icall_esp = g_esp;" in lines[index]:
+                start = index + 1
+                break
+        else:
+            continue
+        body_lines = lines[start:call_index]
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_start = index
+                break
+        function_end = len(lines)
+        for index in range(call_index + 1, len(lines)):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_end = index
+                break
+        epilogue_lines = lines[call_index + 1 : function_end]
+        prior_lines = lines[function_start:start]
+        first_non_push = next(
+            (
+                index
+                for index, body_line in enumerate(body_lines)
+                if "PUSH32(esp," not in body_line
+            ),
+            len(body_lines),
+        )
+        saved_registers = {
+            register
+            for body_line in body_lines[:first_non_push]
+            for register in ("ebx", "esi", "edi")
+            if re.fullmatch(
+                rf"\s*PUSH32\(esp,\s*{register}\);\s*", body_line
+            )
+            and not any(
+                re.fullmatch(
+                    rf"\s*PUSH32\(esp,\s*{register}\);\s*", prior_line
+                )
+                for prior_line in prior_lines
+            )
+            and any(
+                re.fullmatch(
+                    rf"\s*POP32\(esp,\s*{register}\);.*", epilogue_line
+                )
+                for epilogue_line in epilogue_lines
+            )
+        }
+        pushed_operands: list[str] = []
+        for index, body_line in enumerate(body_lines):
+            match = PUSH32_RE.match(body_line)
+            if match is None:
+                continue
+            operand = match.group("operand").strip()
+            if (
+                index < first_non_push
+                and operand in saved_registers
+            ):
+                continue
+            pushed_operands.append(operand)
+        argument_constants: dict[str, str] = {}
+        for argument_index, operand in enumerate(reversed(pushed_operands)):
+            match = CONSTANT_OPERAND_RE.fullmatch(operand)
+            if match is None:
+                continue
+            value = int(match.group("value"), 0)
+            argument_constants[str(argument_index)] = f"0x{value:08X}"
+        constants[str(site["call_site"])] = argument_constants
+    return constants
 
 
 def recover_dynamic_target_writes(
@@ -1320,12 +1516,24 @@ def audit(
             kernel_source, used_kernel_cases
         )
     )
+    kernel_file_information_evidence = (
+        None
+        if kernel_source is None
+        else recover_kernel_file_information_evidence(kernel_source.parent)
+    )
     kernel_call_argument_counts = recover_kernel_call_argument_counts(
+        generated_dir, classified
+    )
+    kernel_constant_arguments = recover_kernel_constant_arguments(
         generated_dir, classified
     )
     skip_branch_evidence = recover_indirect_call_skip_branches(
         generated_dir, classified
     )
+    kernel_file_operations = {
+        211: "xbox_NtQueryInformationFile",
+        226: "xbox_NtSetInformationFile",
+    }
     for row in classified:
         evidence = skip_branch_evidence.get(str(row["call_site"]))
         if evidence is not None:
@@ -1369,6 +1577,44 @@ def audit(
                     if expected_bytes == observed["pushed_bytes"]
                     else "argument-count-mismatch"
                 )
+        if kernel_file_information_evidence is not None and ordinal is not None:
+            file_operation = kernel_file_operations.get(int(ordinal))
+            if file_operation is not None:
+                row["kernel_file_info_class_argument_index"] = 4
+                observed_constants = kernel_constant_arguments.get(
+                    str(row["call_site"]), {}
+                )
+                class_text = observed_constants.get("4")
+                function_evidence = kernel_file_information_evidence[
+                    "functions"
+                ].get(file_operation)
+                row["kernel_file_info_host_function"] = file_operation
+                if class_text is None:
+                    row["kernel_file_info_class_status"] = (
+                        "missing-constant-argument-evidence"
+                    )
+                    continue
+                class_value = int(class_text, 0)
+                row["kernel_file_info_class_value"] = class_value
+                row["kernel_file_info_class_value_text"] = class_text
+                enum_values = kernel_file_information_evidence["enum_values"]
+                class_names = [
+                    name for name, value in enum_values.items() if value == class_value
+                ]
+                if class_names:
+                    row["kernel_file_info_class_name"] = class_names[0]
+                if function_evidence is None:
+                    row["kernel_file_info_class_status"] = "missing-host-case"
+                else:
+                    row["kernel_file_info_host_case_names"] = function_evidence[
+                        "case_names"
+                    ]
+                    row["kernel_file_info_class_status"] = (
+                        "host-case-observed"
+                        if class_names
+                        and class_names[0] in function_evidence["case_names"]
+                        else "missing-host-case"
+                    )
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -1391,6 +1637,21 @@ def audit(
         row
         for row in kernel_slots
         if row.get("kernel_abi_stack_status") == "argument-count-mismatch"
+    ]
+    kernel_file_info_rows = [
+        row
+        for row in kernel_slots
+        if int(row.get("kernel_ordinal", -1)) in (211, 226)
+    ]
+    kernel_file_info_covered_rows = [
+        row
+        for row in kernel_file_info_rows
+        if row.get("kernel_file_info_class_status") == "host-case-observed"
+    ]
+    kernel_file_info_missing_rows = [
+        row
+        for row in kernel_file_info_rows
+        if row.get("kernel_file_info_class_status") != "host-case-observed"
     ]
     dynamic_writer_counts = {
         family: len(rows)
@@ -1507,6 +1768,30 @@ def audit(
                 if item["status"] != "source-definition-found"
             )
         ),
+        "kernel_file_info_class_status": (
+            "not-supplied"
+            if kernel_file_information_evidence is None
+            else (
+                "verified-observed-class-cases"
+                if kernel_file_info_rows and not kernel_file_info_missing_rows
+                else "missing-observed-class-case-evidence"
+            )
+        ),
+        "kernel_file_info_class_sites": (
+            None
+            if kernel_file_information_evidence is None
+            else len(kernel_file_info_rows)
+        ),
+        "kernel_file_info_class_covered_sites": (
+            None
+            if kernel_file_information_evidence is None
+            else len(kernel_file_info_covered_rows)
+        ),
+        "kernel_file_info_class_missing_sites": (
+            None
+            if kernel_file_information_evidence is None
+            else len(kernel_file_info_missing_rows)
+        ),
         "dynamic_target_direct_writer_sites": sum(dynamic_writer_counts.values()),
         "dynamic_target_direct_writer_counts": dynamic_writer_counts,
         "dynamic_target_direct_writer_status": (
@@ -1603,8 +1888,10 @@ def audit(
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
+        "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
         "kernel_call_argument_counts": kernel_call_argument_counts,
+        "kernel_constant_arguments": kernel_constant_arguments,
     }
 
 
