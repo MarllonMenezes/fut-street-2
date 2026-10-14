@@ -1623,6 +1623,138 @@ def _dynamic_target_family(site: dict[str, Any]) -> str:
     return "dynamic-register-or-object-target"
 
 
+def recover_dynamic_source_provenance(
+    generated_dir: Path,
+    classified: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Recover bounded linear assignments feeding unresolved call operands.
+
+    This records only assignments observed before each indirect-call site in
+    the generated function.  It deliberately does not perform CFG-sensitive
+    aliasing, object identity, callback resolution, or ABI inference.  The
+    small recursive walk exists only to retain a nearby self-reassignment
+    chain such as ``eax = MEM32(eax + 0x250)``.
+    """
+    dynamic_classes = {
+        "dynamic-register-or-object-target",
+        "dynamic-memory-target",
+        "dynamic-object-field-target",
+        "dynamic-indexed-record-target",
+        "prcb-guarded-dynamic-callback",
+    }
+    targets = {
+        _address(row["call_site"]): row
+        for row in classified
+        if row.get("classification") in dynamic_classes
+    }
+    if not targets:
+        return {}
+
+    register_names = "eax|ebx|ecx|edx|esi|edi"
+    register_token_re = re.compile(rf"\b(?:{register_names})\b")
+    call_site_re = re.compile(
+        r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*"
+        r"0x(?P<site>[0-9A-Fa-f]{8})u\)"
+    )
+    address_by_name = {
+        str(row.get("function_name", "")): _address(row["function"])
+        for row in classified
+        if row.get("function_name")
+    }
+    evidence: dict[str, dict[str, Any]] = {}
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current_function_name = ""
+        current_function_address: int | None = None
+        assignments: dict[str, list[dict[str, Any]]] = {}
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current_function_name = symbol_match.group(1)
+                current_function_address = address_by_name.get(current_function_name)
+                assignments = {}
+            if current_function_address is None:
+                continue
+
+            call_match = call_site_re.search(line)
+            if call_match is not None:
+                call_site = int(call_match.group("site"), 16)
+                row = targets.get(call_site)
+                if row is not None and str(row["function"]) == f"0x{current_function_address:08X}":
+                    target_expression = str(row["target_expression"])
+                    target_registers = sorted(set(register_token_re.findall(target_expression)))
+                    selected: list[dict[str, Any]] = []
+                    selected_keys: set[tuple[str, int]] = set()
+
+                    def add_register(
+                        register: str, before_line: int, depth: int = 0
+                    ) -> None:
+                        if depth > 4:
+                            return
+                        history = assignments.get(register, [])
+                        if not history:
+                            return
+                        eligible = [
+                            index
+                            for index, item in enumerate(history)
+                            if int(item["line_number"]) < before_line
+                        ]
+                        if not eligible:
+                            return
+                        index = eligible[-1]
+                        key = (register, index)
+                        if key in selected_keys:
+                            return
+                        selected_keys.add(key)
+                        assignment = history[index]
+                        selected.append(assignment)
+                        rhs = str(assignment["rhs"])
+                        rhs_registers = register_token_re.findall(rhs)
+                        for dependency in sorted(set(rhs_registers)):
+                            add_register(
+                                dependency,
+                                int(assignment["line_number"]),
+                                depth + 1,
+                            )
+
+                    for register in target_registers:
+                        add_register(register, line_number)
+
+                    covered_registers = {item["register"] for item in selected}
+                    covered_target_registers = covered_registers & set(target_registers)
+                    evidence[row["call_site"]] = {
+                        "call_site": row["call_site"],
+                        "function": row["function"],
+                        "function_name": row.get("function_name", current_function_name),
+                        "classification": row["classification"],
+                        "target_expression": target_expression,
+                        "target_registers": target_registers,
+                        "covered_target_registers": sorted(covered_target_registers),
+                        "source_registers": sorted(covered_registers),
+                        "status": (
+                            "local-linear-source-assignments-observed"
+                            if set(target_registers) <= covered_registers
+                            else "local-linear-source-assignments-incomplete"
+                        ),
+                        "assignments": selected,
+                    }
+
+            assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+            if assignment_match is not None:
+                register = assignment_match.group("register")
+                assignments.setdefault(register, []).append(
+                    {
+                        "register": register,
+                        "rhs": assignment_match.group("rhs").strip(),
+                        "expression": line.strip(),
+                        "line_number": line_number,
+                        "source": f"{source_path.name}:{line_number}",
+                    }
+                )
+    return evidence
+
+
 def classify_sites(
     sites: list[dict[str, Any]],
     xbe: dict[str, Any],
@@ -1999,6 +2131,13 @@ def audit(
         kernel_resolver_cases,
         dynamic_target_writers,
     )
+    dynamic_source_provenance = recover_dynamic_source_provenance(
+        generated_dir, classified
+    )
+    for row in classified:
+        provenance = dynamic_source_provenance.get(str(row["call_site"]))
+        if provenance is not None:
+            row["dynamic_source_provenance"] = provenance
     used_kernel_cases = (
         {}
         if kernel_resolver_cases is None
@@ -2250,6 +2389,17 @@ def audit(
     ]
     dynamic_stack_observed_rows = [
         row for row in dynamic_stack_rows if "indirect_call_observed_pushed_bytes" in row
+    ]
+    dynamic_provenance_rows = [
+        row
+        for row in dynamic_stack_rows
+        if "dynamic_source_provenance" in row
+    ]
+    dynamic_provenance_complete_rows = [
+        row
+        for row in dynamic_provenance_rows
+        if row["dynamic_source_provenance"]["status"]
+        == "local-linear-source-assignments-observed"
     ]
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
@@ -2532,6 +2682,18 @@ def audit(
         "dynamic_call_stack_shape_missing_sites": (
             len(dynamic_stack_rows) - len(dynamic_stack_observed_rows)
         ),
+        "dynamic_source_provenance_status": (
+            "complete-local-linear-assignment-evidence"
+            if len(dynamic_provenance_complete_rows) == len(dynamic_stack_rows)
+            else "incomplete-local-linear-assignment-evidence"
+        ),
+        "dynamic_source_provenance_sites": len(dynamic_provenance_rows),
+        "dynamic_source_provenance_complete_sites": len(
+            dynamic_provenance_complete_rows
+        ),
+        "dynamic_source_provenance_missing_sites": (
+            len(dynamic_stack_rows) - len(dynamic_provenance_rows)
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -2594,6 +2756,7 @@ def audit(
         "sites": classified,
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
+        "dynamic_source_provenance": dynamic_source_provenance,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,

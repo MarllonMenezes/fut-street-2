@@ -10,6 +10,7 @@ from pathlib import Path
 
 from tools.analysis.recomp_indirect_call_audit import (
     audit,
+    recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
     recover_indirect_call_nonzero_guards,
@@ -162,6 +163,73 @@ void xbe_entry_point(void)
         self.assertEqual(
             result["sites"][2]["classification"],
             "dynamic-object-field-target",
+        )
+
+    def test_recovers_bounded_dynamic_source_assignments(self) -> None:
+        generated_source = """
+void xbe_entry_point(void)
+{
+    eax = 0x00011010;
+    ecx = eax;
+    { uint32_t _icall_target = MEM32(ecx); PUSH32(esp, 0x00001007u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001007u); }
+    eax = MEM32(XBOX_FS_BASE + 0x20);
+    eax = MEM32(eax + 0x250);
+    { uint32_t _icall_target = MEM32(eax + 0x14); PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
+    eax = MEM32(esp + 0x20);
+    ebx = MEM32(eax + 8);
+    esi = MEM32(eax + 0xC);
+    esi = esi + esi * 2;
+    { uint32_t _icall_target = MEM32(ebx + esi * 4 + 8); PUSH32(esp, 0x00001009u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001009u); }
+}
+"""
+        rows = [
+            {
+                "call_site": "0x00001007",
+                "function": "0x00001000",
+                "function_name": "xbe_entry_point",
+                "classification": "dynamic-memory-target",
+                "target_expression": "MEM32(ecx)",
+            },
+            {
+                "call_site": "0x00001008",
+                "function": "0x00001000",
+                "function_name": "xbe_entry_point",
+                "classification": "prcb-guarded-dynamic-callback",
+                "target_expression": "MEM32(eax + 0x14)",
+            },
+            {
+                "call_site": "0x00001009",
+                "function": "0x00001000",
+                "function_name": "xbe_entry_point",
+                "classification": "dynamic-indexed-record-target",
+                "target_expression": "MEM32(ebx + esi * 4 + 8)",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_dynamic_source_provenance(generated, rows)
+
+        self.assertEqual(
+            evidence["0x00001007"]["status"],
+            "local-linear-source-assignments-observed",
+        )
+        self.assertIn(
+            "eax = 0x00011010;",
+            {item["expression"] for item in evidence["0x00001007"]["assignments"]},
+        )
+        self.assertEqual(
+            evidence["0x00001008"]["covered_target_registers"], ["eax"]
+        )
+        self.assertEqual(
+            evidence["0x00001009"]["covered_target_registers"], ["ebx", "esi"]
+        )
+        self.assertIn(
+            "eax = MEM32(esp + 0x20);",
+            {item["expression"] for item in evidence["0x00001009"]["assignments"]},
         )
 
     def test_resolves_proven_bss_slot_initializer(self) -> None:
