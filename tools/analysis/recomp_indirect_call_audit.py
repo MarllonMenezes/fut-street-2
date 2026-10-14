@@ -175,6 +175,8 @@ DYNAMIC_INDEXED_RECORD_ALIAS_RE = re.compile(
     r"^(?P<base>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
     r"(?P<index>eax|ebx|ecx|edx|esi|edi)\s*\*\s*4\s*\+\s*8$"
 )
+INDEXED_CALLBACK_TABLE_BASE = 0x00361360
+INDEXED_CALLBACK_TABLE_CAPACITY_SLOT = 0x0036135C
 LOCAL_BRANCH_RE = re.compile(
     r"^\s*if\s*\((?P<condition>.+)\)\s+goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
 )
@@ -609,6 +611,129 @@ def recover_fixed_slot_writes(
             for write_match in REGISTER_WRITE_RE.finditer(line):
                 register_constants.pop(write_match.group("register"), None)
     return writes
+
+
+def recover_indexed_callback_table_provenance(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int] | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Inventory the BSS table root used by the indexed callback family.
+
+    The generated code uses ``0x00361360`` as a table of pointers and stores
+    its current byte capacity at ``0x0036135C``.  This helper records absolute
+    root/capacity writes and the bounded ``index * 4 + root`` alias shape used
+    for record writes.  It does not infer record identity or callback targets.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    table_text = f"0x{INDEXED_CALLBACK_TABLE_BASE:X}"
+    capacity_text = f"0x{INDEXED_CALLBACK_TABLE_CAPACITY_SLOT:X}"
+    indexed_alias_re = re.compile(
+        r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+        r"(?P<index>eax|ebx|ecx|edx|esi|edi)\s*\*\s*4\s*\+\s*"
+        + re.escape(table_text)
+        + r";"
+    )
+    rows: dict[str, list[dict[str, Any]]] = {
+        "table_root_writes": [],
+        "capacity_writes": [],
+        "indexed_record_writes": [],
+    }
+
+    def add_row(
+        category: str,
+        source_path: Path,
+        line_number: int,
+        current: int,
+        kind: str,
+        expression: str,
+        value: str | None = None,
+    ) -> None:
+        row: dict[str, Any] = {
+            "function": f"0x{current:08X}",
+            "function_name": str(function_by_address[current].get("name", "")),
+            "source": f"{source_path.name}:{line_number}",
+            "kind": kind,
+            "expression": expression,
+        }
+        if value is not None:
+            row["value"] = value
+        rows[category].append(row)
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current: int | None = None
+        aliases: set[str] = set()
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+                aliases = set()
+            if current is None or (
+                directly_reachable is not None
+                and current not in directly_reachable
+            ):
+                continue
+
+            root_write = FIXED_SLOT_ANY_WRITE_RE.search(line)
+            if root_write is not None:
+                slot = int(root_write.group("slot"), 16)
+                if slot == INDEXED_CALLBACK_TABLE_BASE:
+                    constant = FIXED_SLOT_WRITE_RE.search(line)
+                    add_row(
+                        "table_root_writes",
+                        source_path,
+                        line_number,
+                        current,
+                        "absolute-constant" if constant is not None else "absolute",
+                        line.strip(),
+                        None
+                        if constant is None
+                        else f"0x{int(constant.group('value'), 16):08X}",
+                    )
+                elif slot == INDEXED_CALLBACK_TABLE_CAPACITY_SLOT:
+                    constant = FIXED_SLOT_WRITE_RE.search(line)
+                    add_row(
+                        "capacity_writes",
+                        source_path,
+                        line_number,
+                        current,
+                        "absolute-constant" if constant is not None else "absolute",
+                        line.strip(),
+                        None
+                        if constant is None
+                        else f"0x{int(constant.group('value'), 16):08X}",
+                    )
+
+            register_write = FIXED_REGISTER_WRITE_RE.search(line)
+            if register_write is not None and register_write.group("register") in aliases:
+                add_row(
+                    "indexed_record_writes",
+                    source_path,
+                    line_number,
+                    current,
+                    "indexed-record-alias",
+                    line.strip(),
+                    register_write.group("rhs").strip(),
+                )
+
+            alias_match = indexed_alias_re.match(line)
+            if alias_match is not None:
+                aliases.add(alias_match.group("register"))
+            else:
+                assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
+                if assignment_match is not None:
+                    aliases.discard(assignment_match.group("register"))
+            for register_match in REGISTER_WRITE_RE.finditer(line):
+                aliases.discard(register_match.group("register"))
+    return rows
 
 
 def recover_indirect_call_skip_branches(
@@ -3207,6 +3332,12 @@ def audit(
         f"0x{slot:08X}": all_fixed_slot_writes.get(slot, [])
         for slot in tracked_bss_slots
     }
+    indexed_callback_table_provenance = recover_indexed_callback_table_provenance(
+        generated_dir, functions, directly_reachable
+    )
+    all_indexed_callback_table_provenance = recover_indexed_callback_table_provenance(
+        generated_dir, functions, None
+    )
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
@@ -4341,6 +4472,34 @@ def audit(
             slot: len(rows)
             for slot, rows in runtime_fixed_slot_writer_inventory.items()
         },
+        "dynamic_indexed_callback_table_status": (
+            "verified-static-indexed-table-root-provenance"
+            if all_indexed_callback_table_provenance["table_root_writes"]
+            and all_indexed_callback_table_provenance["capacity_writes"]
+            else "incomplete-static-indexed-table-root-provenance"
+        ),
+        "dynamic_indexed_callback_table_base": f"0x{INDEXED_CALLBACK_TABLE_BASE:08X}",
+        "dynamic_indexed_callback_table_capacity_slot": (
+            f"0x{INDEXED_CALLBACK_TABLE_CAPACITY_SLOT:08X}"
+        ),
+        "dynamic_indexed_callback_table_direct_root_write_sites": len(
+            indexed_callback_table_provenance["table_root_writes"]
+        ),
+        "dynamic_indexed_callback_table_all_root_write_sites": len(
+            all_indexed_callback_table_provenance["table_root_writes"]
+        ),
+        "dynamic_indexed_callback_table_direct_capacity_write_sites": len(
+            indexed_callback_table_provenance["capacity_writes"]
+        ),
+        "dynamic_indexed_callback_table_all_capacity_write_sites": len(
+            all_indexed_callback_table_provenance["capacity_writes"]
+        ),
+        "dynamic_indexed_callback_table_direct_record_write_sites": len(
+            indexed_callback_table_provenance["indexed_record_writes"]
+        ),
+        "dynamic_indexed_callback_table_all_record_write_sites": len(
+            all_indexed_callback_table_provenance["indexed_record_writes"]
+        ),
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_conditional_nonzero_guard_sites": len(
@@ -4623,6 +4782,10 @@ def audit(
             dynamic_callback_object_field_provenance
         ),
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
+        "dynamic_indexed_callback_table_provenance": indexed_callback_table_provenance,
+        "dynamic_indexed_callback_table_all_provenance": (
+            all_indexed_callback_table_provenance
+        ),
         "conditional_skip_branches": skip_branch_evidence,
         "conditional_nonzero_guards": nonzero_guard_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},

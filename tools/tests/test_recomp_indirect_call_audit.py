@@ -24,6 +24,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_kernel_bridge_body_provenance,
     classify_kernel_bridge_implementation_delegation,
     classify_kernel_bridge_argument_use,
+    recover_indexed_callback_table_provenance,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -949,6 +950,32 @@ void xbe_entry_point(void)
             classify_kernel_bridge_argument_use(2, [2]),
             "stack-arg-index-outside-expected-count",
         )
+
+    def test_recovers_indexed_callback_table_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_00001000(void)\n"
+                "{\n"
+                "    MEM32(0x361360) = eax;\n"
+                "    MEM32(0x36135C) = 0x20;\n"
+                "    ecx = edi * 4 + 0x361360;\n"
+                "    MEM32(ecx) = ebx;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_indexed_callback_table_provenance(
+                generated,
+                [{"name": "sub_00001000", "start": "0x1000"}],
+                {0x1000},
+            )
+
+        self.assertEqual(len(evidence["table_root_writes"]), 1)
+        self.assertEqual(len(evidence["capacity_writes"]), 1)
+        self.assertEqual(len(evidence["indexed_record_writes"]), 1)
+        self.assertEqual(evidence["capacity_writes"][0]["value"], "0x00000020")
 
     def test_counts_kernel_call_push_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
