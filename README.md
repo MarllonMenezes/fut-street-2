@@ -14,6 +14,23 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.48
+
+O release 2.48 adiciona
+`tools/analysis/eagl_dynamic_buffer_selector_control.py`, um controle
+estático independente para o seletor EAGL em `0x00345BCC`. Contra o
+disassembly integral 25f e a ISO local, foram recuperados exatamente `5`
+writers: `1` word com extensão de sinal vindo de tabela (`0x0019E91B`), `1`
+literal zero (`0x0019F20F`) e `3` valores vindos de campos de objeto `+0xC0`
+(`0x0019FCFF`, `0x001A2FCE` e `0x001A30FB`).
+
+Essa classificação prova que o seletor não pode ser reduzido estaticamente a
+uma constante única e preserva o domínio dos produtores observados. Ela não
+escolhe o buffer em runtime, não prova o alias entre os objetos e os draws,
+não instala shaders e não fecha o rendering original. O XBE não é executado;
+a prontidão permanece `NOT_READY` e a estimativa conservadora do PoC jogável
+continua em aproximadamente `31% concluído / 69% restante`.
+
 ## Estado verificável — release 2.47
 
 O release 2.47 adiciona
@@ -921,6 +938,18 @@ python tools/analysis/recomp_fixed_callback_slot_evidence_gate.py `
 
 Ele mantém a ausência de writer provado separada da resolução do único slot
 que tem inicializador de função observado.
+
+O domínio estático do seletor de buffer EAGL pode ser conferido com:
+
+```powershell
+python tools/analysis/eagl_dynamic_buffer_selector_control.py `
+  --asm C:/caminho/local/disasm/asm/text.asm `
+  --xbe C:/caminho/local/game_files/default.xbe
+```
+
+O resultado mantém `runtime_selected_buffer=not-proven` e
+`rendering_binding=not-proven`; ele apenas impede assumir que
+`0x00345BCC` seja constante.
 
 Opcionalmente, acrescente `--kernel-source` apontando para
 `C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c` para conferir se os
