@@ -1,0 +1,144 @@
+diff --git a/templates/runtime/recomp_types.h b/templates/runtime/recomp_types.h
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -99,6 +99,13 @@ void recomp_debug_service(uint32_t service, uint32_t arg_va);
+  * port forms remain unresolved instead of being treated as GPU emulation. */
+ uint8_t recomp_xbox_io_read8(uint16_t port);
+ 
++/* CLI/STI preserve the guest's interrupt-mask state for a future host
++ * delivery path.  The current no-emulation host has no synthetic interrupt
++ * source, so these helpers do not schedule or emulate hardware interrupts. */
++void recomp_xbox_cli(void);
++void recomp_xbox_sti(void);
++uint8_t recomp_xbox_interrupts_enabled(void);
++
+ /* MSVC's __debugbreak() intrinsic -> gcc/clang equivalent.
+  * The auto-generated code emits __debugbreak for x86 INT 3 instructions.
+  * !defined(__debugbreak) is not enough on its own: MinGW declares __debugbreak
+diff --git a/tools/recomp/lifter.py b/tools/recomp/lifter.py
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1348,6 +1348,7 @@ class Lifter:
+         self.supported_cpuid_sites = set()
+         self.supported_flag_save_sites = set()
+         self.supported_io_sites = set()
++        self.supported_interrupt_mask_sites = set()
+         self.publishes_ebp = False  # Set per-function: has a real frame
+         self.trace_exit_name = None  # Set per-function when traced
+         self.force_return_value = None   # Set per-function by --force-return
+@@ -1569,6 +1570,15 @@ class Lifter:
+                 "SET_LO8(eax, recomp_xbox_io_read8(LO16(edx))); /* in al, dx */"
+             ]
+ 
++        # Cxbx independently models CLI/STI as a process-wide Xbox interrupt
++        # delivery mask.  The translator enables only exact same-block pairs;
++        # the host helper stores that compatibility state but does not emulate
++        # a CPU or synthesize an interrupt source.
++        if (m == "cli" and insn.address in self.supported_interrupt_mask_sites):
++            return ["recomp_xbox_cli(); /* cli */"]
++        if (m == "sti" and insn.address in self.supported_interrupt_mask_sites):
++            return ["recomp_xbox_sti(); /* sti */"]
++
+         # ── Misc ──
+         if m == "cdq":
+             return ["edx = ((int32_t)eax < 0) ? 0xFFFFFFFF : 0; /* cdq */"]
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1591,6 +1591,31 @@ class FunctionTranslator:
+                     break
+         return supported
+ 
++    @staticmethod
++    def _supported_interrupt_mask_sites(instructions):
++        """Find exact same-block CLI/STI pairs.
++
++        Independent Xbox compatibility evidence models both opcodes as a
++        process-wide interrupt-delivery mask.  Require a straight-line pair
++        before lowering: a branch, call, return, far jump, or software trap
++        could move the matching STI outside the critical section and would
++        need scheduler-level semantics that this no-emulation host does not
++        provide.
++        """
++        supported = set()
++        for index, insn in enumerate(instructions):
++            if insn.mnemonic != "cli":
++                continue
++            for candidate in instructions[index + 1:]:
++                if (candidate.is_branch or candidate.is_call
++                        or candidate.is_ret
++                        or candidate.mnemonic in ("ljmp", "int", "int3")):
++                    break
++                if candidate.mnemonic == "sti":
++                    supported.update((insn.address, candidate.address))
++                    break
++        return supported
++
+     def _func_has_prologue(self, instructions):
+         """Check if function starts with push ebp; mov ebp, esp."""
+         if len(instructions) < 2:
+@@ -2566,6 +2591,8 @@ class FunctionTranslator:
+         self.lifter.supported_flag_save_sites = self._supported_flag_save_sites(
+             instructions)
+         self.lifter.supported_io_sites = self._supported_io_sites(instructions)
++        self.lifter.supported_interrupt_mask_sites = (
++            self._supported_interrupt_mask_sites(instructions))
+         # DAA/DAS and AAA/AAS can each produce the flag consumed by the other.
+         # Grow supported sites monotonically to a fixed point, while never
+         # treating an untranslated instruction as a flag definition.
+diff --git a/tools/recomp/test_lifter_interrupt_mask.py b/tools/recomp/test_lifter_interrupt_mask.py
+new file mode 100644
+--- /dev/null
++++ b/tools/recomp/test_lifter_interrupt_mask.py
+@@ -0,0 +1,48 @@
++"""Only proven same-block CLI/STI pairs lower to host mask state."""
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter
++from .translator import FunctionTranslator
++
++
++def _insn(address, mnemonic, operands=(), size=1):
++    return Instruction(address, size, mnemonic, "", "", operands=list(operands))
++
++
++def test_same_block_cli_sti_pair_is_proven():
++    insns = [
++        _insn(0x100, "cli"),
++        _insn(0x101, "mov"),
++        _insn(0x102, "sti"),
++    ]
++
++    assert FunctionTranslator._supported_interrupt_mask_sites(insns) == {
++        0x100, 0x102
++    }
++
++
++def test_branch_prevents_pair_proof():
++    branch = _insn(0x201, "jmp", [Operand(type="imm", imm=0x300)])
++    insns = [
++        _insn(0x200, "cli"),
++        branch,
++        _insn(0x202, "sti"),
++    ]
++
++    assert FunctionTranslator._supported_interrupt_mask_sites(insns) == set()
++
++
++def test_unmatched_cli_and_sti_stay_visible():
++    insns = [_insn(0x300, "cli"), _insn(0x301, "ret")]
++    assert FunctionTranslator._supported_interrupt_mask_sites(insns) == set()
++
++
++def test_proven_pair_lowers_and_unproven_opcode_stays_visible():
++    lifter = Lifter()
++    lifter.supported_interrupt_mask_sites = {0x400, 0x401}
++
++    lowered_cli = " ".join(lifter.lift_instruction(_insn(0x400, "cli")))
++    lowered_sti = " ".join(lifter.lift_instruction(_insn(0x401, "sti")))
++    assert "recomp_xbox_cli()" in lowered_cli
++    assert "recomp_xbox_sti()" in lowered_sti
++    assert "RECOMP_UNIMPL" not in lowered_cli + lowered_sti
++
++    unresolved = " ".join(lifter.lift_instruction(_insn(0x402, "cli")))
++    assert "RECOMP_UNIMPL" in unresolved
