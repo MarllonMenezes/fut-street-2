@@ -877,6 +877,10 @@ void xbe_entry_point(void)
             len(evidence["bridge_IoCreateFile"]["g_eax_assignment_sites"]), 1
         )
         self.assertEqual(
+            evidence["bridge_IoCreateFile"]["return_disposition"],
+            "explicit-g-eax-assignment",
+        )
+        self.assertEqual(
             len(evidence["bridge_IoCreateFile"]["explicit_no_op_markers"]), 1
         )
 

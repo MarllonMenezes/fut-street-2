@@ -105,6 +105,10 @@ KERNEL_BRIDGE_FUNCTION_DEF_RE = re.compile(
     r"^\s*static\s+void\s+(?P<name>bridge_[A-Za-z0-9_]+)\s*\(void\)\s*$"
 )
 KERNEL_BRIDGE_STACK_ARG_RE = re.compile(r"\bSTACK_ARG\((?P<index>[0-9]+)\)")
+KERNEL_BRIDGE_HOST_CALL_RE = re.compile(
+    r"\b(?P<name>xbox_[A-Za-z0-9_]+)\s*\("
+)
+KERNEL_BRIDGE_TERMINAL_HOST_CALLS = {"xbox_HalReturnToFirmware"}
 KERNEL_STDCALL_FUNCTION_RE = re.compile(
     r"^\s*static\s+int\s+stdcall_args_for_ordinal\s*\(ULONG\s+ordinal\s*\)\s*$"
 )
@@ -1189,6 +1193,8 @@ def recover_kernel_bridge_body_provenance(
             "stack_arg_indices": [],
             "g_eax_assignment_sites": [],
             "explicit_no_op_markers": [],
+            "host_call_targets": [],
+            "return_disposition": "missing-source-body",
             "pointer_translation_sites": 0,
             "guest_memory_access_sites": 0,
             "body_line_count": 0,
@@ -1233,12 +1239,32 @@ def recover_kernel_bridge_body_provenance(
                 if re.search(r"\b(?:no[- ]op|stub)\b", body_line, re.IGNORECASE)
                 is not None
             ]
+            host_call_targets = sorted(
+                {
+                    call_match.group("name")
+                    for _, body_line in body_lines
+                    for call_match in KERNEL_BRIDGE_HOST_CALL_RE.finditer(body_line)
+                }
+            )
             item = evidence[target]
             item["status"] = "source-body-found"
             item["source"] = f"{source_path.name}:{index + 1}"
             item["stack_arg_indices"] = sorted(stack_args)
             item["g_eax_assignment_sites"] = g_eax_sources
             item["explicit_no_op_markers"] = explicit_no_op_markers
+            item["host_call_targets"] = host_call_targets
+            item["return_disposition"] = (
+                "explicit-g-eax-assignment"
+                if g_eax_sources
+                else (
+                    "terminal-host-call-no-g-eax"
+                    if any(
+                        call in KERNEL_BRIDGE_TERMINAL_HOST_CALLS
+                        for call in host_call_targets
+                    )
+                    else "missing-g-eax-and-no-terminal-call"
+                )
+            )
             item["pointer_translation_sites"] = sum(
                 len(re.findall(r"\bXBOX_TO_NATIVE\s*\(", body_line))
                 for _, body_line in body_lines
@@ -3266,6 +3292,9 @@ def audit(
                 row["kernel_bridge_body_status"] = "missing-source-body"
             else:
                 row["kernel_bridge_body_status"] = bridge_body["status"]
+                row["kernel_bridge_body_return_disposition"] = bridge_body[
+                    "return_disposition"
+                ]
                 expected_bytes = (
                     None
                     if kernel_stdcall_arg_bytes is None
@@ -3414,6 +3443,12 @@ def audit(
         for row in kernel_slots
         if row.get("kernel_bridge_body_stack_arg_status")
         == "no-stack-arg-read-explicit-host-stub"
+    ]
+    bridge_body_return_disposition_missing_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_return_disposition")
+        == "missing-g-eax-and-no-terminal-call"
     ]
     abi_count_sites = [
         row for row in kernel_slots if row.get("kernel_abi_stack_status") == "argument-count-match"
@@ -3630,6 +3665,37 @@ def audit(
             None
             if kernel_bridge_body_provenance is None
             else len(bridge_body_explicit_no_arg_stub_sites)
+        ),
+        "kernel_bridge_body_return_disposition_status": (
+            "not-supplied"
+            if kernel_bridge_body_provenance is None
+            else (
+                "verified-source-return-disposition-coverage"
+                if len(bridge_body_sites) == len(kernel_slots)
+                and not bridge_body_return_disposition_missing_sites
+                else "missing-source-return-disposition"
+            )
+        ),
+        "kernel_bridge_body_explicit_g_eax_return_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                item["return_disposition"] == "explicit-g-eax-assignment"
+                for item in kernel_bridge_body_provenance.values()
+            )
+        ),
+        "kernel_bridge_body_terminal_host_return_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else sum(
+                item["return_disposition"] == "terminal-host-call-no-g-eax"
+                for item in kernel_bridge_body_provenance.values()
+            )
+        ),
+        "kernel_bridge_body_return_disposition_missing_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_return_disposition_missing_sites)
         ),
         "kernel_bridge_body_g_eax_assignment_targets": (
             None

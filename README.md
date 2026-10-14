@@ -20,9 +20,9 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.09
+## Estado verificável — release 2.10
 
-O release 2.09 mantém a proveniência local completa dos sete callbacks
+O release 2.10 mantém a proveniência local completa dos sete callbacks
 dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
 inventaria todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
 dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
@@ -94,6 +94,16 @@ atribuição a `g_eax` em `18/19` targets, `XBOX_TO_NATIVE` em `8/19` e
 `BRIDGE_MEM32` em `9/19`. Essa checagem registra somente formas textuais do
 corpo host e a comparação estática de janelas; não prova tipos, convenção
 completa, tradução de ponteiros, semântica Xbox ou efeitos colaterais.
+
+A auditoria de disposição de retorno dos mesmos bridges também fecha o
+contrato de publicação de resultado: `kernel_bridge_body_return_disposition_status=verified-source-return-disposition-coverage`,
+com `kernel_bridge_body_explicit_g_eax_return_sites=18`, uma chamada terminal
+conhecida em `xbox_HalReturnToFirmware`
+(`kernel_bridge_body_terminal_host_return_sites=1`) e
+`kernel_bridge_body_return_disposition_missing_sites=0`. Isso confirma apenas
+que nenhum dos `19` corpos observados deixa o `g_eax` sem uma forma estática de
+publicação ou sem o caminho terminal identificado; não prova que o valor
+publicado ou a terminação sejam compatíveis com o Xbox.
 
 A checagem do callback indexado continua em
 `dynamic_callback_container_field_provenance_sites=2`: nos dois chamadores do
