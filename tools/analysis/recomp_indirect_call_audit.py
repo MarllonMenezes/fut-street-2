@@ -74,6 +74,13 @@ KERNEL_BRIDGE_CASE_RE = re.compile(
     r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
     r"(?P<target>bridge_[^;]+);"
 )
+KERNEL_STDCALL_FUNCTION_RE = re.compile(
+    r"^\s*static\s+int\s+stdcall_args_for_ordinal\s*\(ULONG\s+ordinal\s*\)\s*$"
+)
+KERNEL_STDCALL_CASE_RE = re.compile(
+    r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
+    r"(?P<bytes>[0-9]+);"
+)
 DYNAMIC_OBJECT_FIELD_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x584\)\s*="
 )
@@ -753,6 +760,130 @@ def recover_kernel_bridge_cases(source_path: Path) -> dict[int, str]:
     return cases
 
 
+def recover_kernel_stdcall_arg_bytes(source_path: Path) -> dict[int, int]:
+    """Read the bridge's expected caller-stack byte count per ordinal."""
+    lines = source_path.read_text(encoding="utf-8").splitlines()
+    in_function = False
+    entered_body = False
+    depth = 0
+    cases: dict[int, int] = {}
+    for line in lines:
+        if not in_function:
+            if KERNEL_STDCALL_FUNCTION_RE.match(line) is None:
+                continue
+            in_function = True
+        depth += line.count("{") - line.count("}")
+        if depth > 0:
+            entered_body = True
+        match = KERNEL_STDCALL_CASE_RE.match(line)
+        if match is not None:
+            ordinal = int(match.group("ordinal"), 10)
+            value = int(match.group("bytes"), 10)
+            previous = cases.get(ordinal)
+            if previous is not None and previous != value:
+                raise ValueError(
+                    f"conflicting stdcall argument counts for ordinal {ordinal} "
+                    f"at {source_path}"
+                )
+            cases[ordinal] = value
+        if entered_body and depth == 0:
+            break
+    return cases
+
+
+def recover_kernel_call_argument_counts(
+    generated_dir: Path,
+    sites: list[dict[str, Any]],
+    window: int = 64,
+) -> dict[str, dict[str, int]]:
+    """Estimate guest PUSH32 argument counts before kernel calls.
+
+    Generated functions may save callee-saved registers immediately after the
+    indirect-call block opens.  An initial push of ``ebx``, ``esi`` or ``edi``
+    is excluded only when a matching pop appears in the same function's
+    epilogue.  This remains stack-shape evidence, not a proof of argument
+    types or ABI.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    counts: dict[str, dict[str, int]] = {}
+    for site in sites:
+        source_text = str(site.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        start = max(0, call_index - window)
+        for index in range(call_index, start - 1, -1):
+            if "uint32_t _icall_esp = g_esp;" in lines[index]:
+                start = index + 1
+                break
+        else:
+            continue
+        body_lines = lines[start:call_index]
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_start = index
+                break
+        function_end = len(lines)
+        for index in range(call_index + 1, len(lines)):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_end = index
+                break
+        epilogue_lines = lines[call_index + 1 : function_end]
+        prior_lines = lines[function_start:start]
+        first_non_push = next(
+            (
+                index
+                for index, body_line in enumerate(body_lines)
+                if "PUSH32(esp," not in body_line
+            ),
+            len(body_lines),
+        )
+        saved_registers = {
+            register
+            for body_line in body_lines[:first_non_push]
+            for register in ("ebx", "esi", "edi")
+            if re.fullmatch(
+                rf"\s*PUSH32\(esp,\s*{register}\);\s*", body_line
+            )
+            and not any(
+                re.fullmatch(
+                    rf"\s*PUSH32\(esp,\s*{register}\);\s*", prior_line
+                )
+                for prior_line in prior_lines
+            )
+            and any(
+                re.fullmatch(
+                    rf"\s*POP32\(esp,\s*{register}\);.*", epilogue_line
+                )
+                for epilogue_line in epilogue_lines
+            )
+        }
+        push_count = sum(
+            "PUSH32(esp," in body_line
+            and not any(
+                index < first_non_push
+                and body_line.strip() == f"PUSH32(esp, {register});"
+                for register in saved_registers
+            )
+            for index, body_line in enumerate(body_lines)
+        )
+        counts[str(site["call_site"])] = {
+            "push_count": push_count,
+            "pushed_bytes": push_count * 4,
+        }
+    return counts
+
+
 def recover_dynamic_target_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
@@ -1045,6 +1176,11 @@ def audit(
         if kernel_source is None or not (kernel_source.parent / "kernel_bridge.c").exists()
         else recover_kernel_bridge_cases(kernel_source.parent / "kernel_bridge.c")
     )
+    kernel_stdcall_arg_bytes = (
+        None
+        if kernel_source is None or not (kernel_source.parent / "kernel_bridge.c").exists()
+        else recover_kernel_stdcall_arg_bytes(kernel_source.parent / "kernel_bridge.c")
+    )
     dynamic_memory_ranges = []
     for site in sites:
         range_text = site.get("target_memory_address_range")
@@ -1109,6 +1245,9 @@ def audit(
             kernel_source, used_kernel_cases
         )
     )
+    kernel_call_argument_counts = recover_kernel_call_argument_counts(
+        generated_dir, classified
+    )
     skip_branch_evidence = recover_indirect_call_skip_branches(
         generated_dir, classified
     )
@@ -1132,6 +1271,21 @@ def audit(
             )
             if bridge_target is not None:
                 row["host_bridge_target"] = bridge_target
+        if kernel_stdcall_arg_bytes is not None and ordinal is not None:
+            expected_bytes = kernel_stdcall_arg_bytes.get(int(ordinal))
+            observed = kernel_call_argument_counts.get(str(row["call_site"]))
+            if expected_bytes is None:
+                row["kernel_abi_stack_status"] = "missing-expected-count"
+            elif observed is None:
+                row["kernel_abi_stack_status"] = "missing-call-push-evidence"
+            else:
+                row["kernel_abi_expected_pushed_bytes"] = expected_bytes
+                row["kernel_abi_observed_pushed_bytes"] = observed["pushed_bytes"]
+                row["kernel_abi_stack_status"] = (
+                    "argument-count-match"
+                    if expected_bytes == observed["pushed_bytes"]
+                    else "argument-count-mismatch"
+                )
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
@@ -1146,6 +1300,14 @@ def audit(
     ]
     bridge_missing_sites = [
         row for row in kernel_slots if row.get("host_bridge_status") == "missing-case"
+    ]
+    abi_count_sites = [
+        row for row in kernel_slots if row.get("kernel_abi_stack_status") == "argument-count-match"
+    ]
+    abi_mismatch_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_abi_stack_status") == "argument-count-mismatch"
     ]
     dynamic_writer_counts = {
         family: len(rows)
@@ -1204,6 +1366,22 @@ def audit(
         ),
         "kernel_bridge_missing_sites": (
             None if kernel_bridge_cases is None else len(bridge_missing_sites)
+        ),
+        "kernel_abi_stack_status": (
+            "not-supplied"
+            if kernel_stdcall_arg_bytes is None
+            else (
+                "verified-argument-count-coverage"
+                if len(abi_count_sites) == len(kernel_slots)
+                and not abi_mismatch_sites
+                else "argument-count-mismatch-or-incomplete"
+            )
+        ),
+        "kernel_abi_argument_count_sites": (
+            None if kernel_stdcall_arg_bytes is None else len(abi_count_sites)
+        ),
+        "kernel_abi_argument_count_mismatch_sites": (
+            None if kernel_stdcall_arg_bytes is None else len(abi_mismatch_sites)
         ),
         "kernel_implementation_status": (
             "not-supplied"
@@ -1327,6 +1505,7 @@ def audit(
         "conditional_skip_branches": skip_branch_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
+        "kernel_call_argument_counts": kernel_call_argument_counts,
     }
 
 
