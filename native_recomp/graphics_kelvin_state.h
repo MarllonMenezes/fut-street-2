@@ -5,6 +5,12 @@
 
 typedef struct {
     uint32_t constants[192][4];
+    uint32_t program[136][4];
+    uint8_t program_valid[136];
+    unsigned program_load, program_start, program_mode;
+    int program_dirty;
+    float attributes[16][4];
+    uint32_t clip_min, clip_max;
     unsigned constant_load;
     int constants_dirty;
     unsigned provoking_first, edge_flag, compress_depth;

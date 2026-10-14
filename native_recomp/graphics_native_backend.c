@@ -11,6 +11,7 @@
 #include "graphics_objects.h"
 #include "graphics_kelvin_state.h"
 #include "graphics_native_constants.h"
+#include "graphics_native_vertex.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -49,14 +50,44 @@ typedef struct {
     ID3D11Device *device;
     ID3D11DeviceContext *context;
     FutNativeConstants native_constants;
+    ID3D11VertexShader *vertex_shader;
+    ID3DBlob *vertex_bytecode;
     FutGraphicsBindings bindings;
     FutGraphicsKelvinState kelvin;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
 
+static int native_prepare_vertex(NativeGraphicsState *state)
+{
+    if (state->kelvin.program_dirty && (state->kelvin.program_mode & 3u) == 2u) {
+        unsigned first = state->kelvin.program_start, count = 0;
+        while (first + count < 136 && state->kelvin.program_valid[first + count] == 15) {
+            ++count;
+            if (state->kelvin.program[first + count - 1][3] & 1u) break;
+        }
+        ID3D11VertexShader *shader = NULL; ID3DBlob *bytecode = NULL;
+        HRESULT hr = fut_native_vertex_compile(state->device, state->kelvin.program + first,
+            count, &shader, &bytecode);
+        if (FAILED(hr)) {
+            fprintf(stderr, "[GRAPHICS] vertex program recompilation failed: start=%u count=%u hr=%08lX\n",
+                    first, count, hr);
+            return 0;
+        }
+        if (state->vertex_shader) ID3D11VertexShader_Release(state->vertex_shader);
+        if (state->vertex_bytecode) ID3D10Blob_Release(state->vertex_bytecode);
+        state->vertex_shader = shader; state->vertex_bytecode = bytecode;
+        ID3D11DeviceContext_VSSetShader(state->context, shader, NULL, 0);
+        state->kelvin.program_dirty = 0;
+        fprintf(stderr, "[GRAPHICS] original vertex program recompiled to native shader: start=%u instructions=%u\n",
+                first, count);
+    }
+    return 1;
+}
+
 static int native_finish(NativeGraphicsState *state)
 {
+    if (!native_prepare_vertex(state)) return 0;
     if (!fut_native_constants_finish(&state->native_constants,
         state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
         return 0;
@@ -126,8 +157,13 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1;
         }
         FutGraphicsKelvinStatus applied = fut_graphics_kelvin_state(&state->kelvin, method, value);
-        if (applied == FUT_KELVIN_APPLIED)
+        if (applied == FUT_KELVIN_APPLIED) {
+            if (method >= 0xB00u && method < 0xB80u &&
+                ((method - 0xB00u) / 4) % 4 == 3 && (value & 1u) &&
+                !native_prepare_vertex(state))
+                return 0;
             return 1;
+        }
         if (applied == FUT_KELVIN_REJECTED) {
             fprintf(stderr, "[GRAPHICS] invalid/unsupported state method=%04X value=%08X\n", method, value);
             return 0;
@@ -216,6 +252,8 @@ static DWORD WINAPI native_worker(void *unused)
         cursor = submitted;
     }
     fut_native_constants_destroy(&state.native_constants);
+    if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
+    if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     ID3D11DeviceContext_Release(context);
     ID3D11Device_Release(device);
     return 0;

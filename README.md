@@ -14,6 +14,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.65
+
+O backend recompilou o primeiro programa de vértice original recebido do jogo:
+`12` instruções passaram de microcode para HLSL e para um vertex shader D3D11.
+Isso é recompilação de shader, não execução de um emulador NV2A nem um desenho
+recriado. O tradutor CPU e os arquivos C gerados não mudaram nesta etapa.
+
+O novo `graphics_vertex_program.c` implementa o subconjunto exercitado:
+MAC `MOV/MUL/ADD` e ILU `MOV/RCP`, fontes com swizzle/negação, máscaras
+independentes de temporários e outputs, leitura das fontes antes das escritas
+simultâneas, destino ILU pareado em R1 e alias R12/oPos. A codificação foi
+conferida com a [referência de formato de vértices do xemu](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/glsl/vsh-prog.c).
+A implementação foi escrita localmente; não incorpora o executor desse projeto.
+O tradutor existente no checkout do XboxRecomp não foi reutilizado: sua
+extração coloca opcodes no word 0, enquanto o formato observado os coloca
+no word 1, e sua aplicação de operações pareadas não preserva esse caso.
+
+`graphics_native_vertex.c` compila o resultado com D3DCompile e cria o shader
+nativo. O teste usa um programa **sintético**, de quatro instruções no formato
+original, executado pelo D3D11 WARP. Stream output/readback confirmou posição
+`(5,14,27,7)` e cor `(0.25,0.5,0.75,1)`, verificando o recíproco, máscaras,
+fontes anteriores às escritas e supressão da escrita MAC pareada em R1.
+Isso valida esse caso, não a fidelidade numérica completa do hardware.
+Opcodes adicionais, constantes relativas/escritas, programas incompletos e
+conflitos simultâneos R12/oPos ainda sem teste são recusados explicitamente.
+
+O estado gráfico também recebe atributos constantes packed-byte/float,
+viewport, limites de clip e uploads do programa com checagem de limites.
+Atributos que emitiriam um vértice são recusados enquanto não há draw nativo.
+Build Release e CTest passaram `13/13`; testes públicos passaram `161/161`.
+Build .NET passou sem avisos/erros e seu self-test passou `105/105`, validando
+somente o protótipo. A ISO preservou o SHA-256 original. Novos artefatos,
+builds, saves, caches, logs e temporários controláveis ficaram no D:.
+
+A execução recompilada encerrou com diagnóstico `3`, antes do limite de
+cinco segundos, no método `0x020C` (`SET_SURFACE_PITCH`), valor `0x14001400`,
+offset `440` da segunda submissão. Seu marcador `7` e DMA GET não foram
+avançados. Próximo alvo: superfícies/recursos e estados necessários ao primeiro
+draw. Ainda falta converter a posição original em screen space para o
+rasterizador nativo. **NOT_READY**: nenhum draw original, primeiro frame ou
+PoC jogável foi aprovado.
+
 ## Estado verificável — release 2.64
 
 A primeira submissão de inicialização agora termina: `640` bytes e `128`

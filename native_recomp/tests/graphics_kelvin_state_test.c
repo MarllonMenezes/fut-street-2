@@ -38,8 +38,32 @@ int main(void)
     for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i)
         if (fut_graphics_kelvin_state(&state, rejected[i][0], rejected[i][1]) != FUT_KELVIN_REJECTED ||
             memcmp(&before, &state, sizeof(state))) return 12;
-    if (fut_graphics_kelvin_state(&state, 0x194C, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
+    if (fut_graphics_kelvin_state(&state, 0x20C, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
         memcmp(&before, &state, sizeof(state))) return 13;
+    if (fut_graphics_kelvin_state(&state, 0x194C, 0xFF804000u) != FUT_KELVIN_APPLIED ||
+        state.attributes[3][0] != 0 || state.attributes[3][1] != 64.0f/255.0f ||
+        state.attributes[3][2] != 128.0f/255.0f || state.attributes[3][3] != 1) return 14;
+    uint32_t attribute_bits = 0;
+    if (fut_graphics_kelvin_state(&state, 0x1A1C, 0x80000000u) != FUT_KELVIN_APPLIED) return 15;
+    memcpy(&attribute_bits, &state.attributes[1][3], sizeof(attribute_bits));
+    if (attribute_bits != 0x80000000u) return 16;
+    if (fut_graphics_kelvin_state(&state, 0x1E9C, 135) != FUT_KELVIN_APPLIED) return 17;
+    for (unsigned i = 0; i < 4; ++i)
+        if (fut_graphics_kelvin_state(&state, 0xB00+i*4, i+1) != FUT_KELVIN_APPLIED ||
+            state.program[135][i] != i+1) return 18;
+    if (state.program_load != 136 || state.program_valid[135] != 15 || !state.program_dirty) return 19;
+    before = state;
+    const uint32_t invalid_new[][2] = {{0xB10,0},{0x1E9C,136},{0x1EA0,136},
+        {0x1E98,1},{0x1E94,3},{0x1940,0},{0x1A00,0},{0x100,1}};
+    for (unsigned i = 0; i < sizeof(invalid_new)/sizeof(invalid_new[0]); ++i)
+        if (fut_graphics_kelvin_state(&state, invalid_new[i][0], invalid_new[i][1]) != FUT_KELVIN_REJECTED ||
+            memcmp(&before, &state, sizeof(state))) return 20;
+    if (fut_graphics_kelvin_state(&state, 0x100, 0) != FUT_KELVIN_APPLIED ||
+        memcmp(&before, &state, sizeof(state))) return 21;
+    if (fut_graphics_kelvin_state(&state, 0xA20, 0x7FC01234u) != FUT_KELVIN_APPLIED ||
+        state.constants[0x3B][0] != 0x7FC01234u ||
+        fut_graphics_kelvin_state(&state, 0xAF0, 0x80000000u) != FUT_KELVIN_APPLIED ||
+        state.constants[0x3A][0] != 0x80000000u) return 22;
     puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
     return 0;
 }

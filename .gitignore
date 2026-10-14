@@ -62,6 +62,10 @@
 !/native_recomp/graphics_kelvin_state.h
 !/native_recomp/graphics_native_constants.c
 !/native_recomp/graphics_native_constants.h
+!/native_recomp/graphics_vertex_program.c
+!/native_recomp/graphics_vertex_program.h
+!/native_recomp/graphics_native_vertex.c
+!/native_recomp/graphics_native_vertex.h
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c
