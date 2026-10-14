@@ -54,6 +54,10 @@ PRCB_BASE_LOAD_RE = re.compile(
 PRCB_CACHE_WRITE_RE = re.compile(
     r"MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*0x250\)\s*="
 )
+KERNEL_RESOLVER_CASE_RE = re.compile(
+    r"^\s*case\s+(?P<ordinal>[0-9]+)\s*:\s*return\s+"
+    r"\(ULONG_PTR\)(?P<target>[^;]+);"
+)
 XBE_MAGIC = b"XBEH"
 SECTION_SIZE = 0x38
 KERNEL_XOR_KEYS = (0x5B6D40B6, 0xEFB1F152)
@@ -414,6 +418,32 @@ def recover_prcb_cache_writes(
     return writes
 
 
+def recover_kernel_resolver_cases(source_path: Path) -> dict[int, str]:
+    """Read explicit ordinal cases from the host kernel resolver source.
+
+    This proves only that the host resolver has a pointer expression for an
+    ordinal.  It does not prove that the pointed-to service has Xbox-compatible
+    behavior, ABI, side effects, or hardware semantics.
+    """
+    cases: dict[int, str] = {}
+    for line_number, line in enumerate(
+        source_path.read_text(encoding="utf-8").splitlines(), 1
+    ):
+        match = KERNEL_RESOLVER_CASE_RE.match(line)
+        if match is None:
+            continue
+        ordinal = int(match.group("ordinal"), 10)
+        target = match.group("target").strip()
+        previous = cases.get(ordinal)
+        if previous is not None and previous != target:
+            raise ValueError(
+                f"conflicting kernel resolver cases for ordinal {ordinal} "
+                f"at {source_path}:{line_number}"
+            )
+        cases[ordinal] = target
+    return cases
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -435,6 +465,7 @@ def classify_sites(
     xbe: dict[str, Any],
     function_starts: set[int],
     runtime_initializers: dict[int, list[dict[str, Any]]] | None = None,
+    kernel_resolver_cases: dict[int, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify each site without resolving dynamic object or register calls."""
     data: bytes = xbe["data"]
@@ -442,6 +473,8 @@ def classify_sites(
     thunk_base = xbe["kernel_thunk_base"]
     thunk_count = xbe["kernel_thunk_count"]
     runtime_initializers = runtime_initializers or {}
+    resolver_audited = kernel_resolver_cases is not None
+    kernel_resolver_cases = kernel_resolver_cases or {}
     rows: list[dict[str, Any]] = []
     for site in sites:
         row = dict(site)
@@ -493,6 +526,13 @@ def classify_sites(
         ):
             row["classification"] = "kernel-thunk-slot"
             row["kernel_ordinal"] = raw_value & 0x7FFFFFFF
+            if resolver_audited:
+                resolver_target = kernel_resolver_cases.get(row["kernel_ordinal"])
+                row["host_resolver_status"] = (
+                    "explicit-case" if resolver_target is not None else "missing-case"
+                )
+                if resolver_target is not None:
+                    row["host_resolver_target"] = resolver_target
         elif raw_value is None:
             initializers = runtime_initializers.get(slot, [])
             initializer_values = {int(str(item["value"]), 0) for item in initializers}
@@ -520,6 +560,7 @@ def audit(
     generated_dir: Path,
     xbe_path: Path,
     entry: int = 0x0024D8BE,
+    kernel_source: Path | None = None,
 ) -> dict[str, Any]:
     functions = json.loads(functions_path.read_text(encoding="utf-8"))
     directly_reachable, external_targets = recover_direct_reachable(functions, entry)
@@ -530,16 +571,28 @@ def audit(
     prcb_cache_writes = recover_prcb_cache_writes(
         generated_dir, functions, directly_reachable
     )
+    kernel_resolver_cases = (
+        None
+        if kernel_source is None
+        else recover_kernel_resolver_cases(kernel_source)
+    )
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
         xbe,
         {_address(function["start"]) for function in functions},
         runtime_initializers,
+        kernel_resolver_cases,
     )
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
     kernel_slots = [row for row in classified if row["classification"] == "kernel-thunk-slot"]
+    resolver_case_sites = [
+        row for row in kernel_slots if row.get("host_resolver_status") == "explicit-case"
+    ]
+    resolver_missing_sites = [
+        row for row in kernel_slots if row.get("host_resolver_status") == "missing-case"
+    ]
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
         "entry_point": f"0x{entry:08X}",
@@ -552,6 +605,17 @@ def audit(
         "linear_register_alias_sites": len(aliased_sites),
         "kernel_thunk_slot_sites": len(kernel_slots),
         "unique_kernel_thunk_slots": len({row["fixed_slot"] for row in kernel_slots}),
+        "kernel_resolver_status": (
+            "not-supplied"
+            if kernel_resolver_cases is None
+            else "verified-explicit-case-coverage"
+        ),
+        "kernel_resolver_case_sites": (
+            None if kernel_resolver_cases is None else len(resolver_case_sites)
+        ),
+        "kernel_resolver_missing_sites": (
+            None if kernel_resolver_cases is None else len(resolver_missing_sites)
+        ),
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -621,6 +685,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--functions", type=Path, required=True)
     parser.add_argument("--generated", type=Path, required=True)
     parser.add_argument("--xbe", type=Path, required=True)
+    parser.add_argument(
+        "--kernel-source",
+        type=Path,
+        help="optional host kernel_thunks.c to audit explicit ordinal cases",
+    )
     parser.add_argument("--entry", type=lambda value: int(value, 0), default=0x0024D8BE)
     parser.add_argument("--format", choices=("json", "text"), default="text")
     return parser
@@ -628,7 +697,13 @@ def _parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = _parser().parse_args()
-    result = audit(args.functions, args.generated, args.xbe, args.entry)
+    result = audit(
+        args.functions,
+        args.generated,
+        args.xbe,
+        args.entry,
+        args.kernel_source,
+    )
     if args.format == "json":
         print(json.dumps(result, indent=2, sort_keys=True))
     else:

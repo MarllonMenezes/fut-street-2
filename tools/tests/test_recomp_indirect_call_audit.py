@@ -218,6 +218,58 @@ void xbe_entry_point(void)
         self.assertEqual(writes[0]["register"], "esi")
         self.assertEqual(writes[0]["field"], "FS:[0x20] + 0x250")
 
+    def test_audits_explicit_host_kernel_resolver_case(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    { uint32_t _icall_target = MEM32(0x00011010); PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            generated.mkdir()
+            functions_path = root / "functions.json"
+            xbe_path = root / "default.xbe"
+            kernel_source = root / "kernel_thunks.c"
+            functions_path.write_text(json.dumps(functions), encoding="utf-8")
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            self._write_fixture_xbe(xbe_path)
+            kernel_source.write_text(
+                "case 66: return (ULONG_PTR)xbox_IoCreateFile;\n",
+                encoding="utf-8",
+            )
+
+            result = audit(
+                functions_path,
+                generated,
+                xbe_path,
+                0x1000,
+                kernel_source,
+            )
+
+        self.assertEqual(
+            result["summary"]["kernel_resolver_status"],
+            "verified-explicit-case-coverage",
+        )
+        self.assertEqual(result["summary"]["kernel_resolver_case_sites"], 1)
+        self.assertEqual(result["summary"]["kernel_resolver_missing_sites"], 0)
+        self.assertEqual(result["sites"][0]["host_resolver_status"], "explicit-case")
+        self.assertEqual(
+            result["sites"][0]["host_resolver_target"],
+            "xbox_IoCreateFile",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
