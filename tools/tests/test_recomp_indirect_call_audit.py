@@ -16,6 +16,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
     recover_dynamic_object_field_writer_context,
+    classify_dynamic_object_field_writer_values,
     recover_dynamic_object_field_writer_overlap_provenance,
     recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
@@ -910,6 +911,79 @@ void sub_00001000(void)
         self.assertEqual(evidence[0]["base_source"]["rhs"], "MEM32(ebp + -28)")
         self.assertEqual(evidence[0]["value_source"]["rhs"], "MEM32(ebp + -84)")
         self.assertEqual(evidence[0]["value_source_kind"], "memory-read")
+
+    def test_classifies_dynamic_object_field_writer_value_shapes(self) -> None:
+        evidence = classify_dynamic_object_field_writer_values(
+            [
+                {
+                    "base_register": "ecx",
+                    "value_expression": "ebx",
+                    "value_source_kind": "constant",
+                    "value_source": {"rhs": "0"},
+                    "writer": {
+                        "function": "0x00002000",
+                        "assigned_value_expression": "ebx",
+                        "assigned_value_kind": "register",
+                    },
+                },
+                {
+                    "base_register": "ecx",
+                    "value_expression": "eax",
+                    "value_source_kind": "constant",
+                    "value_source": {"rhs": "0x1000"},
+                    "writer": {
+                        "function": "0x00002010",
+                        "assigned_value_expression": "eax",
+                        "assigned_value_kind": "register",
+                    },
+                },
+                {
+                    "base_register": "ecx",
+                    "value_expression": "4",
+                    "value_source_kind": "unresolved",
+                    "value_source": None,
+                    "writer": {
+                        "function": "0x00002020",
+                        "assigned_value_expression": "4",
+                        "assigned_value_kind": "constant",
+                    },
+                },
+                {
+                    "base_register": "ecx",
+                    "value_expression": "edx",
+                    "value_source_kind": "memory-read",
+                    "value_source": {"rhs": "MEM32(ecx + 0x584)"},
+                    "writer": {
+                        "function": "0x00002030",
+                        "assigned_value_expression": "edx",
+                        "assigned_value_kind": "register",
+                    },
+                },
+                {
+                    "base_register": "ecx",
+                    "value_expression": "edx",
+                    "value_source_kind": "memory-read",
+                    "value_source": {"rhs": "MEM32(ebp + -84)"},
+                    "writer": {
+                        "function": "0x00002040",
+                        "assigned_value_expression": "edx",
+                        "assigned_value_kind": "register",
+                    },
+                },
+            ],
+            {0x1000},
+        )
+
+        self.assertEqual(
+            evidence["status"],
+            "verified-bounded-object-field-writer-value-classification",
+        )
+        self.assertEqual(evidence["writer_sites"], 5)
+        self.assertEqual(evidence["constant_sites"], 3)
+        self.assertEqual(evidence["constant_known_function_start_sites"], 1)
+        self.assertEqual(evidence["constant_non_function_sites"], 1)
+        self.assertEqual(evidence["same_field_readback_sites"], 1)
+        self.assertEqual(evidence["unresolved_value_sites"], 1)
 
     def test_recovers_bounded_indexed_writer_root_link_provenance(self) -> None:
         generated_source = """

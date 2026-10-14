@@ -3312,6 +3312,108 @@ def recover_dynamic_object_field_writer_context(
     return contexts
 
 
+def classify_dynamic_object_field_writer_values(
+    contexts: list[dict[str, Any]],
+    function_starts: set[int],
+) -> dict[str, Any]:
+    """Classify bounded value shapes written to ``object + 0x584``.
+
+    A constant is compared only with known generated function starts.  A
+    match is still not a binding: it does not prove object identity, path
+    reachability, or that the field is a callable pointer at runtime.  A
+    readback of the same ``+0x584`` field is kept separate from genuinely
+    unresolved register or memory sources.
+    """
+    same_field_re = re.compile(
+        r"^MEM32\((?P<register>eax|ebx|ecx|edx|esi|edi)\s*\+\s*"
+        r"(?:0x584|1408)\)$"
+    )
+    rows: list[dict[str, Any]] = []
+    for context in contexts:
+        writer = context.get("writer", {})
+        assigned_expression = str(
+            writer.get("assigned_value_expression", context.get("value_expression", ""))
+        ).strip()
+        assigned_kind = str(writer.get("assigned_value_kind", ""))
+        value_source = context.get("value_source") or {}
+        value_rhs = str(value_source.get("rhs", "")).strip()
+        value_source_kind = str(context.get("value_source_kind", "unresolved"))
+        base_register = str(context.get("base_register", ""))
+
+        candidate_expression = (
+            value_rhs
+            if value_source_kind == "constant" and value_rhs
+            else assigned_expression
+        )
+        literal_match = REGISTER_LITERAL_RE.fullmatch(candidate_expression)
+        known_function = False
+        literal_value: int | None = None
+        if literal_match is not None:
+            literal_value = int(literal_match.group("value"), 0)
+            known_function = literal_value in function_starts
+
+        same_field_match = same_field_re.fullmatch(value_rhs)
+        if literal_match is not None and known_function:
+            status = "constant-known-function-start"
+        elif literal_match is not None and literal_value == 0:
+            status = "constant-zero"
+        elif literal_match is not None:
+            status = "constant-not-known-function-start"
+        elif (
+            same_field_match is not None
+            and same_field_match.group("register") == base_register
+        ):
+            status = "same-field-readback"
+        elif assigned_kind == "constant":
+            status = "constant-expression-unresolved"
+        else:
+            status = "nonconstant-value-unresolved"
+
+        row = {
+            "writer": writer,
+            "status": status,
+            "assigned_value_expression": assigned_expression,
+            "assigned_value_kind": assigned_kind,
+            "value_source_expression": value_rhs or None,
+            "value_source_kind": value_source_kind,
+            "base_register": base_register,
+        }
+        if literal_value is not None:
+            row["literal_value"] = f"0x{literal_value:08X}"
+            row["known_function_start"] = known_function
+        rows.append(row)
+
+    status_counts = Counter(row["status"] for row in rows)
+    return {
+        "status": (
+            "verified-bounded-object-field-writer-value-classification"
+            if rows
+            else "no-object-field-writer-value-sites-observed"
+        ),
+        "semantics": "not-claimed",
+        "writer_sites": len(rows),
+        "status_counts": dict(status_counts),
+        "constant_sites": sum(
+            row["status"].startswith("constant-") for row in rows
+        ),
+        "constant_known_function_start_sites": status_counts[
+            "constant-known-function-start"
+        ],
+        "constant_non_function_sites": status_counts[
+            "constant-not-known-function-start"
+        ],
+        "same_field_readback_sites": status_counts["same-field-readback"],
+        "unresolved_value_sites": sum(
+            row["status"] in {
+                "nonconstant-value-unresolved",
+                "constant-expression-unresolved",
+            }
+            for row in rows
+        ),
+        "rows": rows,
+    }
+
+
 def recover_dynamic_object_field_writer_overlap_provenance(
     writers: list[dict[str, Any]],
     functions: list[dict[str, Any]],
@@ -5388,6 +5490,12 @@ def audit(
             all_dynamic_target_writers.get("dynamic-object-field-target", []),
         )
     )
+    dynamic_object_field_writer_value_classification = (
+        classify_dynamic_object_field_writer_values(
+            dynamic_object_field_writer_context,
+            {_address(function["start"]) for function in functions},
+        )
+    )
     dynamic_object_field_writer_overlap_provenance = (
         recover_dynamic_object_field_writer_overlap_provenance(
             all_dynamic_target_writers.get("dynamic-object-field-target", []),
@@ -6775,6 +6883,41 @@ def audit(
                 for row in dynamic_object_field_writer_context
             )
         ),
+        "dynamic_object_field_writer_value_classification_status": (
+            dynamic_object_field_writer_value_classification.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_object_field_writer_value_status_counts": (
+            dynamic_object_field_writer_value_classification.get(
+                "status_counts", {}
+            )
+        ),
+        "dynamic_object_field_writer_constant_sites": (
+            dynamic_object_field_writer_value_classification.get(
+                "constant_sites", 0
+            )
+        ),
+        "dynamic_object_field_writer_constant_known_function_start_sites": (
+            dynamic_object_field_writer_value_classification.get(
+                "constant_known_function_start_sites", 0
+            )
+        ),
+        "dynamic_object_field_writer_constant_non_function_sites": (
+            dynamic_object_field_writer_value_classification.get(
+                "constant_non_function_sites", 0
+            )
+        ),
+        "dynamic_object_field_writer_same_field_readback_sites": (
+            dynamic_object_field_writer_value_classification.get(
+                "same_field_readback_sites", 0
+            )
+        ),
+        "dynamic_object_field_writer_unresolved_value_sites": (
+            dynamic_object_field_writer_value_classification.get(
+                "unresolved_value_sites", 0
+            )
+        ),
         "runtime_fixed_slot_all_writer_counts": {
             slot: len(rows)
             for slot, rows in runtime_fixed_slot_writer_inventory.items()
@@ -7289,6 +7432,9 @@ def audit(
             dynamic_indexed_writer_root_link_provenance
         ),
         "dynamic_object_field_writer_context": dynamic_object_field_writer_context,
+        "dynamic_object_field_writer_value_classification": (
+            dynamic_object_field_writer_value_classification
+        ),
         "dynamic_object_field_writer_overlap_provenance": (
             dynamic_object_field_writer_overlap_provenance
         ),

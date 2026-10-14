@@ -32,6 +32,22 @@ permanece `NOT_READY` e a estimativa conservadora do PoC jogável continua em
 aproximadamente `31% concluído / 69% restante`. A análise permanece estática e
 não executa o XBE.
 
+## Estado verificável — release 2.36
+
+O release 2.36 classifica os valores observados nos `8` writers candidatos
+do campo de objeto `+0x584`, todos fora do subgrafo diretamente alcançável.
+A auditoria encontra `2` escritas constantes zero, `2` constantes que não
+coincidem com nenhum início de função gerada, `1` leitura de volta do próprio
+campo e `3` fontes não constantes ainda não resolvidas.
+
+Esse gate reduz a forma dos candidatos, mas não prova que qualquer writer
+alcance o mesmo objeto de `0x002512A4`, nem que as fontes não constantes sejam
+funções. Nenhuma constante foi promovida a callback; os `7` callbacks
+dinâmicos continuam sem destino runtime provado. A suíte Python passou em
+`116/116`, a prontidão permanece `NOT_READY` e a estimativa conservadora do
+PoC jogável continua em aproximadamente `31% concluído / 69% restante`. A
+análise permanece estática e não executa o XBE.
+
 ## Estado verificável — release 2.34
 
 O release 2.34 fecha um gate de fronteira dos produtores para os dois
