@@ -12,6 +12,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     audit,
     recover_dynamic_target_writes,
     recover_prcb_cache_writes,
+    recover_runtime_fixed_slot_initializers,
 )
 
 
@@ -302,10 +303,59 @@ void xbe_entry_point(void)
                 {0x1000},
                 [(0x11010, 0x11010)],
             )
+            all_writers = recover_dynamic_target_writes(
+                generated,
+                functions,
+                None,
+                [],
+            )
 
         self.assertEqual(len(writers["dynamic-memory-target"]), 1)
         self.assertEqual(len(writers["dynamic-object-field-target"]), 2)
         self.assertEqual(len(writers["dynamic-indexed-record-target"]), 1)
+        self.assertEqual(len(all_writers["dynamic-object-field-target"]), 2)
+        self.assertEqual(len(all_writers["dynamic-indexed-record-target"]), 1)
+
+    def test_can_inventory_fixed_slot_writers_outside_direct_path(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            },
+            {
+                "start": "0x1020",
+                "end": "0x1030",
+                "name": "sub_00001020",
+                "calls_to": [],
+            },
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    MEM32(0x00011180) = 0x00001020;
+}
+void sub_00001020(void)
+{
+    MEM32(0x00011180) = 0x00001020;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            all_writers = recover_runtime_fixed_slot_initializers(
+                generated, functions, None
+            )
+            direct_writers = recover_runtime_fixed_slot_initializers(
+                generated, functions, {0x1000}
+            )
+
+        self.assertEqual(len(all_writers[0x11180]), 2)
+        self.assertEqual(len(direct_writers[0x11180]), 1)
 
 
 if __name__ == "__main__":

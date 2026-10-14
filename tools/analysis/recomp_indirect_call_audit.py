@@ -321,13 +321,14 @@ def recover_indirect_sites(
 def recover_runtime_fixed_slot_initializers(
     generated_dir: Path,
     functions: list[dict[str, Any]],
-    directly_reachable: set[int],
+    directly_reachable: set[int] | None,
 ) -> dict[int, list[dict[str, Any]]]:
-    """Collect direct constant writes to BSS-style callback slots.
+    """Collect constant writes to BSS-style callback slots.
 
     A write is evidence of an initializer, not a claim that every possible
-    runtime path reaches it.  Callers decide whether the initialized value is
-    safe to classify alongside the corresponding indirect site.
+    runtime path reaches it.  ``directly_reachable=None`` inventories all
+    generated functions; callers decide whether the initialized value is safe
+    to classify alongside the corresponding indirect site.
     """
     address_by_name = {
         str(function.get("name", "")): _address(function["start"])
@@ -345,7 +346,10 @@ def recover_runtime_fixed_slot_initializers(
             symbol_match = FUNCTION_SYMBOL_RE.match(line)
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
-            if current is None or current not in directly_reachable:
+            if current is None or (
+                directly_reachable is not None
+                and current not in directly_reachable
+            ):
                 continue
             write_match = FIXED_SLOT_WRITE_RE.search(line)
             if write_match is None:
@@ -460,16 +464,17 @@ def recover_kernel_resolver_cases(source_path: Path) -> dict[int, str]:
 def recover_dynamic_target_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
-    directly_reachable: set[int],
+    directly_reachable: set[int] | None,
     memory_ranges: list[tuple[int, int]],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Inventory direct-path writes matching unresolved callback sources.
+    """Inventory writes matching unresolved callback sources.
 
     The result records shape-level writer evidence only.  It does not prove
     that a writer reaches the same object or record instance as a callback
     site.  Register-derived writes to the absolute dynamic-memory range are
     included only when the register has a tracked constant value in that
     range; generic ``+0x584`` and indexed-record shapes are kept separate.
+    Passing ``directly_reachable=None`` inventories all generated functions.
     """
     address_by_name = {
         str(function.get("name", "")): _address(function["start"])
@@ -514,7 +519,10 @@ def recover_dynamic_target_writes(
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
                 register_constants = {}
-            if current is None or current not in directly_reachable:
+            if current is None or (
+                directly_reachable is not None
+                and current not in directly_reachable
+            ):
                 continue
 
             object_match = DYNAMIC_OBJECT_FIELD_WRITE_RE.search(line)
@@ -729,6 +737,9 @@ def audit(
     runtime_initializers = recover_runtime_fixed_slot_initializers(
         generated_dir, functions, directly_reachable
     )
+    all_runtime_initializers = recover_runtime_fixed_slot_initializers(
+        generated_dir, functions, None
+    )
     prcb_cache_writes = recover_prcb_cache_writes(
         generated_dir, functions, directly_reachable
     )
@@ -750,6 +761,25 @@ def audit(
         directly_reachable,
         dynamic_memory_ranges,
     )
+    all_dynamic_target_writers = recover_dynamic_target_writes(
+        generated_dir,
+        functions,
+        None,
+        dynamic_memory_ranges,
+    )
+    dynamic_target_outside_direct_writers = {
+        family: [
+            row
+            for row in rows
+            if _address(row["function"]) not in directly_reachable
+        ]
+        for family, rows in all_dynamic_target_writers.items()
+    }
+    tracked_bss_slots = (0x00360A70, 0x00360AA8, 0x00360AB4)
+    runtime_fixed_slot_writer_inventory = {
+        f"0x{slot:08X}": all_runtime_initializers.get(slot, [])
+        for slot in tracked_bss_slots
+    }
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
@@ -771,6 +801,10 @@ def audit(
     dynamic_writer_counts = {
         family: len(rows)
         for family, rows in dynamic_target_writers.items()
+    }
+    dynamic_outside_writer_counts = {
+        family: len(rows)
+        for family, rows in dynamic_target_outside_direct_writers.items()
     }
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
     summary = {
@@ -802,6 +836,19 @@ def audit(
             if sum(dynamic_writer_counts.values())
             else "no-proven-direct-writer"
         ),
+        "dynamic_target_outside_direct_writer_sites": sum(
+            dynamic_outside_writer_counts.values()
+        ),
+        "dynamic_target_outside_direct_writer_counts": dynamic_outside_writer_counts,
+        "dynamic_target_outside_direct_writer_status": (
+            "candidate-shapes-outside-direct-subgraph"
+            if sum(dynamic_outside_writer_counts.values())
+            else "none-observed"
+        ),
+        "runtime_fixed_slot_all_writer_counts": {
+            slot: len(rows)
+            for slot, rows in runtime_fixed_slot_writer_inventory.items()
+        },
         "dynamic_register_or_object_targets": sum(
             classifications[name]
             for name in (
@@ -863,6 +910,8 @@ def audit(
         "summary": summary,
         "sites": classified,
         "prcb_cache_writes": prcb_cache_writes,
+        "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
+        "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
     }
 
 
