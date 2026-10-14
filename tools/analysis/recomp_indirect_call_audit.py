@@ -204,6 +204,7 @@ INDEXED_CALLBACK_TABLE_INIT_FUNCTION = 0x002772E2
 INDEXED_CALLBACK_TABLE_RECORD_STRIDE = 0x28
 INDEXED_CALLBACK_TABLE_INIT_BYTES = 0x500
 INDEXED_CALLBACK_TABLE_FLAGGED_BYTES = 0x78
+INDEXED_CALLBACK_ROOT_MANAGER_FUNCTION = 0x00277AB1
 INDEXED_CALLBACK_CONSUMER_FUNCTION = 0x0026E70A
 INDEXED_CALLBACK_CONSUMER_CALL_SITE = 0x0026E75E
 INDEXED_CALLBACK_CONSUMER_OBJECT_TABLE_OFFSET = 0x8
@@ -1245,6 +1246,121 @@ def recover_dynamic_indexed_callback_consumer_layout(
         "record_target_field_offset": f"0x{INDEXED_CALLBACK_CONSUMER_RECORD_TARGET_OFFSET:X}",
         "record_target_shape": "MEM32(ebx + esi * 4 + 8)",
         "table_root_link_status": "not-proven-from-consumer-body",
+    }
+
+
+def recover_indexed_callback_root_handoff_provenance(
+    generated_dir: Path,
+) -> dict[str, Any]:
+    """Compare the root-record path with the consumer's local frame object.
+
+    The bounded pattern in ``sub_00277AB1`` reads a record from the indexed
+    root and later calls ``sub_0026E70A`` with ``ebp - 0x10`` after the frame
+    helper.  This records both shapes and any direct frame write in between;
+    absence of that write does not exclude helper-mediated aliasing or runtime
+    object identity.
+    """
+    function_name = f"sub_{INDEXED_CALLBACK_ROOT_MANAGER_FUNCTION:08X}"
+    root_loads: list[dict[str, Any]] = []
+    record_addresses: list[dict[str, Any]] = []
+    record_field_accesses: list[dict[str, Any]] = []
+    frame_helper_calls: list[dict[str, Any]] = []
+    frame_assignments: list[dict[str, Any]] = []
+    consumer_calls: list[dict[str, Any]] = []
+    direct_frame_writes: list[dict[str, Any]] = []
+    source_file = ""
+
+    root_re = re.compile(r"MEM32\([^;]*\*\s*4\s*\+\s*0x361360\)")
+    record_re = re.compile(
+        r"^\s*esi\s*=\s*ecx\s*\+\s*eax\s*\*\s*8;"
+    )
+    record_field_re = re.compile(
+        r"MEM32\(esi\s*\+\s*(?:0x8|8|0xC|12)\)"
+    )
+    frame_re = re.compile(
+        r"^\s*(?P<register>eax|ebx|ecx|edx|esi|edi)\s*=\s*"
+        r"ebp\s*\+\s*(?:-0x10|-16);"
+    )
+    direct_frame_write_re = re.compile(
+        r"MEM32\(ebp\s*\+\s*(?:-0x10|-16)\)\s*="
+    )
+
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        in_target = False
+        for line_number, line in enumerate(lines, 1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match is not None:
+                in_target = symbol_match.group(1) == function_name
+                if in_target:
+                    source_file = source_path.name
+                continue
+            if not in_target:
+                continue
+            source = f"{source_path.name}:{line_number}"
+            stripped = line.strip()
+            if root_re.search(line) is not None:
+                root_loads.append({"source": source, "expression": stripped})
+            if record_re.match(line) is not None:
+                record_addresses.append({"source": source, "expression": stripped})
+            if record_field_re.search(line) is not None:
+                record_field_accesses.append(
+                    {"source": source, "expression": stripped}
+                )
+            if "0x002710F4u, sub_002710F4" in line:
+                frame_helper_calls.append(
+                    {"source": source, "expression": stripped}
+                )
+            frame_match = frame_re.match(line)
+            if frame_match is not None:
+                frame_assignments.append(
+                    {
+                        "source": source,
+                        "expression": stripped,
+                        "register": frame_match.group("register"),
+                    }
+                )
+            if "0x0026E70Au, sub_0026E70A" in line:
+                consumer_calls.append(
+                    {"source": source, "expression": stripped}
+                )
+            if direct_frame_write_re.search(line) is not None:
+                direct_frame_writes.append(
+                    {"source": source, "expression": stripped}
+                )
+
+    required = (
+        bool(root_loads)
+        and bool(record_addresses)
+        and bool(record_field_accesses)
+        and bool(frame_helper_calls)
+        and bool(frame_assignments)
+        and bool(consumer_calls)
+    )
+    if not source_file:
+        status = "root-manager-function-not-observed"
+    elif not required:
+        status = "incomplete-root-record-frame-handoff-shape"
+    elif direct_frame_writes:
+        status = "direct-frame-write-observed-in-root-manager"
+    else:
+        status = "verified-bounded-root-record-frame-separation"
+    return {
+        "status": status,
+        "function": f"0x{INDEXED_CALLBACK_ROOT_MANAGER_FUNCTION:08X}",
+        "function_name": function_name,
+        "source_file": source_file,
+        "table_root": f"0x{INDEXED_CALLBACK_TABLE_BASE:08X}",
+        "root_record_stride_bytes": INDEXED_CALLBACK_TABLE_RECORD_STRIDE,
+        "consumer_function": f"0x{INDEXED_CALLBACK_CONSUMER_FUNCTION:08X}",
+        "frame_local_offset": f"0x{abs(INDEXED_CALLBACK_FRAME_LOCAL_OFFSET):X}",
+        "root_loads": root_loads,
+        "record_address_shapes": record_addresses,
+        "record_field_accesses": record_field_accesses,
+        "frame_helper_calls": frame_helper_calls,
+        "frame_assignments": frame_assignments,
+        "consumer_calls": consumer_calls,
+        "direct_frame_writes": direct_frame_writes,
     }
 
 
@@ -4568,6 +4684,9 @@ def audit(
     indexed_callback_table_initialization = (
         recover_indexed_callback_table_initialization_layout(generated_dir)
     )
+    indexed_callback_root_handoff_provenance = (
+        recover_indexed_callback_root_handoff_provenance(generated_dir)
+    )
     xbe = load_xbe_layout(xbe_path)
     indirect_tail_switch_provenance = recover_indirect_tail_switch_provenance(
         generated_dir, functions, directly_reachable, xbe
@@ -5836,6 +5955,19 @@ def audit(
         "dynamic_indexed_callback_table_all_record_write_sites": len(
             all_indexed_callback_table_provenance["indexed_record_writes"]
         ),
+        "dynamic_indexed_callback_root_handoff_status": (
+            indexed_callback_root_handoff_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_callback_root_handoff_function": (
+            indexed_callback_root_handoff_provenance.get("function")
+        ),
+        "dynamic_indexed_callback_root_handoff_direct_frame_writes": len(
+            indexed_callback_root_handoff_provenance.get(
+                "direct_frame_writes", []
+            )
+        ),
         "dynamic_indexed_callback_table_initialization_status": (
             indexed_callback_table_initialization.get(
                 "status", "not-assessed"
@@ -6267,6 +6399,9 @@ def audit(
         ),
         "dynamic_indexed_callback_table_initialization": (
             indexed_callback_table_initialization
+        ),
+        "dynamic_indexed_callback_root_handoff_provenance": (
+            indexed_callback_root_handoff_provenance
         ),
         "dynamic_indexed_callback_consumer_layout": (
             dynamic_indexed_callback_consumer_layout

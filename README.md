@@ -20,6 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.26
+
+O release 2.26 aprofunda a relação entre a raiz indexada e o consumidor
+`sub_0026E70A`. No chamador diretamente alcançável `sub_00277AB1`, a fonte
+gerada lê `0x00361360`, calcula o endereço de um registro com stride de
+`0x28` (`40` bytes) e acessa o campo desse registro. Mais adiante, a chamada
+ao consumidor passa o objeto local `ebp - 0x10` depois do helper
+`sub_002710F4`; a varredura encontrou `0` escrita direta ligando esse frame ao
+registro da raiz (`verified-bounded-root-record-frame-separation`).
+
+Isso é evidência de duas formas locais coexistindo no mesmo fluxo, não uma
+prova de que os objetos não possam compartilhar memória por meio do helper,
+de alias indireto ou de estado do runtime. A raiz ainda tem `0` writer direto
+no subgrafo e `1` writer observado no C completo; o consumidor continua com
+layout próprio de registro de `0xC` bytes e o callback permanece dinâmico. Os
+sete callbacks seguem sem destino final provado.
+
+A suíte Python passou `107/107`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.25
 
 O release 2.25 amplia a auditoria do cache PRCB para distinguir o subgrafo

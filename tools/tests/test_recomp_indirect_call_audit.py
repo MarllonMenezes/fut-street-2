@@ -18,6 +18,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
     recover_dynamic_indexed_writer_root_link_provenance,
+    recover_indexed_callback_root_handoff_provenance,
     recover_fixed_callback_consumer_provenance,
     recover_fixed_slot_writes,
     recover_indirect_call_nonzero_guards,
@@ -1230,6 +1231,39 @@ void xbe_entry_point(void)
         self.assertEqual(len(evidence["container_field_loads"]), 1)
         self.assertEqual(len(evidence["index_field_loads"]), 1)
         self.assertEqual(len(evidence["target_reads"]), 1)
+
+    def test_recovers_indexed_root_record_and_frame_handoff_separation(self) -> None:
+        source = (
+            "void sub_00277AB1(void)\n"
+            "{\n"
+            "    ecx = MEM32(ecx * 4 + 0x361360);\n"
+            "    eax = eax + eax * 4;\n"
+            "    esi = ecx + eax * 8;\n"
+            "    ebx = MEM32(esi + 8);\n"
+            "    RECOMP_ABI_CALL(0x002710F4u, sub_002710F4);\n"
+            "    eax = ebp + -16;\n"
+            "    PUSH32(esp, eax);\n"
+            "    RECOMP_ABI_CALL(0x0026E70Au, sub_0026E70A);\n"
+            "}\n"
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(source, encoding="utf-8")
+            evidence = recover_indexed_callback_root_handoff_provenance(
+                generated
+            )
+
+        self.assertEqual(
+            evidence["status"],
+            "verified-bounded-root-record-frame-separation",
+        )
+        self.assertEqual(evidence["root_record_stride_bytes"], 0x28)
+        self.assertEqual(len(evidence["root_loads"]), 1)
+        self.assertEqual(len(evidence["record_address_shapes"]), 1)
+        self.assertEqual(len(evidence["frame_helper_calls"]), 1)
+        self.assertEqual(len(evidence["consumer_calls"]), 1)
+        self.assertEqual(evidence["direct_frame_writes"], [])
 
     def test_recovers_indexed_callback_frame_without_root_alias(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
