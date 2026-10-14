@@ -17,6 +17,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
+    recover_dynamic_indexed_writer_root_link_provenance,
     recover_fixed_callback_consumer_provenance,
     recover_fixed_slot_writes,
     recover_indirect_call_nonzero_guards,
@@ -744,6 +745,51 @@ void sub_00001000(void)
         self.assertEqual(evidence[0]["base_source"]["rhs"], "MEM32(ebp + -28)")
         self.assertEqual(evidence[0]["value_source"]["rhs"], "MEM32(ebp + -84)")
         self.assertEqual(evidence[0]["value_source_kind"], "memory-read")
+
+    def test_recovers_bounded_indexed_writer_root_link_provenance(self) -> None:
+        generated_source = """
+void sub_00001000(void)
+{
+    MEM32(eax + ebx * 4 + 8) = ecx;
+}
+void sub_00002000(void)
+{
+    ecx = MEM32(ecx * 4 + 0x361360);
+    MEM32(eax + ebx * 4 + 8) = ecx;
+}
+"""
+        writers = [
+            {
+                "function": "0x00001000",
+                "source": "recomp_0000.c:4",
+            },
+            {
+                "function": "0x00002000",
+                "source": "recomp_0000.c:9",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            evidence = recover_dynamic_indexed_writer_root_link_provenance(
+                generated, writers
+            )
+
+        self.assertEqual(
+            evidence["status"],
+            "root-reference-shape-observed-in-writer-function-bodies",
+        )
+        self.assertEqual(evidence["writer_sites"], 2)
+        self.assertEqual(evidence["writer_functions"], 2)
+        self.assertEqual(evidence["writer_sites_with_root_reference"], 1)
+        self.assertEqual(evidence["writer_functions_with_root_reference"], 1)
+        self.assertEqual(
+            evidence["functions"][1]["root_references"][0]["source"],
+            "recomp_0000.c:8",
+        )
 
     def test_resolves_proven_bss_slot_initializer(self) -> None:
         functions = [

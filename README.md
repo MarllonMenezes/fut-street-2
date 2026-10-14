@@ -20,6 +20,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.24
+
+O release 2.24 faz uma checagem limitada de ligação dos writers candidatos
+ao alvo indexado. Os `47` sites distribuídos em `28` funções foram agrupados
+por corpo de função e cada corpo foi varrido pela literal da raiz
+`0x00361360`. Nenhum dos `47` sites nem das `28` funções contém uma
+referência direta observada a essa literal:
+`verified-bounded-no-root-reference-in-writer-function-bodies`.
+
+Esse é um resultado negativo delimitado: ele informa somente que a expressão
+da raiz não apareceu no corpo local do writer. Não exclui uma base recebida
+por argumento, propagação por registradores, chamadas indiretas, alias
+transitivo ou uma ligação que só possa ser demonstrada em runtime. O
+inicializador da raiz descrito no release 2.23 continua sendo uma instância
+separada, sem alias estático provado para esses writers; os sete callbacks
+dinâmicos seguem sem destino final provado.
+
+A suíte Python passou `106/106`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.23
 
 O release 2.23 audita a inicialização estática da raiz indexada

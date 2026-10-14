@@ -2642,6 +2642,115 @@ def recover_dynamic_target_writes(
     return writers
 
 
+def recover_dynamic_indexed_writer_root_link_provenance(
+    generated_dir: Path,
+    writers: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Search indexed writer bodies for a direct ``0x00361360`` reference.
+
+    This is a deliberately bounded negative/positive check.  It groups the
+    existing ``base + index * 4 + 8`` writer shapes by generated function and
+    records literal references to the indexed BSS root in the same function
+    body.  Absence means only that this local body scan found no direct root
+    expression; argument propagation, indirect calls, and runtime aliasing
+    remain outside the check.
+    """
+    indexed_writers = [
+        writer
+        for writer in writers
+        if writer.get("source") and writer.get("function")
+    ]
+    if not indexed_writers:
+        return {
+            "status": "no-indexed-writer-sites-observed",
+            "writer_sites": 0,
+            "writer_functions": 0,
+            "writer_sites_with_root_reference": 0,
+            "writer_functions_with_root_reference": 0,
+            "functions": [],
+        }
+
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    function_rows: dict[tuple[int, str], dict[str, Any]] = {}
+    unresolved_sites = 0
+    for writer in indexed_writers:
+        source_text, separator, line_text = str(writer["source"]).rpartition(":")
+        source_path = source_paths.get(source_text)
+        if not separator or not line_text.isdigit() or source_path is None:
+            unresolved_sites += 1
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        writer_index = int(line_text) - 1
+        if not 0 <= writer_index < len(lines):
+            unresolved_sites += 1
+            continue
+        function_start = 0
+        current_name = ""
+        for index in range(writer_index, -1, -1):
+            symbol_match = FUNCTION_SYMBOL_RE.match(lines[index])
+            if symbol_match is not None:
+                function_start = index
+                current_name = symbol_match.group(1)
+                break
+        function_end = len(lines)
+        for index in range(function_start + 1, len(lines)):
+            if FUNCTION_SYMBOL_RE.match(lines[index]) is not None:
+                function_end = index
+                break
+        root_references = [
+            {
+                "source": f"{source_text}:{index + 1}",
+                "expression": lines[index].strip(),
+            }
+            for index in range(function_start, function_end)
+            if re.search(r"0x(?:00361360|361360)\b", lines[index]) is not None
+        ]
+        key = (_address(writer["function"]), current_name)
+        row = function_rows.setdefault(
+            key,
+            {
+                "function": f"0x{key[0]:08X}",
+                "function_name": current_name,
+                "source_file": source_text,
+                "writer_sites": 0,
+                "root_references": root_references,
+            },
+        )
+        row["writer_sites"] += 1
+        if root_references and not row["root_references"]:
+            row["root_references"] = root_references
+
+    rows = sorted(
+        function_rows.values(),
+        key=lambda row: (_address(row["function"]), row["function_name"]),
+    )
+    writer_sites_with_root_reference = sum(
+        row["writer_sites"] for row in rows if row["root_references"]
+    )
+    writer_functions_with_root_reference = sum(
+        bool(row["root_references"]) for row in rows
+    )
+    return {
+        "status": (
+            "incomplete-indexed-writer-root-link-provenance"
+            if unresolved_sites
+            else (
+                "root-reference-shape-observed-in-writer-function-bodies"
+                if writer_functions_with_root_reference
+                else "verified-bounded-no-root-reference-in-writer-function-bodies"
+            )
+        ),
+        "writer_sites": len(indexed_writers),
+        "writer_functions": len(rows),
+        "writer_sites_with_root_reference": writer_sites_with_root_reference,
+        "writer_functions_with_root_reference": writer_functions_with_root_reference,
+        "unresolved_sites": unresolved_sites,
+        "functions": rows,
+    }
+
+
 def recover_dynamic_object_field_writer_context(
     generated_dir: Path,
     writers: list[dict[str, Any]],
@@ -4411,6 +4520,12 @@ def audit(
         None,
         dynamic_memory_ranges,
     )
+    dynamic_indexed_writer_root_link_provenance = (
+        recover_dynamic_indexed_writer_root_link_provenance(
+            generated_dir,
+            all_dynamic_target_writers.get("dynamic-indexed-record-target", []),
+        )
+    )
     dynamic_object_field_writer_context = (
         recover_dynamic_object_field_writer_context(
             generated_dir,
@@ -5640,6 +5755,29 @@ def audit(
             if sum(dynamic_outside_writer_counts.values())
             else "none-observed"
         ),
+        "dynamic_indexed_writer_root_link_status": (
+            dynamic_indexed_writer_root_link_provenance.get(
+                "status", "not-assessed"
+            )
+        ),
+        "dynamic_indexed_writer_root_link_sites": (
+            dynamic_indexed_writer_root_link_provenance.get("writer_sites", 0)
+        ),
+        "dynamic_indexed_writer_root_link_functions": (
+            dynamic_indexed_writer_root_link_provenance.get(
+                "writer_functions", 0
+            )
+        ),
+        "dynamic_indexed_writer_root_link_sites_with_root_reference": (
+            dynamic_indexed_writer_root_link_provenance.get(
+                "writer_sites_with_root_reference", 0
+            )
+        ),
+        "dynamic_indexed_writer_root_link_functions_with_root_reference": (
+            dynamic_indexed_writer_root_link_provenance.get(
+                "writer_functions_with_root_reference", 0
+            )
+        ),
         "dynamic_object_field_writer_context_sites": len(
             dynamic_object_field_writer_context
         ),
@@ -6069,6 +6207,9 @@ def audit(
         "sites": classified,
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
+        "dynamic_indexed_writer_root_link_provenance": (
+            dynamic_indexed_writer_root_link_provenance
+        ),
         "dynamic_object_field_writer_context": dynamic_object_field_writer_context,
         "dynamic_source_provenance": dynamic_source_provenance,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
