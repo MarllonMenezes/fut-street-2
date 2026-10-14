@@ -6,6 +6,8 @@
 
 typedef struct {
     uint32_t control0, border_color, color_key, bump_env[6], texgen[4];
+    uint32_t offset, format, address, control1, filter, image_rect, palette;
+    unsigned valid; /* One bit per 4-byte method slot within each 64-byte stage. */
 } FutGraphicsTextureState;
 typedef struct {
     FutGraphicsDrawState draw;

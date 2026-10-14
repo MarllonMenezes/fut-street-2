@@ -14,6 +14,7 @@
 #include "graphics_native_constants.h"
 #include "graphics_native_vertex.h"
 #include "graphics_native_surfaces.h"
+#include "graphics_native_textures.h"
 #include "graphics_native_pipeline.h"
 #include "graphics_software_state.h"
 
@@ -69,6 +70,7 @@ typedef struct {
     FutGraphicsKelvinState kelvin;
     FutGraphicsSurfaceState surfaces;
     FutNativeSurfaces native_surfaces;
+    FutNativeTexture textures[4];
     FutNativePipeline pipeline;
     FutGraphicsSoftwareState software;
     uint32_t semaphore_offset;
@@ -154,6 +156,56 @@ static int native_prepare_vertex(NativeGraphicsState *state)
     return 1;
 }
 
+static int native_prepare_textures(NativeGraphicsState *state)
+{
+    /* Texture uploads read authoritative guest data, including any earlier
+     * GPU render target used as input. Never sample an obsolete CPU snapshot. */
+    if (!native_writeback_surfaces(state)) return 0;
+    for (unsigned stage=0;stage<4;++stage) {
+        const FutGraphicsTextureState *texture=&state->kelvin.textures[stage];
+        if (!(texture->control0 & 0x40000000u)) {
+            state->textures[stage].sampling_ready=0;
+            ID3D11ShaderResourceView *empty_view=NULL;
+            ID3D11SamplerState *empty_sampler=NULL;
+            ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&empty_view);
+            ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&empty_sampler);
+            continue;
+        }
+        unsigned select=texture->format & 3;
+        FutGraphicsDmaView dma;
+        if ((select != 1 && select != 2) ||
+            !(state->bindings.reference_masks[0] & (1u<<select)) ||
+            (!fut_graphics_dma_surface_view(&state->bindings.references[0][select],&dma) &&
+             !fut_graphics_dma_view(&state->bindings.references[0][select],&dma))) {
+            fprintf(stderr,"[GRAPHICS] texture DMA context missing/unsupported: stage=%u context=%u\n",stage,select);
+            return 0;
+        }
+        FutGraphicsTexturePlan plan;
+        FutGraphicsTextureStatus status=fut_graphics_texture_plan(texture,&dma,&plan);
+        if (status != FUT_TEXTURE_READY) {
+            fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X pitch=%08X\n",
+                stage,status,texture->format,texture->control1);
+            return 0;
+        }
+        HRESULT hr=fut_native_texture_upload(&state->textures[stage],state->device,&plan,object_memory_read,NULL);
+        if (FAILED(hr)) {
+            fprintf(stderr,"[GRAPHICS] texture upload failed: stage=%u HRESULT=%08lX\n",stage,hr);
+            return 0;
+        }
+        fprintf(stderr,"[GRAPHICS] native texture uploaded: stage=%u size=%ux%u pitch=%u source=%08X; no sample/draw\n",
+            stage,plan.width,plan.height,plan.pitch,plan.address);
+        hr=fut_native_texture_sampler(&state->textures[stage],state->device,texture);
+        if (FAILED(hr)) {
+            fprintf(stderr,"[GRAPHICS] texture sampling translation pending: stage=%u filter=%08X address=%08X control=%08X HRESULT=%08lX\n",
+                stage,texture->filter,texture->address,texture->control0,hr);
+            return 0;
+        }
+        ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&state->textures[stage].view);
+        ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&state->textures[stage].sampler);
+    }
+    return 1;
+}
+
 static int native_finish(NativeGraphicsState *state)
 {
     /* WAIT_IDLE/semaphore concerns submitted work, not setters for the next
@@ -227,6 +279,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             /* Materialize descriptions only at use. This does not permit a
              * draw: the independent raster/shader/geometry gates still apply. */
             if (!native_prepare_surfaces(state)) return 0;
+            if (!native_prepare_textures(state)) return 0;
             if (!fut_graphics_software_draw_ready(&state->software)) {
                 fprintf(stderr, "[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
                 return 0;
@@ -367,6 +420,7 @@ static DWORD WINAPI native_worker(void *unused)
     }
     fut_native_constants_destroy(&state.native_constants);
     fut_native_surfaces_destroy(&state.native_surfaces);
+    for (unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_pipeline_destroy(&state.pipeline);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);

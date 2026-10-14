@@ -70,6 +70,10 @@
 !/native_recomp/graphics_surfaces.h
 !/native_recomp/graphics_native_surfaces.c
 !/native_recomp/graphics_native_surfaces.h
+!/native_recomp/graphics_textures.c
+!/native_recomp/graphics_textures.h
+!/native_recomp/graphics_native_textures.c
+!/native_recomp/graphics_native_textures.h
 !/native_recomp/graphics_draw_state.c
 !/native_recomp/graphics_draw_state.h
 !/native_recomp/graphics_native_pipeline.c

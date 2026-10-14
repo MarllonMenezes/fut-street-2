@@ -14,42 +14,46 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.69
+## Estado verificável — release 2.70
 
-A terceira submissão gráfica passou do offset `12` ao `304`. O backend
-validava o novo pitch com o formato anterior durante uma troca de configuração.
-Agora os setters apenas retêm a descrição; a validação e a preparação dos
-recursos ocorrem no uso por clear/draw. `WAIT_IDLE` e semáforos aguardam o
-trabalho já submetido, sem materializar uma descrição intermediária.
+A descrição de textura que bloqueava a terceira submissão agora é retida,
+com os campos originais e bits de presença separados nos quatro estágios:
+offset, formato, endereço, controle/pitch, filtro, dimensões e palette.
+Esses setters não fazem upload antecipado nem executam uma amostragem.
 
-As superfícies nativas têm controle explícito de dados alterados pela GPU.
-Antes da substituição, o writeback usa o plano atualmente alocado, aguarda a
-GPU, copia os pixels para a memória guest e preserva o padding. Uma falha deixa
-as superfícies não gravadas pendentes e impede sua substituição. O upload
-também é renovado quando a descrição não muda, para respeitar escritas da CPU
-na memória guest. A troca só publica os novos recursos após criação bem-sucedida.
+`graphics_textures.c` valida a forma observada: textura linear 2D A8R8G8B8,
+um mip, seleção exata do contexto DMA A/B e limites de memória/pitch.
+`graphics_native_textures.c` importa os pixels para textura/SRV D3D11 e
+renova o upload após escritas da CPU. No uso por draw, o backend primeiro
+grava na memória guest qualquer superfície alterada pela GPU usada como fonte.
+Falha de leitura/criação preserva o recurso existente.
 
-Build Release e CTest passaram `17/17`. Os testes WARP verificam o receiver
-real do backend com memória sintética: setters e waits intermediários,
-writeback do plano anterior, troca de pitch/formato/endereço e rejeição de
-uma descrição inválida no uso. Também verificam refresh após escrita da CPU,
-readback de cor/depth/stencil, preservação de padding, cancelamento, falha
-parcial de writeback e retorno à superfície anterior. **Isso não comprova
-um draw original nem uma troca de superfícies concluída pelo jogo.**
+A amostragem nativa implementada cobre filtros MIN/MAG iguais point ou linear,
+nível zero e coordenadas projetadas em espaço de texels, com wrap, mirror,
+clamp-to-edge e border. **O filtro original `0x04072000` continua pendente**:
+ele exige convolução quincunx, não linear comum. Não foi substituído por outro
+filtro; a [referência consultada](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/glsl/psh.c)
+também marca quincunx como incompleto. Signed channels, alpha kill, color key,
+filtros mistos e formas de armazenamento ainda não traduzidas são recusados
+no uso, sem liberar um draw dependente.
 
-A execução nativa limitada a cinco segundos terminou por diagnóstico antes
-do timeout. Os dois clears originais continuam com readback exato e writeback,
-e as duas primeiras submissões continuam concluídas, com marcador `7` em
-`0x82801000`. A terceira, de `1.948` bytes, agora para no método `0x1B00`,
-valor `0x02C04000`: descrição de textura ainda sem handler nativo, conforme
-o [mapa de métodos NV097](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/nv2a_regs.h).
-A conclusão dessa submissão não foi publicada. ISO intacta; novas saídas no D:.
+Build Release e CTest passaram `18/18`. Os testes WARP conferem todos os
+pixels importados, preservação de padding, refresh de memória, limites e
+falhas sem descarte. Amostras point/linear, projeção e endereçamento são
+comparados com cálculo independente; o receiver real verifica os contextos
+DMA A/B com bases distintas e writeback GPU → guest → textura.
+**Esses testes usam dados/shader sintéticos, não o fragment program do jogo.**
 
-Próximo alvo: descrição e tradução de textura/fragment program necessárias
-ao primeiro draw original. SAMPLEALPHA/RDI, geometria e demais estados
-dependentes continuam com validação própria; não foram liberados por esta
-correção. Clears parciais, depth fora dos endpoints suportados, draws,
-apresentação de frame, gameplay e áudio ainda não estão aprovados.
+A execução recompilada, limitada a cinco segundos, passou do offset `304`
+ao `588` da terceira submissão. O bloqueio atual é `0x0318`, valor zero,
+controle de parâmetros de pontos sem handler. Os dois clears originais e
+as duas primeiras submissões continuam concluídos, com marcador `7`.
+A terceira submissão não foi concluída, não chegou ao primeiro draw e ainda
+não exercitou o upload de textura no jogo. ISO intacta; novas saídas no D:.
+
+Próximo alvo: controles e tradução do fragment program exigidos pelo primeiro
+draw, incluindo a convolução observada. SAMPLEALPHA/RDI, geometria, demais
+shaders, apresentação de frame, gameplay e áudio continuam pendentes.
 `NOT_READY` permanece.
 
 ## Abordagem

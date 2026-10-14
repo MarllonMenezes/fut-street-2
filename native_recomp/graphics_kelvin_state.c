@@ -29,10 +29,18 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
     }
     if (method >= 0x1B00 && method < 0x1C00) {
         unsigned stage = (method - 0x1B00) / 64, local = method & 63;
-        if (local == 0xC) state->textures[stage].control0 = value;
+        if (local == 0) state->textures[stage].offset = value;
+        else if (local == 4) state->textures[stage].format = value;
+        else if (local == 8) state->textures[stage].address = value;
+        else if (local == 0xC) state->textures[stage].control0 = value;
+        else if (local == 0x10) state->textures[stage].control1 = value;
+        else if (local == 0x14) state->textures[stage].filter = value;
+        else if (local == 0x1C) state->textures[stage].image_rect = value;
+        else if (local == 0x20) state->textures[stage].palette = value;
         else if (local == 0x24) state->textures[stage].border_color = value;
         else if (local >= 0x28 && local <= 0x3C) state->textures[stage].bump_env[(local - 0x28) / 4] = value;
         else return FUT_KELVIN_NOT_HANDLED;
+        state->textures[stage].valid |= 1u << (local / 4);
         return FUT_KELVIN_APPLIED;
     }
     unsigned row = 0, component = 0;

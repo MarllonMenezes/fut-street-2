@@ -104,6 +104,19 @@ int main(void)
     if (fut_graphics_kelvin_state(&state,0x3C0,1)!=FUT_KELVIN_REJECTED ||
         fut_graphics_kelvin_state(&state,0x3C8,0x2402)!=FUT_KELVIN_REJECTED ||
         fut_graphics_kelvin_state(&state,0x3CC,0x8511)!=FUT_KELVIN_REJECTED || memcmp(&before,&state,sizeof(state))) return 33;
+    for(unsigned stage=0;stage<4;++stage) {
+        const uint32_t offsets[]={0,4,8,0x10,0x14,0x1C,0x20};
+        for(unsigned i=0;i<7;++i)
+            if(fut_graphics_kelvin_state(&state,0x1B00+stage*64+offsets[i],0x80000000+stage*16+i)!=FUT_KELVIN_APPLIED) return 34;
+        const FutGraphicsTextureState *t=&state.textures[stage];
+        if(t->offset!=0x80000000+stage*16 || t->format!=0x80000001+stage*16 ||
+            t->address!=0x80000002+stage*16 || t->control1!=0x80000003+stage*16 ||
+            t->filter!=0x80000004+stage*16 || t->image_rect!=0x80000005+stage*16 ||
+            t->palette!=0x80000006+stage*16 || (t->valid & 0x1B7)!=0x1B7) return 35;
+    }
+    before=state;
+    if(fut_graphics_kelvin_state(&state,0x1B18,0)!=FUT_KELVIN_NOT_HANDLED ||
+        fut_graphics_kelvin_state(&state,0x1B01,0)!=FUT_KELVIN_REJECTED || memcmp(&before,&state,sizeof(state))) return 36;
     puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
     return 0;
 }
