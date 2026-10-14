@@ -863,8 +863,10 @@ void xbe_entry_point(void)
                 generated_source, encoding="utf-8"
             )
             writes = recover_prcb_cache_writes(generated, functions, {0x1000})
+            all_writes = recover_prcb_cache_writes(generated, functions, None)
 
         self.assertEqual(len(writes), 2)
+        self.assertEqual(len(all_writes), 2)
         self.assertEqual(writes[0]["register"], "esi")
         self.assertEqual(writes[0]["field"], "FS:[0x20] + 0x250")
         self.assertEqual(writes[1]["register"], "edx")

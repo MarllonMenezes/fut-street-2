@@ -1396,15 +1396,17 @@ def recover_indirect_call_nonzero_guards(
 def recover_prcb_cache_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
-    directly_reachable: set[int],
+    directly_reachable: set[int] | None,
 ) -> list[dict[str, Any]]:
-    """Find direct-path writes to the PRCB cache after its FS-based load.
+    """Find PRCB-cache writes after an FS-based load.
 
     The ``+0x250`` offset is reused by unrelated structures, so a matching
     write is counted only while a register is proven to contain
     ``MEM32(XBOX_FS_BASE + 0x20)`` (or a direct register copy of that value).
-    A zero result means that no writer was proven in the generated functions;
-    it does not claim that the Xbox kernel cannot populate the cache.
+    When ``directly_reachable`` is provided, the result is limited to that
+    subgraph; ``None`` scans every named generated function. A zero result
+    means that no writer was proven in the selected generated functions; it
+    does not claim that the Xbox kernel cannot populate the cache.
     """
     address_by_name = {
         str(function.get("name", "")): _address(function["start"])
@@ -1426,7 +1428,10 @@ def recover_prcb_cache_writes(
                 current = address_by_name.get(symbol_match.group(1))
                 prcb_base_registers = set()
                 prcb_cache_address_aliases = {}
-            if current is None or current not in directly_reachable:
+            if current is None or (
+                directly_reachable is not None
+                and current not in directly_reachable
+            ):
                 continue
 
             write_match = PRCB_CACHE_WRITE_RE.search(line)
@@ -4481,6 +4486,9 @@ def audit(
     prcb_cache_writes = recover_prcb_cache_writes(
         generated_dir, functions, directly_reachable
     )
+    all_prcb_cache_writes = recover_prcb_cache_writes(
+        generated_dir, functions, None
+    )
     kernel_resolver_cases = (
         None
         if kernel_source is None
@@ -6174,6 +6182,15 @@ def audit(
             if prcb_cache_writes
             else "no-proven-direct-writer"
         ),
+        "prcb_cache_all_writer_sites": len(all_prcb_cache_writes),
+        "prcb_cache_all_writer_status": (
+            "writer-observed-in-generated-functions"
+            if all_prcb_cache_writes
+            else "no-proven-writer-in-generated-functions"
+        ),
+        "prcb_cache_outside_direct_writer_sites": max(
+            0, len(all_prcb_cache_writes) - len(prcb_cache_writes)
+        ),
         "unresolved_dynamic_sites": classifications[
             "dynamic-register-or-object-target"
         ]
@@ -6206,6 +6223,7 @@ def audit(
         "summary": summary,
         "sites": classified,
         "prcb_cache_writes": prcb_cache_writes,
+        "prcb_cache_all_writes": all_prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_indexed_writer_root_link_provenance": (
             dynamic_indexed_writer_root_link_provenance

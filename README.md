@@ -20,6 +20,27 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
+## Estado verificável — release 2.25
+
+O release 2.25 amplia a auditoria do cache PRCB para distinguir o subgrafo
+diretamente alcançável do conjunto completo de funções nomeadas no C gerado.
+O detector procura a forma local `FS:[0x20] -> +0x250` seguida de escrita,
+incluindo aliases lineares do endereço. O resultado foi `0` writers provados
+nas `78` funções diretamente alcançáveis e também `0` writers em todas as
+funções geradas (`prcb_cache_all_writer_sites=0`); portanto não surgiu nenhum
+writer adicional fora do subgrafo (`prcb_cache_outside_direct_writer_sites=0`).
+
+Isso fortalece somente a evidência estática sobre o C gerado: não prova que o
+kernel Xbox não preencha o cache em runtime, nem resolve os quatro callbacks
+protegidos por esse cache. O layout host continua sendo uma inicialização
+quiescente do preflight, não uma implementação do kernel, e os sete callbacks
+dinâmicos seguem sem destino final provado.
+
+A suíte Python passou `106/106`, a prontidão continua `NOT_READY` e a
+estimativa conservadora do PoC jogável permanece em aproximadamente
+`31% concluído / 69% restante`. A análise continua estática e não executa o
+XBE.
+
 ## Estado verificável — release 2.24
 
 O release 2.24 faz uma checagem limitada de ligação dos writers candidatos
