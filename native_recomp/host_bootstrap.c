@@ -12,6 +12,8 @@
 #define FUT_BSS_CALLBACK_SLOT_0 0x00360A70u
 #define FUT_BSS_CALLBACK_SLOT_1 0x00360AA8u
 #define FUT_BSS_CALLBACK_SLOT_2 0x00360AB4u
+#define FUT_MEMORY_CALLBACK_SLOT_0 0x0030BC94u
+#define FUT_MEMORY_CALLBACK_SLOT_1 0x0030BC98u
 
 /* These host-runtime declarations match the pinned XboxRecomp kernel.h ABI. */
 void xbox_kernel_init(void);
@@ -80,26 +82,35 @@ static int validate_preflight_dynamic_guards(void)
     uint32_t callback_slot_0;
     uint32_t callback_slot_1;
     uint32_t callback_slot_2;
+    uint32_t memory_callback_slot_0;
+    uint32_t memory_callback_slot_1;
 
     if (!preflight_read32(XBOX_FS_BASE + 0x20u, &prcb_va) ||
         !preflight_read32(prcb_va + FUT_PRCB_CACHE_OFFSET, &prcb_cache) ||
         !preflight_read32(FUT_BSS_CALLBACK_SLOT_0, &callback_slot_0) ||
         !preflight_read32(FUT_BSS_CALLBACK_SLOT_1, &callback_slot_1) ||
-        !preflight_read32(FUT_BSS_CALLBACK_SLOT_2, &callback_slot_2)) {
+        !preflight_read32(FUT_BSS_CALLBACK_SLOT_2, &callback_slot_2) ||
+        !preflight_read32(FUT_MEMORY_CALLBACK_SLOT_0, &memory_callback_slot_0) ||
+        !preflight_read32(FUT_MEMORY_CALLBACK_SLOT_1, &memory_callback_slot_1)) {
         fprintf(stderr, "Cannot inspect indirect-call guard memory.\n");
         return 0;
     }
     if (prcb_cache != 0 || callback_slot_0 != 0 || callback_slot_1 != 0 ||
-        callback_slot_2 != 0) {
+        callback_slot_2 != 0 || memory_callback_slot_0 != 0 ||
+        memory_callback_slot_1 != 0) {
         fprintf(stderr,
                 "Unexpected dynamic-call guard state: PRCB cache=0x%08X, "
+                "memory callbacks=[0x%08X,0x%08X], "
                 "BSS callbacks=[0x%08X,0x%08X,0x%08X].\n",
-                prcb_cache, callback_slot_0, callback_slot_1, callback_slot_2);
+                prcb_cache, memory_callback_slot_0, memory_callback_slot_1,
+                callback_slot_0, callback_slot_1, callback_slot_2);
         return 0;
     }
-    printf("Dynamic-call guards OK: PRCB cache=0 and BSS callback slots="
+    printf("Dynamic-call guards OK: PRCB cache=0, memory callback slots="
+           "0x%08X/0x%08X and BSS callback slots="
            "0x%08X/0x%08X/0x%08X; no guest code executed.\n",
-           callback_slot_0, callback_slot_1, callback_slot_2);
+           memory_callback_slot_0, memory_callback_slot_1, callback_slot_0,
+           callback_slot_1, callback_slot_2);
     return 1;
 }
 
