@@ -60,6 +60,10 @@
 !/native_recomp/graphics_objects.h
 !/native_recomp/graphics_kelvin_state.c
 !/native_recomp/graphics_kelvin_state.h
+!/native_recomp/graphics_immediate.c
+!/native_recomp/graphics_immediate.h
+!/native_recomp/graphics_native_immediate.c
+!/native_recomp/graphics_native_immediate.h
 !/native_recomp/graphics_fragment_program.c
 !/native_recomp/graphics_fragment_program.h
 !/native_recomp/graphics_native_fragment.c

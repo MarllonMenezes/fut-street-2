@@ -56,12 +56,14 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         if (!slot) return FUT_KELVIN_REJECTED; /* Would emit an inline vertex. */
         for (unsigned i = 0; i < 4; ++i)
             state->attributes[slot][i] = (float)((value >> (i * 8)) & 255u) / 255.0f;
+        state->attribute_valid[slot]=15;
         return FUT_KELVIN_APPLIED;
     }
     if (method >= 0x1A00u && method < 0x1B00u) {
         unsigned slot = (method - 0x1A00u) / 4;
         if (slot < 4) return FUT_KELVIN_REJECTED;
         memcpy(&state->attributes[slot / 4][slot % 4], &value, sizeof(value));
+        state->attribute_valid[slot/4]|=1u<<(slot%4);
         return FUT_KELVIN_APPLIED;
     }
     if (method >= 0xB00u && method < 0xB80u) {

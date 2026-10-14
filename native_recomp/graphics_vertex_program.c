@@ -60,7 +60,7 @@ int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
         "float fog:FOG;float pts:PSIZE;float4 back0:TEXCOORD4;float4 back1:TEXCOORD5;"
         "float4 t0:TEXCOORD0;float4 t1:TEXCOORD1;float4 t2:TEXCOORD2;float4 t3:TEXCOORD3;};\n"
         "Out main(In input){float4 r[12];float4 o[16];"
-        "for(int z=0;z<12;++z)r[z]=0;for(int k=0;k<16;++k)o[k]=0;o[0].w=1;\n");
+        "for(int z=0;z<12;++z)r[z]=0;for(int k=0;k<16;++k)o[k]=float4(0,0,0,1);\n");
     int ended = 0;
     for (size_t index = 0; index < count; ++index) {
         const uint32_t *w = words[index];
@@ -115,4 +115,21 @@ int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
     if (out.failed) return 0;
     *length = out.used;
     return 1;
+}
+
+int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16_t *mask)
+{
+    if(!mask) return 0;
+    *mask=0;
+    char text[65536];size_t length;
+    if(!fut_vertex_program_hlsl(words,count,text,sizeof(text),&length)) return 0;
+    unsigned found=0;
+    for(size_t index=0;index<count;++index) {
+        const uint32_t *w=words[index];
+        unsigned mac=(w[1]>>21)&15,ilu=(w[1]>>25)&7;
+        if((mac && ((w[2]>>26)&3)==2) || (mac==2 && ((w[2]>>11)&3)==2) ||
+            ((mac==3 || ilu) && ((w[3]>>28)&3)==2)) found|=1u<<((w[1]>>9)&15);
+        if(w[3]&1) break;
+    }
+    *mask=(uint16_t)found;return 1;
 }

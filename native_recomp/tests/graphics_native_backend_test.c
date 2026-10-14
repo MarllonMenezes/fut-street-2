@@ -63,7 +63,7 @@ int main(void)
         state.native_surfaces.plan.color_pitch==16 && guest_word(0x3000)==0xFF00FF00,17);
     CHECK(native_method(&state,0,0x20C,(24u<<16)|16,0),18);
     CHECK(native_method(&state,0,0x100,(1u<<5)|8,0),19);
-    CHECK(!native_method(&state,0,0x17FC,5,0),20); /* SW raster gate stays closed. */
+    CHECK(!native_prepare_draw(&state),20); /* SW raster gate stays closed. */
     CHECK(!native_method(&state,0,0x1FFC,0,0),21); /* Unknown methods stay rejected. */
     state.bindings.references[0][1]=dma; state.bindings.references[0][2]=dma;
     state.bindings.references[0][2].words[2]=0x1003; /* B has a distinct base. */
@@ -100,7 +100,7 @@ int main(void)
     old=state.textures[0].texture;
     CHECK(native_method(&state,0,0x1B14,0x04072000,0) && state.textures[0].texture==old &&
         !native_prepare_textures(&state) && !state.textures[0].sampling_ready,31);
-    CHECK(!native_method(&state,0,0x17FC,5,0),32); /* Convolution cannot turn into a draw. */
+    CHECK(!native_prepare_draw(&state),32); /* Convolution cannot turn into a draw. */
     CHECK(native_method(&state,0,0x1B0C,0,0) && native_prepare_textures(&state),33);
     ID3D11DeviceContext_PSGetShaderResources(state.context,0,1,&bound);CHECK(!bound,34);
     CHECK(native_method(&state,0,0x120,0,0) && native_method(&state,0,0x124,0,0) &&
@@ -112,12 +112,39 @@ int main(void)
     /* Synthetic test state without SW dependencies: mode4 itself must not
      * reuse the previously programmable vertex-shader path. */
     state.software=(FutGraphicsSoftwareState){0};
-    CHECK(native_method(&state,0,0x1E94,4,0) && !native_method(&state,0,0x17FC,5,0),40);
+    CHECK(native_method(&state,0,0x1E94,4,0) && !native_prepare_draw(&state),40);
+    /* Synthetic pass-through program: input0->position, input9->texture0. */
+    const uint32_t pass[2][4]={{0,(1u<<21)|0x1Bu,2u<<26,(15u<<12)|0x800u},
+        {0,(1u<<21)|(9u<<9)|0x1Bu,2u<<26,(15u<<12)|0x800u|(9u<<3)|1u}};
+    memcpy(state.kelvin.program,pass,sizeof(pass));
+    state.kelvin.program_valid[0]=state.kelvin.program_valid[1]=15;
+    CHECK(native_method(&state,0,0x1E94,6,0),41);
+    CHECK(native_method(&state,0,0x1B0C,0x4003FFC0,0) &&
+        native_method(&state,0,0x1B14,0x04072000,0),42);
+    CHECK(native_method(&state,0,0x17FC,5,0) && state.immediate.active,43);
+    uint32_t previous=state.kelvin.textures[0].filter;
+    CHECK(!native_method(&state,0,0x1B14,0x01010000,0) &&
+        state.kelvin.textures[0].filter==previous && !native_finish(&state),44);
+    CHECK(!native_method(&state,0,0x110,0,0) && !native_method(&state,0,0,0,0) &&
+        state.bindings.objects[0].words[0]==0x97,45);
+    for(unsigned i=0;i<3;++i) {
+        CHECK(native_method(&state,0,0x18C8,0x3F000000,0) &&
+            native_method(&state,0,0x18CC,0,0) && native_method(&state,0,0x1880,0,0) &&
+            native_method(&state,0,0x1884,0,0),46);
+    }
+    CHECK(!native_method(&state,0,0x17FC,0,0) && state.immediate.ready && !state.immediate.active &&
+        state.native_immediate.count==3 && state.native_immediate.buffer &&
+        !state.textures[0].sampling_ready && !native_finish(&state),47);
+    CHECK(!native_method(&state,0,0x17FC,5,0) && state.immediate.count==3 &&
+        !native_method(&state,0,0x110,0,0) && !native_method(&state,0,0x1D70,8,0),48);
+    fut_native_immediate_destroy(&state.native_immediate);
     for(unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_surfaces_destroy(&state.native_surfaces);
     fut_native_constants_destroy(&state.native_constants);
     if(state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
     if(state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
+    if(state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
+    if(state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     ID3D11DeviceContext_Release(state.context); ID3D11Device_Release(state.device);
     puts("Real backend: deferred description validation, WAIT old-plan writeback and independent draw gate OK");
     return 0;

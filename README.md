@@ -14,52 +14,46 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.72
+## Estado verificável — release 2.73
 
-A execução recompilada chegou ao **primeiro BEGIN de draw**, no offset
-`1.168` da terceira submissão. Antes disso, foram processados os controles
-observados de fog, iluminação, specular e matrizes de textura. Esses estados
-são preservados e validados; suas formas ativadas ainda não traduzidas continuam
-recusadas no uso. Registrar um estado desativado não comprova sua implementação.
+A execução recompilada agora coleta os **três vértices do primeiro triângulo**
+e envia seus atributos para um vertex buffer e um input layout nativos.
+A forma observada `BEGIN TRIANGLES / ATTR2F / END` chegou ao END no offset
+`1.248` da terceira submissão. **Upload de geometria não é execução do draw.**
 
-As matrizes projection, model-view/inverse dos quatro conjuntos, composite
-e as quatro matrizes de textura agora preenchem os slots corretos das 192
-constantes nativas, sem achatar os intervalos entre conjuntos. Há bits de
-presença por componente e preservação dos valores brutos, incluindo NaNs e
-zero negativo. O [mapa de contexto consultado](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/pgraph.c)
-sustenta o layout; isso não implementa o pipeline completo de iluminação/fog
-ou a execução fixed-function de vértices. Esse modo não pode reutilizar
-silenciosamente um shader programável anterior.
+O coletor preserva snapshots por vértice, os bits de X/Y e os componentes
+Z=`0`, W=`1` da forma 2F. Atributos lidos pelo shader precisam estar definidos
+em todos os vértices; pares incompletos, primitivas não suportadas, mudanças
+de estado dentro da primitiva e excesso de capacidade são recusados.
+Uma primitiva aberta ou ainda não executada impede a conclusão da submissão,
+WAIT e semáforos: preparar buffers não gera confirmação fictícia de GPU.
 
-O incremento do índice de escrita de flip usa os contadores explicitamente
-configurados. O stall só passa com slot livre e conclusão do trabalho nativo
-anterior; igualdade entre leitura/escrita continua bloqueada.
-Na execução observada: leitura `0`, escrita `2`, módulo `3`.
-**Não houve avanço artificial da leitura, apresentação de frame nem VBlank.**
+Foi corrigida a inicialização das saídas não escritas do vertex program para
+`(0,0,0,1)`, incluindo alpha igual a `1`. A
+[especificação NV_vertex_program](https://registry.khronos.org/OpenGL/extensions/NV/NV_vertex_program.txt)
+documenta esse valor; a implementação NV2A consultada também o utiliza.
+O teste nativo WARP executa um shader sintético de dois MOV com três vértices
+2F e confere por stream-output as posições, coordenadas de textura e saídas
+não escritas. Esse teste **não rasteriza nem executa um frame do jogo**,
+e não comprova toda a precisão NV2A ou conversão de posição screen/clip.
 
-A nova superfície `640×480`, sem AA, foi importada para a GPU; a textura
-original `1280×480`, pitch `5.120`, veio da memória guest em `0x82C04000`.
-O draw foi então recusado pelo filtro quincunx `0x04072000`, ainda sem tradução.
-A conferência da captura também corrigiu um teste anterior: o combiner final
-é `0x0000000C`, não zero. Sua cor depende de `R0.rgb`, que recebe a textura.
-**Não é válido eliminar a amostragem desse draw.** A hipótese de fazê-lo foi
-descartada; não há esse desvio no código publicado.
+Build Release e CTest passaram `21/21`, incluindo testes do coletor, máscara
+de atributos, resultados do shader e receptor real de métodos. Na execução
+original limitada a cinco segundos, foram enviados três vértices, a superfície
+`640×480` e a textura `1280×480`, pitch `5.120`. O draw continuou recusado
+pelo filtro quincunx `0x04072000`, sem aproximação por outro filtro.
+A cor desse draw depende da textura: eliminar a amostragem não é válido.
 
-Build Release e CTest passaram `19/19`, com regressões para layouts/presença
-das matrizes, readback de todos os bits das constantes, controles inválidos,
-flip sem slot e preservação da leitura. O teste corrigido dos combiners usa
-entradas sintéticas coloridas e confirma a dependência da textura, sem afirmar
-execução do fragment program completo ou equivalência de precisão NV2A.
+O processo terminou por diagnóstico antes do timeout. Os dois clears
+originais, as duas primeiras submissões e o marcador `7` continuam concluídos;
+a terceira submissão permanece sem conclusão. **Nenhum draw/frame do jogo
+foi executado/apresentado**, nem houve avanço artificial da leitura de flip
+ou VBlank. ISO intacta; novas saídas controláveis no D:.
 
-A execução limitada a cinco segundos terminou por diagnóstico antes do timeout.
-Os dois clears originais, as duas primeiras submissões e o marcador `7`
-continuam concluídos. A terceira submissão permanece sem conclusão e
-**nenhum draw/frame do jogo foi executado/apresentado**.
-ISO intacta; novas saídas no D:.
-
-Próximo alvo: tradução do quincunx usado pelo draw; depois permanecem
-SAMPLEALPHA/RDI, geometria, precisão gráfica, apresentação, gameplay e áudio.
-`NOT_READY` permanece.
+Próximo experimento: estabelecer offsets e arredondamento do quincunx NV2A
+com evidência suficiente para traduzi-lo. Continuam pendentes
+SAMPLEALPHA/RDI, conversão/rasterização dos vértices, precisão gráfica,
+apresentação, gameplay e áudio. `NOT_READY` permanece.
 
 ## Abordagem
 

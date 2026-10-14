@@ -18,6 +18,8 @@
 #include "graphics_native_fragment.h"
 #include "graphics_native_pipeline.h"
 #include "graphics_software_state.h"
+#include "graphics_native_immediate.h"
+#include "graphics_vertex_program.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -76,6 +78,8 @@ typedef struct {
     FutNativeTexture textures[4];
     FutNativePipeline pipeline;
     FutGraphicsSoftwareState software;
+    FutGraphicsImmediate immediate;
+    FutNativeImmediate native_immediate;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
@@ -211,6 +215,10 @@ static int native_prepare_textures(NativeGraphicsState *state)
 
 static int native_finish(NativeGraphicsState *state)
 {
+    if (state->immediate.active || state->immediate.ready) {
+        fprintf(stderr,"[GRAPHICS] completion refused: immediate primitive has not executed\n");
+        return 0;
+    }
     /* WAIT_IDLE/semaphore concerns submitted work, not setters for the next
      * target. In particular, never validate a new pitch with an old format. */
     if (!native_writeback_surfaces(state)) return 0;
@@ -244,10 +252,66 @@ static int object_memory_read(void *context, uint32_t address, void *data, size_
     return read_guest(address, data, size);
 }
 
+static int native_prepare_draw(NativeGraphicsState *state)
+{
+    if (!native_prepare_surfaces(state) || !native_prepare_textures(state)) return 0;
+    if (!fut_graphics_software_draw_ready(&state->software)) {
+        fprintf(stderr,"[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
+        return 0;
+    }
+    if ((state->kelvin.program_mode & 3u)!=2u) {
+        fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
+        return 0;
+    }
+    if (!native_prepare_vertex(state) || !native_prepare_fragment(state)) return 0;
+    if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
+        fprintf(stderr,"[GRAPHICS] incomplete native draw state at use\n");
+        return 0;
+    }
+    HRESULT hr=fut_native_pipeline_apply(&state->pipeline,state->device,state->context,
+        &state->kelvin,&state->native_surfaces.plan);
+    if (FAILED(hr)) {
+        fprintf(stderr,"[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n",hr);
+        return 0;
+    }
+    state->kelvin.draw.dirty=0;
+    return 1;
+}
+
+static int native_prepare_immediate(NativeGraphicsState *state)
+{
+    if ((state->kelvin.program_mode&3u)!=2u || !native_prepare_vertex(state) ||
+        !state->vertex_shader || !state->vertex_bytecode) return 0;
+    unsigned first=state->kelvin.program_start,count=0;
+    while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
+        ++count;
+        if(state->kelvin.program[first+count-1][3]&1u) break;
+    }
+    uint16_t required=0;
+    if(!fut_vertex_program_input_mask(state->kelvin.program+first,count,&required)) return 0;
+    HRESULT hr=fut_native_immediate_upload(&state->native_immediate,state->device,state->context,
+        state->vertex_bytecode,&state->immediate,required);
+    if(FAILED(hr)) {
+        fprintf(stderr,"[GRAPHICS] immediate vertex upload refused: count=%u required=%04X HRESULT=%08lX\n",
+            state->immediate.count,required,hr);
+        return 0;
+    }
+    fprintf(stderr,"[GRAPHICS] immediate vertices uploaded: count=%u required=%04X; no draw/completion\n",
+        state->immediate.count,required);
+    return 1;
+}
+
 static int native_method(void *context, unsigned subchannel, uint32_t method,
                          uint32_t value, size_t offset)
 {
     NativeGraphicsState *state = context;
+    /* Only the observed attribute form is supported inside a primitive.
+     * Reject before setters/binding mutation; no stale-state draw snapshots. */
+    if (state->immediate.ready || (state->immediate.active &&
+        (subchannel!=0 || (method!=0x17FCu && (method<0x1880u || method>=0x1900u))))) {
+        fprintf(stderr,"[GRAPHICS] command refused inside/pending immediate primitive: sub=%u method=%04X\n",subchannel,method);
+        return 0;
+    }
     FutGraphicsBindingStatus binding = fut_graphics_apply_binding(&state->bindings,
         subchannel, method, value);
     if (binding == FUT_BINDING_APPLIED) {
@@ -288,6 +352,15 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
+        if (subchannel==0 && (method==0x17FCu || (method>=0x1880u && method<0x1900u))) {
+            FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);
+            if(status==FUT_IMMEDIATE_APPLIED) return 1;
+            if(status!=FUT_IMMEDIATE_READY || !native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
+            /* Upload/preparation is not execution. Keep the batch pending;
+             * screen-space conversion and rasterization require validation. */
+            fprintf(stderr,"[GRAPHICS] immediate rasterization remains untranslated; no draw/completion\n");
+            return 0;
+        }
         if (method == 0x100u && value) {
             if (!fut_graphics_software_state(&state->software, value, state->kelvin.clear_depth,
                     state->kelvin.clear_color, state->kelvin.clear_valid)) return 0;
@@ -295,32 +368,8 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 value & 31, value >> 5);
             return 1;
         }
-        if ((method == 0x17FCu && value) || method == 0x1810u || method == 0x1818u || method == 0x1800u || method == 0x1808u) {
-            /* Materialize descriptions only at use. This does not permit a
-             * draw: the independent raster/shader/geometry gates still apply. */
-            if (!native_prepare_surfaces(state)) return 0;
-            if (!native_prepare_textures(state)) return 0;
-            if (!fut_graphics_software_draw_ready(&state->software)) {
-                fprintf(stderr, "[GRAPHICS] original draw blocked: SAMPLEALPHA/RDI/debug state lacks native rasterization translation\n");
-                return 0;
-            }
-            if ((state->kelvin.program_mode & 3u)!=2u) {
-                fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
-                return 0;
-            }
-            if (!native_prepare_vertex(state)) return 0;
-            if (!native_prepare_fragment(state)) return 0;
-            if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
-                fprintf(stderr, "[GRAPHICS] incomplete native draw state at use\n");
-                return 0;
-            }
-            HRESULT hr = fut_native_pipeline_apply(&state->pipeline, state->device, state->context,
-                &state->kelvin, &state->native_surfaces.plan);
-            if (FAILED(hr)) {
-                fprintf(stderr, "[GRAPHICS] native draw-state preparation failed: HRESULT=%08lX\n", hr);
-                return 0;
-            }
-            state->kelvin.draw.dirty = 0;
+        if (method == 0x1810u || method == 0x1818u || method == 0x1800u || method == 0x1808u) {
+            if (!native_prepare_draw(state)) return 0;
         }
         if (method == 0x1D94u) {
             if (!native_prepare_surfaces(state)) return 0;
@@ -464,6 +513,7 @@ static DWORD WINAPI native_worker(void *unused)
     fut_native_surfaces_destroy(&state.native_surfaces);
     for (unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_pipeline_destroy(&state.pipeline);
+    fut_native_immediate_destroy(&state.native_immediate);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);

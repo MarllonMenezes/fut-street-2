@@ -21,6 +21,7 @@ typedef struct {
     unsigned program_load, program_start, program_mode;
     int program_dirty;
     float attributes[16][4];
+    uint8_t attribute_valid[16];
     uint32_t clip_min, clip_max;
     uint32_t control0, line_width, anti_aliasing_control;
     unsigned depth_test, stencil_test;
