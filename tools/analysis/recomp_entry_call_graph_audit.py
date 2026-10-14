@@ -19,7 +19,8 @@ from typing import Any
 GENERATED_FUNCTION_RE = re.compile(r"\bvoid\s+sub_([0-9A-Fa-f]{8})\s*\(void\)\s*\{")
 GENERATED_SYMBOL_RE = re.compile(r"\bvoid\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(void\)\s*\{")
 UNIMPLEMENTED_RE = re.compile(
-    r"RECOMP_UNIMPL\(\s*\"[^\"]*\"\s*,\s*0x([0-9A-Fa-f]{8})u\s*\)"
+    r"RECOMP_UNIMPL\(\s*\"(?P<text>[^\"]*)\"\s*,\s*"
+    r"0x(?P<address>[0-9A-Fa-f]{8})u\s*\)"
 )
 
 
@@ -89,11 +90,35 @@ def recover_generated_functions(
 
 def recover_unimplemented_sites(generated_dir: Path) -> list[int]:
     """Recover untranslated instruction addresses from generated C sources."""
-    sites: set[int] = set()
+    return [
+        int(row["address"], 16)
+        for row in recover_unimplemented_site_evidence(generated_dir)
+    ]
+
+
+def recover_unimplemented_site_evidence(
+    generated_dir: Path,
+) -> list[dict[str, Any]]:
+    """Recover unique untranslated sites with source and instruction text."""
+    sites: dict[int, dict[str, Any]] = {}
     for source_path in sorted(generated_dir.rglob("recomp_*.c")):
-        source = source_path.read_text(encoding="utf-8")
-        sites.update(int(match.group(1), 16) for match in UNIMPLEMENTED_RE.finditer(source))
-    return sorted(sites)
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            for match in UNIMPLEMENTED_RE.finditer(line):
+                address = int(match.group("address"), 16)
+                row = sites.setdefault(
+                    address,
+                    {
+                        "address": f"0x{address:08X}",
+                        "text": match.group("text"),
+                        "sources": [],
+                    },
+                )
+                source = f"{source_path.name}:{line_number}"
+                if source not in row["sources"]:
+                    row["sources"].append(source)
+    return [sites[address] for address in sorted(sites)]
 
 
 def _owners(functions: list[dict[str, Any]], address: int) -> list[int]:
@@ -118,11 +143,12 @@ def audit(
     missing = sorted(reachable - generated)
 
     unimplemented_rows = []
-    for site in recover_unimplemented_sites(generated_dir):
+    for site_evidence in recover_unimplemented_site_evidence(generated_dir):
+        site = int(str(site_evidence["address"]), 16)
         owners = _owners(functions, site)
         unimplemented_rows.append(
             {
-                "address": f"0x{site:08X}",
+                **site_evidence,
                 "owners": [f"0x{owner:08X}" for owner in owners],
                 "in_directly_reachable_function_scope": any(
                     owner in reachable for owner in owners
@@ -141,6 +167,16 @@ def audit(
         "unimplemented_sites_in_directly_reachable_function_scopes": sum(
             row["in_directly_reachable_function_scope"] for row in unimplemented_rows
         ),
+        "unimplemented_direct_reachable_site_addresses": [
+            row["address"]
+            for row in unimplemented_rows
+            if row["in_directly_reachable_function_scope"]
+        ],
+        "unimplemented_outside_direct_reachable_site_addresses": [
+            row["address"]
+            for row in unimplemented_rows
+            if not row["in_directly_reachable_function_scope"]
+        ],
         "status": (
             "verified-direct-call-translation-coverage"
             if not missing
@@ -176,10 +212,13 @@ def main() -> int:
             print("missing_direct_reachable_translations=" + ",".join(result["missing_direct_reachable_translations"]))
         for row in result["unimplemented_sites"]:
             print(
-                "unimplemented_site={address} owners={owners} directly_reachable_scope={reachable}".format(
+                "unimplemented_site={address} owners={owners} directly_reachable_scope={reachable} "
+                "source={source} text={text}".format(
                     address=row["address"],
                     owners=",".join(row["owners"]) or "none",
                     reachable=row["in_directly_reachable_function_scope"],
+                    source=",".join(row["sources"]),
+                    text=row["text"],
                 )
             )
     return 0 if not result["missing_direct_reachable_translations"] else 1

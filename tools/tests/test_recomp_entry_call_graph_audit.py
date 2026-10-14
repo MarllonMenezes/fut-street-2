@@ -40,6 +40,19 @@ class RecompEntryCallGraphAuditTests(unittest.TestCase):
         self.assertEqual(
             summary["unimplemented_sites_in_directly_reachable_function_scopes"], 1
         )
+        self.assertEqual(
+            summary["unimplemented_direct_reachable_site_addresses"],
+            ["0x00001008"],
+        )
+        self.assertEqual(
+            summary["unimplemented_outside_direct_reachable_site_addresses"],
+            ["0x00002008"],
+        )
+        self.assertEqual(result["unimplemented_sites"][0]["text"], "fixture")
+        self.assertEqual(
+            result["unimplemented_sites"][0]["sources"],
+            ["recomp_0000.c:1"],
+        )
         self.assertEqual(result["missing_direct_reachable_translations"], [])
 
     def test_missing_translated_direct_function_is_reported(self) -> None:
