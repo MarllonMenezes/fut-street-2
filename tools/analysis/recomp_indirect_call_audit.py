@@ -1770,6 +1770,14 @@ def audit(
     dynamic_stack_rows = [
         row for row in classified if row["classification"] in dynamic_classifications
     ]
+    dynamic_conditional_guard_sites = [
+        row
+        for row in dynamic_stack_rows
+        if (
+            "conditional_skip_evidence" in row
+            or "conditional_nonzero_guard_evidence" in row
+        )
+    ]
     dynamic_stack_observed_rows = [
         row for row in dynamic_stack_rows if "indirect_call_observed_pushed_bytes" in row
     ]
@@ -1909,6 +1917,10 @@ def audit(
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
         "dynamic_conditional_nonzero_guard_sites": len(
             dynamic_nonzero_guard_sites
+        ),
+        "dynamic_conditional_guard_sites": len(dynamic_conditional_guard_sites),
+        "dynamic_conditional_guard_missing_sites": (
+            len(dynamic_stack_rows) - len(dynamic_conditional_guard_sites)
         ),
         "dynamic_call_stack_shape_status": (
             "observed-push-counts-not-abi-proof"
