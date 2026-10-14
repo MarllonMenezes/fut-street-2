@@ -14,6 +14,31 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.42
+
+O release 2.42 adiciona um gate estático de evidência para as instruções que
+ainda não têm lowering. A checagem cruza o `summary.json` da recompilação,
+os marcadores `RECOMP_UNIMPL` no C gerado e a linha correspondente no ASM
+recuperado; no artefato integral 25f, os `2/2` sites coincidem exatamente:
+`SGDT [esp + 6]` em `0x00253FD8` e `OUT DX,AL` em `0x00298030`. O gate também
+tem testes negativos para divergência entre contagem, endereço, mnemônico e
+operandos, evitando que uma regressão editorial seja confundida com avanço de
+tradução.
+
+Esse marco melhora a rastreabilidade da tradução, mas não implementa esses
+opcodes. A análise estática mantém `SGDT` como operação dependente da GDT e
+`OUT` como acesso ao hardware de vídeo Xbox; ambos continuam sem lowering até
+que exista evidência independente suficiente. A suíte Python do projeto passou
+em `121/121`, a suíte focal do XboxRecomp em `570` testes com `38` skips, o
+build nativo permaneceu em Release com CTest `3/3`, e o .NET continuou com `0`
+warnings, `0` errors e self-test `105/105`.
+
+O resultado continua sendo evidência estática e de validação de ferramentas:
+não prova boot, equivalência de hardware/GDT, rendering, assets, gameplay,
+animação ou áudio. A prontidão permanece `NOT_READY`, a estimativa conservadora
+do PoC jogável continua em aproximadamente `31% concluído / 69% restante` e o
+XBE não é executado.
+
 ## Estado verificável — release 2.41
 
 O release 2.41 refaz a análise integral do XBE com a pilha atual de `24`
