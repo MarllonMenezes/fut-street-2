@@ -1703,6 +1703,9 @@ def audit(
             else:
                 row["host_implementation_status"] = implementation["status"]
                 row["host_implementation_sources"] = implementation["sources"]
+                row["host_implementation_body_markers"] = implementation[
+                    "body_markers"
+                ]
         ordinal = row.get("kernel_ordinal")
         if kernel_bridge_cases is not None and ordinal is not None:
             bridge_target = kernel_bridge_cases.get(int(ordinal))
@@ -1786,6 +1789,22 @@ def audit(
         row
         for row in kernel_slots
         if row.get("kernel_abi_stack_status") == "argument-count-mismatch"
+    ]
+    kernel_implementation_explicit_stub_rows = [
+        row
+        for row in kernel_slots
+        if any(
+            marker["kind"] == "explicit-stub-or-no-op"
+            for marker in row.get("host_implementation_body_markers", [])
+        )
+    ]
+    kernel_implementation_status_marker_rows = [
+        row
+        for row in kernel_slots
+        if any(
+            marker["kind"] == "status-not-implemented-token"
+            for marker in row.get("host_implementation_body_markers", [])
+        )
     ]
     kernel_file_info_rows = [
         row
@@ -1958,6 +1977,32 @@ def audit(
                 for item in kernel_implementation_evidence.values()
             )
         ),
+        "kernel_implementation_explicit_stub_or_noop_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else sorted(
+                target
+                for target, item in kernel_implementation_evidence.items()
+                if any(
+                    marker["kind"] == "explicit-stub-or-no-op"
+                    for marker in item["body_markers"]
+                )
+            )
+        ),
+        "kernel_implementation_explicit_stub_or_noop_call_sites": (
+            None
+            if kernel_implementation_evidence is None
+            else [
+                {
+                    "call_site": row["call_site"],
+                    "source": row["source"],
+                    "kernel_ordinal": row["kernel_ordinal"],
+                    "target": row.get("host_resolver_target"),
+                    "pushed_bytes": row.get("indirect_call_observed_pushed_bytes"),
+                }
+                for row in kernel_implementation_explicit_stub_rows
+            ]
+        ),
         "kernel_implementation_status_not_implemented_token_target_count": (
             None
             if kernel_implementation_evidence is None
@@ -1968,6 +2013,31 @@ def audit(
                 )
                 for item in kernel_implementation_evidence.values()
             )
+        ),
+        "kernel_implementation_status_not_implemented_token_targets": (
+            None
+            if kernel_implementation_evidence is None
+            else sorted(
+                target
+                for target, item in kernel_implementation_evidence.items()
+                if any(
+                    marker["kind"] == "status-not-implemented-token"
+                    for marker in item["body_markers"]
+                )
+            )
+        ),
+        "kernel_implementation_status_not_implemented_call_sites": (
+            None
+            if kernel_implementation_evidence is None
+            else [
+                {
+                    "call_site": row["call_site"],
+                    "source": row["source"],
+                    "kernel_ordinal": row["kernel_ordinal"],
+                    "target": row.get("host_resolver_target"),
+                }
+                for row in kernel_implementation_status_marker_rows
+            ]
         ),
         "kernel_implementation_missing_targets": (
             None
