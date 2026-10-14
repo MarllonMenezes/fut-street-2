@@ -20,26 +20,30 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.01
+## Estado verificável — release 2.02
 
-O release 2.01 mantém a proveniência local completa dos sete callbacks
-dinâmicos e dos nove chamadores diretos já inventariados. A checagem do callback
-indexado `sub_0026E70A` continua em `dynamic_callback_container_field_provenance_sites=2`:
-nos dois chamadores do subgrafo direto, o argumento de objeto tem a forma local
-`ebp - 16`, os campos `+8` e `+0xC` são carregados pelo callback e há uma
-escrita observada para o campo mapeado `ebp - 4` (`+0xC`), com valor vindo de
-registrador; não há escrita local provada para `ebp - 8` (`+8`).
+O release 2.02 mantém a proveniência local completa dos sete callbacks
+dinâmicos e dos nove chamadores diretos do subgrafo. A auditoria agora também
+inventaria todos os C gerados: são `dynamic_callback_all_caller_provenance_sites=27`,
+dos quais `dynamic_callback_outside_direct_caller_provenance_sites=18` ficam
+explicitamente separados do caminho iniciado em `0x0024D8BE`. Para o callback
+indexado `sub_0026E70A`, há seis formas de chamada direta no C gerado: duas no
+subgrafo e quatro fora dele. Esse inventário preserva os `PUSH32` e atribuições
+lineares, mas não transforma uma chamada fora do subgrafo em alcance de
+runtime.
 
-A nova checagem do campo de objeto `+0x584` registra
-`dynamic_callback_object_field_provenance_sites=1` e
-`dynamic_callback_object_field_write_sites=0`: o chamador direto
-`sub_00251CD6` passa `edi`, carregado de `MEM32(ebp + 8)`, mas não há uma
-escrita provada de `MEM32(edi + 0x584)=...` antes da chamada. Essas duas
-checagens são somente evidência de forma, argumento e escrita linear; não
-provam dominância de fluxo, identidade de objeto, tipo, ABI, inicialização em
-runtime ou destino final do callback. Quatro outros call sites diretos de
-`sub_0026E70A` aparecem no C gerado fora do subgrafo direto e continuam fora
-dessa conclusão.
+A checagem do callback indexado continua em
+`dynamic_callback_container_field_provenance_sites=2`: nos dois chamadores do
+subgrafo direto, o argumento de objeto tem a forma local `ebp - 16`, os campos
+`+8` e `+0xC` são carregados pelo callback e há uma escrita observada para o
+campo mapeado `ebp - 4` (`+0xC`), com valor vindo de registrador; não há escrita
+local provada para `ebp - 8` (`+8`). A checagem do campo de objeto `+0x584`
+registra `dynamic_callback_object_field_provenance_sites=1` e
+`dynamic_callback_object_field_write_sites=0`: `sub_00251CD6` passa `edi`,
+carregado de `MEM32(ebp + 8)`, mas não há uma escrita provada de
+`MEM32(edi + 0x584)=...` antes da chamada. Tudo isso é evidência de forma,
+argumento e escrita linear; não prova dominância de fluxo, identidade de
+objeto, tipo, ABI, inicialização em runtime ou destino final do callback.
 
 O piloto read-only do REA também permanece documentado: o MCP local respondeu
 com `170/170` ferramentas e `6/6` prompts, mas não há Hopper, Ghidra ou IDA

@@ -2630,6 +2630,16 @@ def audit(
     dynamic_callback_caller_provenance = recover_dynamic_callback_caller_provenance(
         generated_dir, classified, functions, directly_reachable
     )
+    dynamic_callback_all_caller_provenance = (
+        recover_dynamic_callback_caller_provenance(
+            generated_dir, classified, functions, None
+        )
+    )
+    dynamic_callback_outside_direct_caller_provenance = [
+        row
+        for row in dynamic_callback_all_caller_provenance
+        if _address(row["caller"]) not in directly_reachable
+    ]
     dynamic_callback_container_field_provenance = (
         recover_dynamic_callback_container_field_provenance(
             generated_dir, classified, dynamic_callback_caller_provenance
@@ -3208,6 +3218,29 @@ def audit(
             if dynamic_callback_caller_provenance
             else "no-direct-caller-push-shape-observed"
         ),
+        "dynamic_callback_all_caller_provenance_sites": len(
+            dynamic_callback_all_caller_provenance
+        ),
+        "dynamic_callback_outside_direct_caller_provenance_sites": len(
+            dynamic_callback_outside_direct_caller_provenance
+        ),
+        "dynamic_callback_all_caller_provenance_status": (
+            "all-generated-direct-call-shapes-observed"
+            if dynamic_callback_all_caller_provenance
+            else "no-generated-direct-call-shapes-observed"
+        ),
+        "dynamic_callback_all_caller_counts": dict(
+            Counter(
+                row["target_name"]
+                for row in dynamic_callback_all_caller_provenance
+            )
+        ),
+        "dynamic_callback_outside_direct_caller_counts": dict(
+            Counter(
+                row["target_name"]
+                for row in dynamic_callback_outside_direct_caller_provenance
+            )
+        ),
         "dynamic_callback_container_field_provenance_sites": len(
             dynamic_callback_container_field_provenance
         ),
@@ -3306,6 +3339,12 @@ def audit(
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "dynamic_source_provenance": dynamic_source_provenance,
         "dynamic_callback_caller_provenance": dynamic_callback_caller_provenance,
+        "dynamic_callback_all_caller_provenance": (
+            dynamic_callback_all_caller_provenance
+        ),
+        "dynamic_callback_outside_direct_caller_provenance": (
+            dynamic_callback_outside_direct_caller_provenance
+        ),
         "dynamic_callback_container_field_provenance": (
             dynamic_callback_container_field_provenance
         ),

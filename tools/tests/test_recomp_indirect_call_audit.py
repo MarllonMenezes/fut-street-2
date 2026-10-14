@@ -342,6 +342,9 @@ void sub_00002000(void)
             callers = recover_dynamic_callback_caller_provenance(
                 generated, rows, functions, {0x1000, 0x2000}
             )
+            all_callers = recover_dynamic_callback_caller_provenance(
+                generated, rows, functions, None
+            )
             evidence = recover_dynamic_callback_container_field_provenance(
                 generated, rows, callers
             )
@@ -355,6 +358,7 @@ void sub_00002000(void)
             "caller-local-field-write-shape-observed",
         )
         self.assertEqual(fields["0xC"]["writes"][0]["rhs"], "ebx")
+        self.assertEqual(len(all_callers), 1)
 
     def test_recovers_dynamic_object_field_writer_shape(self) -> None:
         functions = [
