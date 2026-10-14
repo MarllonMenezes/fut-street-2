@@ -13,6 +13,7 @@ HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *dev
 {
     if(!native || !device || !context || !bytecode || !b || b->active || !b->ready ||
         b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_CAPACITY || b->count%3) return E_INVALIDARG;
+    if(native->submitted) return E_PENDING;
     for(unsigned i=0;i<b->count;++i) if((b->defined[i]&required)!=required) return E_NOTIMPL;
     FutNativeImmediate next={0};
     D3D11_BUFFER_DESC desc={0};desc.ByteWidth=b->count*sizeof(b->vertices[0]);

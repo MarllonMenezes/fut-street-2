@@ -14,49 +14,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.76
+## Estado verificável — release 2.77
 
-Foi corrigida a identificação do seletor software `8`: o par de escritas RDI
-observado corresponde a **DXT1NoiseEnable**, não SAMPLEALPHA. O
-[pbkit para Xbox original](https://github.com/XboxDev/nxdk/blob/14d5ee97e73347c973f1f57b68b79ec08c9e77f2/lib/pbkit/pbkit.c)
-usa exatamente esse par para ruído DXT1. A
-[conversão de índices do Cxbx](https://github.com/Cxbx-Reloaded/Cxbx-Reloaded/blob/585c49a50af1255ab155099e06f24505f9c5a800/src/core/hle/D3D8/Direct3D9/RenderStates.cpp)
-também confirma que o enum normalizado não pode ser usado diretamente como
-índice da tabela compactada da D3D8 5849 presente no XBE.
+Foi implementada a etapa nativa de execução de triângulos imediatos, após os
+gates existentes: `Draw`, espera limitada da GPU, readback das superfícies e
+gravação na memória guest **antes de consumir a primitiva**. Falhas após a
+submissão mantêm o lote pendente e impedem novo Draw ou upload sobre ele;
+isso evita repetir blending sobre trabalho parcialmente publicado.
+Essa etapa não apresenta frames nem avança GET, semáforos ou VBlank por conta própria.
+MSAA rasterizado continua recusado.
 
-O backend agora admite os controles conhecidos somente no domínio exercitado:
-texturas ARGB8 lineares, alvo sem AA e depth/stencil desligados. O ruído DXT1
-não se aplica a essas texturas, e os controles Z-cull/ROP-Z conhecidos não
-habilitam depth/stencil. Os valores brutos continuam preservados.
-DXT1/BC1, depth/stencil ativos, outros valores RDI ou registradores divergentes
-continuam recusados. **Não há implementação genérica de RDI ou Z-cull.**
+O teste integrado encontrou e corrigiu uma divergência real entre as
+assinaturas dos shaders: a entrada de cor do PS lia o registrador reservado
+às coordenadas brutas de tela do VS. Ambos agora usam uma declaração comum,
+e a reflexão do bytecode verifica registradores, componentes, semânticas e
+tipos usados antes do draw. A exigência de alinhamento entre estágios é
+descrita na [documentação de assinaturas do Direct3D](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-signatures).
 
-Build Release e CTest passaram `21/21`. Além das regressões do domínio e
-dos casos recusados, o teste WARP compara todos os bits de depth/stencil
-antes e depois de um draw sintético: os testes desligados preservam o buffer,
-mesmo com máscara de escrita e indicação de compressão retidas.
-Isso valida o lado D3D11 desse caso, não toda a rasterização da NV2A.
+Build Release e CTest passaram `22/22`. Em WARP, o receptor real de comandos
+executou uma sequência sintética BEGIN/atributos/END com VS e combiners
+traduzidos, e os pixels foram conferidos na memória guest. Outro teste
+verifica padding, depth/stencil desabilitados intactos, consumo somente
+após as escritas, cancelamento e falha parcial de writeback sem replay.
+Assinaturas incompatíveis e dithering ativo são recusados nos testes.
+**Esses resultados são sintéticos, não um frame original nem prova geral
+de fidelidade da rasterização NV2A.**
 
-Na execução do jogo recompilado, limitada a cinco segundos, o vertex program
-original executou pelo estágio nativo de vértices, sem rasterização, e o pixel shader foi compilado com
-a especialização comprovada para a textura integralmente RGB zero.
-Essa especialização ainda exige coordenadas válidas e ausência de dependência
-residual da textura no bytecode; não implementa quincunx genérico.
-O primeiro draw passou pelo novo domínio DXT1/Z-cull e chegou à preparação
-dos estados de rasterização, que permanece bloqueada por **dithering ativo**.
-O dither não foi desligado para avançar.
+Na execução do jogo recompilado, limitada a cinco segundos, o VS original
+executou sem rasterização, e o PS compilado passou pela nova verificação
+de ligação. A textura RGB zero continua permitindo apenas a especialização
+restrita já validada, sem quincunx genérico. O primeiro draw continua
+bloqueado na preparação por **dithering ativo**; o controle não foi desligado.
+Os dois clears originais, as duas primeiras submissões e o marcador `7`
+continuam concluídos. A terceira submissão parou no END, offset `1.248`,
+sem conclusão. **O PS do jogo ainda não executou; nenhum draw rasterizado
+ou frame original foi apresentado.**
 
-O processo terminou por diagnóstico antes do timeout. Os dois clears
-originais, as duas primeiras submissões e o marcador `7` continuam concluídos;
-a terceira submissão parou no END, offset `1.248`, sem conclusão.
-**O pixel shader do jogo ainda não executou: nenhum draw rasterizado/frame
-do jogo foi apresentado.** Testes sintéticos não são um frame original.
-Não houve avanço artificial da leitura de flip ou VBlank.
-ISO intacta; novas saídas controláveis no D:.
-
-Próximo experimento: traduzir ou demonstrar o efeito do dithering no alvo
-ARGB8 exercitado antes de liberar o draw. Permanecem pendentes o filtro
-genérico, precisão gráfica, apresentação, gameplay e áudio. `NOT_READY` permanece.
+O processo terminou por diagnóstico antes do timeout, sem avanço artificial
+de flip/VBlank. ISO intacta; novas saídas controláveis no D:.
+Próximo experimento: estabelecer e traduzir o efeito do dithering no alvo
+ARGB8 exercitado antes de liberar o draw original. Filtro genérico,
+precisão gráfica, apresentação, gameplay e áudio continuam pendentes.
+`NOT_READY` permanece.
 
 ## Abordagem
 

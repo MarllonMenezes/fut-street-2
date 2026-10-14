@@ -4,7 +4,7 @@
 #include <d3dcompiler.h>
 #include "graphics_immediate.h"
 #include "graphics_native_constants.h"
-typedef struct {ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count;} FutNativeImmediate;
+typedef struct {ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count,submitted;} FutNativeImmediate;
 /* Upload/bind only: no Draw/consumption. Failure preserves old resources.
  * Used attributes must be completely defined in every vertex. */
 HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *device,

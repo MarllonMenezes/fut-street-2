@@ -1,4 +1,5 @@
 #include "graphics_vertex_program.h"
+#include "graphics_shader_interface.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -57,9 +58,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
     if(screen) emit(&out,"cbuffer VertexSurface:register(b3){float4 vertexSurface;};\n");
     emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\nstruct In{\n");
     for (unsigned i = 0; i < 16; ++i) emit(&out, "float4 v%u:ATTR%u;\n", i, i);
-    emit(&out, "};struct Out{float4 pos:SV_POSITION;float4 screen:TEXCOORD6;float4 col0:COLOR0;float4 col1:COLOR1;"
-        "float fog:FOG;float pts:PSIZE;float4 back0:TEXCOORD4;float4 back1:TEXCOORD5;"
-        "float4 t0:TEXCOORD0;float4 t1:TEXCOORD1;float4 t2:TEXCOORD2;float4 t3:TEXCOORD3;};\n"
+    emit(&out, "};" FUT_GRAPHICS_VARYINGS_HLSL("Out")
         "Out main(In input){float4 r[12];float4 o[16];"
         "for(int z=0;z<12;++z)r[z]=0;for(int k=0;k<16;++k)o[k]=float4(0,0,0,1);\n");
     int ended = 0;

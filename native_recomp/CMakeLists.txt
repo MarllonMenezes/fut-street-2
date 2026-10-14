@@ -164,7 +164,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -194,7 +194,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_link_libraries(graphics_native_immediate_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
         add_test(NAME graphics_native_immediate COMMAND graphics_native_immediate_test)
         set_tests_properties(graphics_native_immediate PROPERTIES TIMEOUT 15)
-        add_executable(graphics_native_backend_test tests/graphics_native_backend_test.c graphics_native_surfaces.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_constants.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c)
+        add_executable(graphics_native_backend_test tests/graphics_native_backend_test.c graphics_native_surfaces.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_constants.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c)
         target_include_directories(graphics_native_backend_test PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
             "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
@@ -202,6 +202,11 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_backend COMMAND graphics_native_backend_test)
         set_tests_properties(graphics_native_backend PROPERTIES TIMEOUT 15)
+        add_executable(graphics_native_draw_test tests/graphics_native_draw_test.c graphics_native_draw.c graphics_native_immediate.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_surfaces.c graphics_native_constants.c)
+        target_include_directories(graphics_native_draw_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_draw_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        add_test(NAME graphics_native_draw COMMAND graphics_native_draw_test)
+        set_tests_properties(graphics_native_draw PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_fragment_test tests/graphics_native_fragment_test.c graphics_native_fragment.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_constants.c)
         target_include_directories(graphics_native_fragment_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_fragment_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)

@@ -2,6 +2,7 @@
 #include "graphics_native_textures.h"
 #include "graphics_native_constants.h"
 #include "graphics_native_fragment.h"
+#include "graphics_shader_interface.h"
 #include <d3dcompiler.h>
 #include <math.h>
 #include <stdio.h>
@@ -121,9 +122,9 @@ static int verify_zero_rgb_pixel_shader(ID3D11Device *device,ID3D11DeviceContext
     FutNativeConstants *completion,ID3D11PixelShader *pixel_shader)
 {
     ID3D11DeviceContext_ClearState(context);
-    const char *source="struct O{float4 p:SV_POSITION;float4 c:COLOR0;};"
-        "O main(uint i:SV_VertexID){O o;float2 v=float2((i<<1)&2,i&2);"
-        "o.p=float4(v*float2(2,-2)+float2(-1,1),.5,1);o.c=float4(.25,.5,.75,.5);return o;}";
+    const char *source=FUT_GRAPHICS_VARYINGS_HLSL("O")
+        "O main(uint i:SV_VertexID){O o=(O)0;float2 v=float2((i<<1)&2,i&2);"
+        "o.pos=float4(v*float2(2,-2)+float2(-1,1),.5,1);o.col0=float4(.25,.5,.75,.5);return o;}";
     ID3DBlob *blob=NULL;ID3D11VertexShader *vertex=NULL;
     CHECK(SUCCEEDED(D3DCompile(source,strlen(source),"zero_rgb_synthetic_vs",NULL,NULL,"main","vs_5_0",0,0,&blob,NULL)),100);
     CHECK(SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(blob),ID3D10Blob_GetBufferSize(blob),NULL,&vertex)),101);

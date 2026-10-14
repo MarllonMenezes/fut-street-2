@@ -12,6 +12,48 @@ static uint32_t guest_word(unsigned offset)
 {
     uint32_t word; memcpy(&word, guest_memory + offset, 4); return word;
 }
+static int verify_draw_receiver(NativeGraphicsState *state)
+{
+    /* Separate synthetic fixture after the refusal tests. No state mutation
+     * of a failed batch is allowed in the production receiver. */
+    state->immediate=(FutGraphicsImmediate){0};
+    state->kelvin=(FutGraphicsKelvinState){0};
+    state->software=(FutGraphicsSoftwareState){0};
+    const uint32_t commands[][2]={
+        {0x2B4,0},{0x2C0,3u<<16},{0x2E0,2u<<16},
+        {0x300,0},{0x304,0},{0x308,0},{0x30C,0},{0x310,0},{0x32C,0},
+        {0x344,1},{0x348,0},{0x350,0x8006},{0x354,0x207},
+        {0x358,0x01010101},{0x35C,1},{0x360,0xFF},{0x364,0x207},{0x368,0},{0x36C,0xFF},
+        {0x370,0x1E00},{0x374,0x1E00},{0x378,0x1E00},{0x37C,0x1D01},
+        {0x38C,0x1B02},{0x390,0x1B02},{0x39C,0x405},{0x3A0,0x901},
+        {0x1E60,1},{0x1E70,0},{0xAC0,0x04200000},{0x260,0x14200000},
+        {0x1E40,0xC00},{0xAA0,0xC00},{0x288,0xC},{0x28C,0x1C00}
+    };
+    for(unsigned i=0;i<sizeof(commands)/sizeof(commands[0]);++i)
+        CHECK(native_method(state,0,commands[i][0],commands[i][1],0),60);
+    const uint32_t program[1][4]={{0,(1u<<21)|0x1Bu,2u<<26,(15u<<12)|0x800u|1u}};
+    memcpy(state->kelvin.program,program,sizeof(program));
+    state->kelvin.program_valid[0]=15;state->kelvin.program_dirty=1;
+    CHECK(native_method(state,0,0x1E94,6,0),61);
+    uint8_t depth_before[72];memcpy(depth_before,guest_memory+0x4000,sizeof(depth_before));
+    CHECK(native_method(state,0,0x17FC,5,0),62);
+    const float points[3][2]={{0,0},{8,0},{0,6}};
+    for(unsigned i=0;i<3;++i) {
+        uint32_t x,y;memcpy(&x,&points[i][0],4);memcpy(&y,&points[i][1],4);
+        CHECK(native_method(state,0,0x1880,x,0) && native_method(state,0,0x1884,y,0),63);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && !state->immediate.ready &&
+        !state->immediate.count && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && native_finish(state),64);
+    for(unsigned i=0;i<12;++i) {
+        uint32_t actual=guest_word(0x3000+i*4);
+        if(actual!=0xFF000000) fprintf(stderr,"synthetic receiver pixel%u=%08X\n",i,actual);
+        CHECK(actual==0xFF000000,65);
+    }
+    CHECK(!memcmp(depth_before,guest_memory+0x4000,sizeof(depth_before)),66);
+    CHECK(state->kelvin.flip_read==0 && state->kelvin.flip_write==0,67);
+    return 0;
+}
 int main(void)
 {
     NativeGraphicsState state = {0}; D3D_FEATURE_LEVEL level;
@@ -156,11 +198,13 @@ int main(void)
     CHECK(!native_prepare_draw(&state) && !state.textures[0].zero_rgb_candidate &&
         state.textures[0].texel_or==0xFF000001 && !state.textures[0].sampling_ready &&
         !native_finish(&state) && state.immediate.ready,51);
+    CHECK(verify_draw_receiver(&state)==0,52);
     fut_native_immediate_destroy(&state.native_immediate);
     fut_native_vertex_surface_destroy(&state.vertex_surface);
     for(unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_surfaces_destroy(&state.native_surfaces);
     fut_native_constants_destroy(&state.native_constants);
+    fut_native_pipeline_destroy(&state.pipeline);
     if(state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
     if(state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     if(state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);

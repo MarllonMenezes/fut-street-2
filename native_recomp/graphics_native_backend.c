@@ -19,6 +19,7 @@
 #include "graphics_native_pipeline.h"
 #include "graphics_software_state.h"
 #include "graphics_native_immediate.h"
+#include "graphics_native_draw.h"
 #include "graphics_vertex_program.h"
 
 static HANDLE backend_stop;
@@ -292,6 +293,11 @@ static int native_prepare_draw(NativeGraphicsState *state)
         return 0;
     }
     if (!native_prepare_vertex(state) || (!candidates && !native_prepare_fragment(state))) return 0;
+    HRESULT linkage=fut_native_fragment_linkage(state->vertex_bytecode,state->pixel_bytecode);
+    if(FAILED(linkage)) {
+        fprintf(stderr,"[GRAPHICS] VS/PS compiled signature mismatch: HRESULT=%08lX; no rasterized draw\n",linkage);
+        return 0;
+    }
     if (!fut_graphics_draw_ready(&state->kelvin.draw)) {
         fprintf(stderr,"[GRAPHICS] incomplete native draw state at use\n");
         return 0;
@@ -413,10 +419,18 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);
             if(status==FUT_IMMEDIATE_APPLIED) return 1;
             if(status!=FUT_IMMEDIATE_READY || !native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
-            /* Upload/preparation is not execution. Keep the batch pending;
-             * screen-space conversion and rasterization require validation. */
-            fprintf(stderr,"[GRAPHICS] immediate rasterization remains untranslated; no draw/completion\n");
-            return 0;
+            unsigned count=state->immediate.count;
+            HRESULT hr=fut_native_draw_immediate(&state->native_immediate,&state->immediate,
+                &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                state->device,state->context,state->vertex_shader,state->pixel_shader,
+                &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop);
+            if(FAILED(hr)) {
+                fprintf(stderr,"[GRAPHICS] immediate draw/completion refused: HRESULT=%08lX submitted=%u dirty=%u; batch not consumed\n",
+                    hr,state->native_immediate.submitted,state->native_surfaces.gpu_dirty);
+                return 0;
+            }
+            fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u; no present/VBlank\n",count);
+            return 1;
         }
         if (method == 0x100u && value) {
             if (!fut_graphics_software_state(&state->software, value, state->kelvin.clear_depth,

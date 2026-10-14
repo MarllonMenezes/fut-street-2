@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_fragment.h"
 #include "graphics_native_constants.h"
+#include "graphics_shader_interface.h"
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -55,8 +56,28 @@ static int verify_math(ID3D11Device *device,ID3D11DeviceContext *context,FutNati
     ID3D11Buffer_Release(staging);ID3D11UnorderedAccessView_Release(uav);ID3D11Buffer_Release(output);
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);return good?0:69;
 }
+static int verify_linkage(void)
+{
+    const char *old_vs="struct O{float4 pos:SV_POSITION;float4 col0:COLOR0;};"
+        "O main(float4 p:POSITION){O o;o.pos=p;o.col0=float4(.25,.5,.75,1);return o;}";
+    const char *new_vs=FUT_GRAPHICS_VARYINGS_HLSL("O")
+        "O main(float4 p:POSITION){O o=(O)0;o.pos=p;o.screen=p;o.col0=float4(.25,.5,.75,1);return o;}";
+    const char *new_ps=FUT_GRAPHICS_VARYINGS_HLSL("O")
+        "float4 main(O i):SV_TARGET{return i.col0;}";
+    ID3DBlob *old=NULL,*current=NULL,*pixel=NULL;
+    CHECK(SUCCEEDED(D3DCompile(old_vs,strlen(old_vs),"old_signature",NULL,NULL,"main","vs_5_0",0,0,&old,NULL)),110);
+    CHECK(SUCCEEDED(D3DCompile(new_vs,strlen(new_vs),"shared_signature",NULL,NULL,"main","vs_5_0",0,0,&current,NULL)),111);
+    CHECK(SUCCEEDED(D3DCompile(new_ps,strlen(new_ps),"shared_signature",NULL,NULL,"main","ps_5_0",0,0,&pixel,NULL)),112);
+    CHECK(fut_native_fragment_linkage(old,pixel)==E_NOTIMPL,113);
+    CHECK(SUCCEEDED(fut_native_fragment_linkage(current,pixel)),114);
+    CHECK(fut_native_fragment_linkage(NULL,pixel)==E_INVALIDARG &&
+        fut_native_fragment_linkage(pixel,current)==E_INVALIDARG,115);
+    ID3D10Blob_Release(old);ID3D10Blob_Release(current);ID3D10Blob_Release(pixel);
+    return 0;
+}
 int main(void)
 {
+    CHECK(verify_linkage()==0,116);
     FutGraphicsFragmentState state;
     configure(&state,0x04200000,0x14200000,0);
     FutGraphicsFragmentState before=state;

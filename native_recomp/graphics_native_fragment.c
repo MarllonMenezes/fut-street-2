@@ -1,9 +1,46 @@
 #define COBJMACROS
 #include "graphics_native_fragment.h"
 #include "graphics_native_pipeline.h"
+#include "graphics_shader_interface.h"
 #include <d3d11shader.h>
 #include <stdio.h>
 #include <string.h>
+
+HRESULT fut_native_fragment_linkage(ID3DBlob *vertex,ID3DBlob *pixel)
+{
+    if(!vertex || !pixel) return E_INVALIDARG;
+    ID3D11ShaderReflection *vs=NULL,*ps=NULL;
+    HRESULT hr=D3DReflect(ID3D10Blob_GetBufferPointer(vertex),ID3D10Blob_GetBufferSize(vertex),
+        &IID_ID3D11ShaderReflection,(void**)&vs);
+    if(SUCCEEDED(hr)) hr=D3DReflect(ID3D10Blob_GetBufferPointer(pixel),ID3D10Blob_GetBufferSize(pixel),
+        &IID_ID3D11ShaderReflection,(void**)&ps);
+    D3D11_SHADER_DESC v,p;
+    if(SUCCEEDED(hr)) hr=vs->lpVtbl->GetDesc(vs,&v);
+    if(SUCCEEDED(hr)) hr=ps->lpVtbl->GetDesc(ps,&p);
+    /* DXBC version token high16: pixel=0, vertex=1. Older MinGW D3D11
+     * headers omit the SHVER macros (D3D12 headers expose the same token). */
+    if(SUCCEEDED(hr) && ((v.Version>>16)!=1 || (p.Version>>16)!=0)) hr=E_INVALIDARG;
+    for(unsigned i=0;SUCCEEDED(hr) && i<p.InputParameters;++i) {
+        D3D11_SIGNATURE_PARAMETER_DESC input;
+        hr=ps->lpVtbl->GetInputParameterDesc(ps,i,&input);
+        if(FAILED(hr)) break;
+        if(!input.ReadWriteMask) continue;
+        int matched=0;
+        for(unsigned j=0;j<v.OutputParameters;++j) {
+            D3D11_SIGNATURE_PARAMETER_DESC output;
+            hr=vs->lpVtbl->GetOutputParameterDesc(vs,j,&output);
+            if(FAILED(hr)) break;
+            if(input.Register==output.Register && input.SemanticIndex==output.SemanticIndex &&
+                !_stricmp(input.SemanticName,output.SemanticName) && input.ComponentType==output.ComponentType &&
+                input.SystemValueType==output.SystemValueType && input.Stream==output.Stream &&
+                (input.ReadWriteMask&output.Mask)==input.ReadWriteMask) {matched=1;break;}
+        }
+        if(SUCCEEDED(hr) && !matched) hr=E_NOTIMPL;
+    }
+    if(vs) vs->lpVtbl->Release(vs);
+    if(ps) ps->lpVtbl->Release(ps);
+    return hr;
+}
 
 static HRESULT no_candidate_resource(ID3DBlob *bytecode,unsigned candidates)
 {
@@ -34,8 +71,7 @@ HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvin
     char math[65536],source[73728];size_t length;
     if(!fut_fragment_program_hlsl(&state->fragment,math,sizeof(math),&length)) return E_NOTIMPL;
     int n=snprintf(source,sizeof(source),"%s%s%s"
-        "struct PSIn{float4 pos:SV_POSITION;float4 col0:COLOR0;float4 col1:COLOR1;"
-        "float fog:FOG;float4 t0:TEXCOORD0;float4 t1:TEXCOORD1;float4 t2:TEXCOORD2;float4 t3:TEXCOORD3;};\n"
+        FUT_GRAPHICS_VARYINGS_HLSL("PSIn")
         "float4 main(PSIn input):SV_TARGET{if(!fut_window_visible(input.pos.xy))discard;\n",
         fut_native_window_hlsl(),fut_native_texture_hlsl(),math);
     if(n<0 || (size_t)n>=sizeof(source)) return E_OUTOFMEMORY;
