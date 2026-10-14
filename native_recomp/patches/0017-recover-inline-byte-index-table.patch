@@ -1,0 +1,424 @@
+diff --git a/tools/disasm/engine.py b/tools/disasm/engine.py
+index db71403..0a32a49 100644
+--- a/tools/disasm/engine.py
++++ b/tools/disasm/engine.py
+@@ -38,6 +38,12 @@ class Instruction:
+     jump_target: Optional[int] = None     # For direct jumps
+     memory_ref: Optional[int] = None      # For [addr] references
+     jump_table: Optional[int] = None      # For `jmp [reg*4 + table]`
++    jump_table_index_reg: Optional[int] = None
++    byte_table_ref: Optional[int] = None  # For `movzx reg, byte ptr [base + table]`
++    byte_table_base_reg: Optional[int] = None
++    byte_table_dest_reg: Optional[int] = None
++    compare_reg: Optional[int] = None
++    compare_imm: Optional[int] = None
+     imm_ref: Optional[int] = None         # For `push offset x` / `mov reg, offset x`
+ 
+     @property
+@@ -94,6 +100,9 @@ class DisasmEngine:
+         # Populated by resync_jump_tables() from the indexed indirect jumps
+         # recorded during the sweep.
+         self.jump_tables: Dict[int, int] = {}
++        # Bounded byte-index tables adjacent to a measured pointer table.
++        # Kept separate because their bytes are not code-pointer entries.
++        self.index_tables: Dict[int, int] = {}
+         self._jt_candidates: Set[int] = set()
+         # Indexed-jump displacement -> the (start, end) of each instruction
+         # that dispatches through it, and -> the table start it resolves to
+@@ -128,6 +137,25 @@ class DisasmEngine:
+         if operands:
+             op = operands[0]
+ 
++            if (mnemonic == "cmp" and len(operands) == 2
++                    and op.type == CS_OP_REG
++                    and operands[1].type == CS_OP_IMM):
++                insn.compare_reg = op.reg
++                insn.compare_imm = operands[1].imm & 0xFFFFFFFF
++
++            if (mnemonic == "movzx" and len(operands) == 2
++                    and op.type == CS_OP_REG
++                    and operands[1].type == CS_OP_MEM
++                    and operands[1].size == 1
++                    and operands[1].mem.base != 0
++                    and operands[1].mem.index == 0):
++                disp = operands[1].mem.disp & 0xFFFFFFFF
++                if self.image.base_address <= disp < (
++                        self.image.base_address + self.image.image_size):
++                    insn.byte_table_ref = disp
++                    insn.byte_table_base_reg = operands[1].mem.base
++                    insn.byte_table_dest_reg = op.reg
++
+             if insn.is_call:
+                 if op.type == CS_OP_IMM:
+                     insn.call_target = op.imm & 0xFFFFFFFF
+@@ -148,6 +176,7 @@ class DisasmEngine:
+                     if self.image.base_address <= disp < (
+                             self.image.base_address + self.image.image_size):
+                         insn.jump_table = disp
++                        insn.jump_table_index_reg = op.mem.index
+                         self._jt_candidates.add(disp)
+                         self._jt_sites.setdefault(disp, []).append(
+                             (insn.address, insn.end_address))
+@@ -324,18 +353,138 @@ class DisasmEngine:
+                 continue
+ 
+             end = tbl + entries * 4
++            index_end = self._adjacent_index_table_end(tbl, end, entries)
++            data_end = index_end or end
+             for insn in self.get_instructions_in_range(
+-                    tbl - 16, end):
+-                if insn.end_address > tbl and insn.address < end:
++                    tbl - 16, data_end):
++                if insn.end_address > tbl and insn.address < data_end:
+                     del self.instructions[insn.address]
+             self._sorted_addrs = None
+ 
+             self.jump_tables[tbl] = end
+-            self.decode_at(end)
++            if index_end is not None:
++                self.index_tables[end] = index_end
++                self._decode_from_proven_entry(index_end)
++            else:
++                self.decode_at(end)
+             resynced += 1
+ 
+         return resynced
+ 
++    def _adjacent_index_table_end(self, jump_table: int, table_end: int,
++                                  jump_entries: int) -> Optional[int]:
++        """Measure a compact byte table only from a guarded MOVZX dispatch.
++
++        Accept the sequence `cmp reg, imm; ja default; movzx reg, byte ptr
++        [reg + table_end]; jmp [reg*4 + jump_table]`. The inclusive bound
++        supplies the exact size; each byte must select a measured pointer
++        entry, and the end must already be a decoded instruction boundary.
++        """
++        for dispatch in self.instructions.values():
++            if not dispatch.is_jump or dispatch.jump_table != jump_table:
++                continue
++            before_dispatch = self.get_instructions_in_range(
++                max(0, dispatch.address - 16), dispatch.address
++            )
++            if not before_dispatch:
++                continue
++            load = before_dispatch[-1]
++            if (load.end_address != dispatch.address
++                    or load.byte_table_ref != table_end
++                    or load.byte_table_dest_reg is None
++                    or load.byte_table_dest_reg != dispatch.jump_table_index_reg):
++                continue
++            before_load = self.get_instructions_in_range(
++                max(0, load.address - 8), load.address
++            )
++            if not before_load:
++                continue
++            guard = before_load[-1]
++            before_guard = self.get_instructions_in_range(
++                max(0, guard.address - 8), guard.address
++            )
++            if not before_guard:
++                continue
++            compare = before_guard[-1]
++            if (compare.end_address != guard.address
++                    or not guard.is_cond_jump or guard.mnemonic != "ja"
++                    or guard.end_address != load.address
++                    or compare.compare_reg != load.byte_table_base_reg
++                    or compare.compare_imm is None
++                    or compare.compare_imm >= 256):
++                continue
++
++            length = compare.compare_imm + 1
++            end = table_end + length
++            section = self.image.get_section_at_va(table_end)
++            boundary_is_known = end in self.instructions or any(
++                insn.call_target == end or insn.jump_target == end
++                for insn in self.instructions.values()
++            )
++            if (section is None
++                    or end > section.virtual_addr + section.virtual_size
++                    or not boundary_is_known):
++                continue
++            values = self.image.read_bytes_at_va(table_end, length)
++            if (values is None or len(values) != length
++                    or any(value >= jump_entries for value in values)):
++                continue
++            if any(
++                    not (jump_table <= insn.address < table_end)
++                    and (
++                    (insn.call_target is not None
++                     and table_end <= insn.call_target < end)
++                    or (insn.jump_target is not None
++                        and table_end <= insn.jump_target < end))
++                    for insn in self.instructions.values()):
++                continue
++            return end
++        return None
++
++    def _decode_from_proven_entry(self, addr: int,
++                                  max_insns: int = 64) -> int:
++        """Re-decode a bounded stream from a directly referenced code entry.
++
++        A linear sweep through an adjacent byte table can leave instruction
++        starts overlapping the first real instruction after the table. This
++        routine trusts only the already-proven entry, replaces conflicting
++        decodes until the new stream reaches an identical existing instruction,
++        and then stops to preserve any other x86 overlapping streams.
++        """
++        section = self.image.get_section_at_va(addr)
++        if section is None or not section.executable:
++            return 0
++        data = self.image.get_section_data(section)
++        offset = addr - section.virtual_addr
++        if offset < 0 or offset >= len(data):
++            return 0
++
++        decoded_count = 0
++        for decoded in self._cs.disasm(data[offset:], addr):
++            if decoded_count >= max_insns:
++                break
++            replacement = self._classify_instruction(decoded)
++            existing = self.instructions.get(decoded.address)
++            if (decoded.address != addr and existing is not None
++                    and existing.size == replacement.size
++                    and existing.mnemonic == replacement.mnemonic
++                    and existing.bytes_hex == replacement.bytes_hex):
++                break
++
++            overlap_start = max(section.virtual_addr,
++                                decoded.address - 15)
++            for old in self.get_instructions_in_range(
++                    overlap_start, decoded.address + decoded.size):
++                if (old.address != decoded.address
++                        and old.end_address > decoded.address):
++                    del self.instructions[old.address]
++            self.instructions[decoded.address] = replacement
++            self._sorted_addrs = None
++            decoded_count += 1
++            if replacement.is_terminator:
++                break
++        return decoded_count
++
+     def jump_table_entries(self, tbl: int) -> List[int]:
+         """Code pointers held by a resynced jump table, or [] if unknown."""
+         tbl = self._jt_base.get(tbl, tbl)
+diff --git a/tools/disasm/functions.py b/tools/disasm/functions.py
+index 484db2b..a7fab68 100644
+--- a/tools/disasm/functions.py
++++ b/tools/disasm/functions.py
+@@ -37,6 +37,7 @@ class Function:
+     # Instruction stats
+     num_instructions: int = 0
+     has_prologue: bool = False
++    data_ranges: List[Tuple[int, int]] = field(default_factory=list)
+ 
+     @property
+     def size(self) -> int:
+@@ -53,6 +54,10 @@ class Function:
+             "detection_method": self.detection_method,
+             "num_instructions": self.num_instructions,
+             "has_prologue": self.has_prologue,
++            "data_ranges": [
++                {"start": f"0x{start:08X}", "end": f"0x{end:08X}"}
++                for start, end in self.data_ranges
++            ],
+             "calls_to": [f"0x{a:08X}" for a in self.calls_to],
+             "called_by": [f"0x{a:08X}" for a in self.called_by],
+         }
+@@ -175,6 +180,26 @@ class FunctionDetector:
+             self._build_functions(sections)
+             self._build_alias_entries()
+ 
++        # Preserve the measured byte-index data ranges for downstream
++        # translation. Function bounds may legitimately span inline tables;
++        # consumers must not re-decode those bytes as instructions.
++        for func in self.functions.values():
++            ranges = sorted(
++                (start, end) for start, end in [
++                    *self.engine.jump_tables.items(),
++                    *self.engine.index_tables.items(),
++                ]
++                if func.start <= start and end <= func.end
++            )
++            func.data_ranges = []
++            for start, end in ranges:
++                if func.data_ranges and start <= func.data_ranges[-1][1]:
++                    previous_start, previous_end = func.data_ranges[-1]
++                    func.data_ranges[-1] = (previous_start,
++                                            max(previous_end, end))
++                else:
++                    func.data_ranges.append((start, end))
++
+         # Populate call graph
+         self._build_call_graph()
+ 
+@@ -1246,7 +1271,8 @@ class FunctionDetector:
+             # step over the table and carry on with the real code after it.
+             # Without this the function ends at its own switch and loses the
+             # epilogue, which is how callers of memcpy lost esi/edi.
+-            tbl_end = self.engine.jump_tables.get(addr)
++            tbl_end = (self.engine.jump_tables.get(addr)
++                       or getattr(self.engine, "index_tables", {}).get(addr))
+             if tbl_end is not None and tbl_end <= upper:
+                 if tbl_end > max_addr:
+                     max_addr = tbl_end
+@@ -1331,7 +1357,8 @@ class FunctionDetector:
+         it may align first, so allow a few padding bytes.
+         """
+         for start in range(addr, addr + 16):
+-            end = self.engine.jump_tables.get(start)
++            end = (self.engine.jump_tables.get(start)
++                   or getattr(self.engine, "index_tables", {}).get(start))
+             if end is not None and end <= upper:
+                 return end
+         return None
+diff --git a/tools/disasm/test_returning_body_switch.py b/tools/disasm/test_returning_body_switch.py
+index ec0c7e0..49c3ab5 100644
+--- a/tools/disasm/test_returning_body_switch.py
++++ b/tools/disasm/test_returning_body_switch.py
+@@ -115,3 +115,43 @@ def test_an_immediate_that_names_a_switch_function_becomes_a_function():
+     # ...and none of its arms was mistaken for a function of its own.
+     for arm in (fn + 7, fn + 10, fn + 16):
+         assert arm not in det.functions, hex(arm)
++
++
++def test_guarded_movzx_byte_index_table_after_pointer_table_is_data():
++    # cmp eax, 3; ja default; movzx eax, byte ptr [eax + INDEX_TABLE];
++    # jmp dword ptr [eax*4 + POINTER_TABLE]. The bounded byte map follows the
++    # measured code-pointer table and must not become decoded instructions.
++    # A direct call proves the compact table's end even though the linear
++    # sweep decodes across the last table bytes and misses that boundary.
++    index_table = BASE + 104
++    pointer_table = BASE + 48
++    index_end = index_table + 24
++    data = bytearray(b"\xE8" + struct.pack("<i", index_end - (BASE + 5)))
++    data += b"\x90" * 3
++    data += b"\x83\xF8\x17\x77\x1D"
++    data += b"\x0F\xB6\x80" + struct.pack("<I", index_table)
++    data += b"\xFF\x24\x85" + struct.pack("<I", pointer_table)
++    arm0 = BASE + len(data)
++    data += b"\x31\xC0\xC3"
++    arm1 = BASE + len(data)
++    data += b"\xB8\x01\x00\x00\x00\xC3"
++    arm2 = BASE + len(data)
++    data += b"\xB8\x02\x00\x00\x00\xC3"
++    arm3 = BASE + len(data)
++    data += b"\x31\xC0\xC3"
++    data += b"\x90" * (pointer_table - BASE - len(data))
++    pointer_targets = (arm0, arm1, arm2, arm3) * 4
++    data += struct.pack("<14I", *pointer_targets[:14])
++    data += bytes((0, 1, 2, 3, 4, 5, 6, 5, 6, 7, 7, 8,
++                   8, 9, 7, 8, 8, 10, 11, 9, 12, 8, 13, 8))
++    data += b"\x8B\x44\x24\x04\xA3\xF4\xFE\x34\x00\xC3"
++
++    engine, _image = _engine(bytes(data) + b"\xCC" * 16)
++
++    assert engine.jump_tables[pointer_table] == index_table
++    assert engine.index_tables[index_table] == index_end
++    assert all(engine.get_instruction(addr) is None
++               for addr in range(index_table, index_end))
++    assert engine.get_instruction(index_end).mnemonic == "mov"
++    assert engine.get_instruction(index_end + 4).mnemonic == "mov"
++    assert engine.get_instruction(index_end + 3) is None
+diff --git a/tools/recomp/disasm.py b/tools/recomp/disasm.py
+index a7296bf..3be124f 100644
+--- a/tools/recomp/disasm.py
++++ b/tools/recomp/disasm.py
+@@ -195,7 +195,8 @@ class Disassembler:
+ 
+         return insn
+ 
+-    def disassemble_function(self, raw_bytes, start_va, end_va, resync=None):
++    def disassemble_function(self, raw_bytes, start_va, end_va, resync=None,
++                             data_ranges=None):
+         """
+         Disassemble bytes for a single function.
+         Returns list of Instruction objects.
+@@ -223,7 +224,31 @@ class Disassembler:
+         for cs_insn in self._cs.disasm(raw_bytes[:size], start_va):
+             decoded[cs_insn.address] = self._decode_instruction(cs_insn)
+ 
+-        for point in sorted(resync or ()):
++        resync_points = set(resync or ())
++        ranges = sorted((max(start_va, lower), min(end_va, upper))
++                        for lower, upper in (data_ranges or ())
++                        if lower < end_va and upper > start_va)
++        merged_ranges = []
++        for lower, upper in ranges:
++            if lower >= upper:
++                continue
++            if merged_ranges and lower <= merged_ranges[-1][1]:
++                merged_ranges[-1] = (
++                    merged_ranges[-1][0],
++                    max(merged_ranges[-1][1], upper),
++                )
++            else:
++                merged_ranges.append((lower, upper))
++
++        for lower, upper in merged_ranges:
++            for addr, insn in list(decoded.items()):
++                if addr < upper and lower < addr + insn.size:
++                    del decoded[addr]
++            decoded.pop(upper, None)
++            if upper < end_va:
++                resync_points.add(upper)
++
++        for point in sorted(resync_points):
+             if not (start_va <= point < end_va) or point in decoded:
+                 continue
+             for addr in [a for a, i in decoded.items()
+diff --git a/tools/recomp/test_disasm_resync_interior.py b/tools/recomp/test_disasm_resync_interior.py
+index f612aa5..bf2bc5b 100644
+--- a/tools/recomp/test_disasm_resync_interior.py
++++ b/tools/recomp/test_disasm_resync_interior.py
+@@ -38,3 +38,20 @@ def test_no_misaligned_instruction_survives_inside_the_arm():
+     assert [i.address - BASE for i in insns if 2 <= i.address - BASE < 10] == [2, 6]
+     mnemonics = {i.mnemonic for i in insns if BASE + 2 <= i.address < BASE + 10}
+     assert "inc" not in mnemonics and "pop" not in mnemonics
++
++
++def test_inline_data_range_redecodes_and_drops_overlapping_stream():
++    # The byte table is 0D 08. Linear decoding treats those bytes plus the
++    # first three bytes of MOV as an `or`-family instruction, then starts an
++    # `add al, imm8` inside the real MOV. A proven data range resyncs at +3.
++    code = bytes.fromhex("c3" "0d08" "8b442404" "a3f4fe3400" "c3")
++    insns = Disassembler().disassemble_function(
++        code, BASE, BASE + len(code),
++        data_ranges=[(BASE + 1, BASE + 3)],
++    )
++    starts = [insn.address - BASE for insn in insns]
++    assert 3 in starts and 7 in starts and 12 in starts
++    assert 6 not in starts
++    assert [insn.mnemonic for insn in insns if 3 <= insn.address - BASE < 12] == [
++        "mov", "mov",
++    ]
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+index 21f7ba1..3909ed5 100644
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -2074,10 +2074,24 @@ class FunctionTranslator:
+         self.lifter.func_end = end
+         validated_jump_tables = recovered["jump_tables"] if recovered else None
+         self.lifter.icall_site_targets = self.icall_sites
++        function_info = self.func_db.get(start, {})
++        data_ranges = []
++        for value in function_info.get("data_ranges", ()):
++            lower, upper = (value.get("start"), value.get("end")) \
++                if isinstance(value, dict) else value
++            lower = int(lower, 0) if isinstance(lower, str) else int(lower)
++            upper = int(upper, 0) if isinstance(upper, str) else int(upper)
++            data_ranges.append((lower, upper))
+ 
+         # Disassemble
+-        instructions = (recovered["instructions"] if recovered else
+-                        self.disasm.disassemble_function(raw_bytes, start, end))
++        if recovered:
++            instructions = recovered["instructions"]
++        elif data_ranges:
++            instructions = self.disasm.disassemble_function(
++                raw_bytes, start, end, data_ranges=data_ranges)
++        else:
++            instructions = self.disasm.disassemble_function(
++                raw_bytes, start, end)
+         if not instructions:
+             return [], []
+         authoritative_jump_tables = self._authoritative_jump_tables(
