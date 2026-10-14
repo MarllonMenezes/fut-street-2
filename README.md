@@ -20,7 +20,30 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
 - Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
 
-## Estado verificável — release 2.18
+## Estado verificável — release 2.19
+
+O release 2.19 fecha uma lacuna de auditoria dos saltos indiretos de cauda.
+No subgrafo diretamente alcançável pela entrada `0x0024D8BE`, há `1`
+`RECOMP_ITAIL`, em `sub_00272683` (`recomp_0052.c:9827`). A nova checagem
+reconhece somente o padrão local de `switch` que compara `_jt` com os braços
+traduzidos e lê, sem executar o XBE, a tabela em `0x00272DEA`. As `8/8`
+entradas do XBE coincidem exatamente com os `8/8` alvos locais:
+`indirect_tail_switch_verified_sites=1`,
+`indirect_tail_switch_mismatched_sites=0` e
+`indirect_tail_switch_unresolved_sites=0`.
+
+Isso prova a consistência estática dessa tabela de fallback; não prova que um
+índice runtime válido seja produzido, que o salto aconteça, nem que qualquer
+alvo arbitrário seja seguro. O macro `RECOMP_ITAIL` continua sendo uma rota de
+lookup registrada, não uma prova de execução do código guest. Os sete
+callbacks dinâmicos seguem sem destino final provado, portanto a prontidão
+continua `NOT_READY` e a estimativa conservadora do PoC jogável permanece em
+aproximadamente `31% concluído / 69% restante`.
+
+A suíte Python desta release passou `101/101`; os gates de compilação e os
+testes CMake da release anterior continuam verdes.
+
+### Release 2.18 — gate da tabela de despacho gerada
 
 O release 2.18 fecha uma lacuna de verificação do despacho indireto: os testes
 de suporte continuam exercitando apenas a barreira de segurança com lookup

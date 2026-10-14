@@ -42,6 +42,20 @@ INDIRECT_CALL_RE = re.compile(
     r"_icall_target\s*=\s*(?P<expression>[^;]+);.*?"
     r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*0x(?P<site>[0-9A-Fa-f]{8})u\)"
 )
+INDIRECT_TAIL_SWITCH_HEADER_RE = re.compile(
+    r"^\s*\{\s*uint32_t\s+_jt\s*=\s*MEM32\((?P<expression>[^)]+)\);"
+    r"\s*/\*\s*switch:\s*(?P<entries>[0-9]+)\s+entries,\s*"
+    r"(?P<targets>[0-9]+)\s+targets\s*\*/"
+)
+INDIRECT_TAIL_SWITCH_TARGET_RE = re.compile(
+    r"^\s*if\s*\(_jt\s*==\s*0x(?P<value>[0-9A-Fa-f]{1,8})u\)\s+"
+    r"goto\s+(?P<label>loc_[0-9A-Fa-f]+);"
+)
+INDIRECT_TAIL_RE = re.compile(r"\bRECOMP_ITAIL\((?P<target>[^)]+)\)")
+INDIRECT_TAIL_TABLE_EXPRESSION_RE = re.compile(
+    r"^(?P<index>[A-Za-z_][A-Za-z0-9_]*)\s*\*\s*4\s*\+\s*"
+    r"0x(?P<base>[0-9A-Fa-f]{1,8})$"
+)
 DIRECT_ABI_CALL_RE = re.compile(
     r"RECOMP_ABI_CALL\(0x(?P<target>[0-9A-Fa-f]{8})u,\s*"
     r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\)"
@@ -444,6 +458,138 @@ def recover_indirect_sites(
     if not sites:
         raise ValueError("no indirect calls found in directly reachable generated code")
     return sites
+
+
+def recover_indirect_tail_switch_provenance(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int],
+    xbe: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Verify XBE values for generated ``RECOMP_ITAIL`` switch fallbacks.
+
+    This is deliberately limited to the generated pattern that compares a
+    table-loaded ``_jt`` value against local labels before falling back to
+    ``RECOMP_ITAIL(_jt)``.  It proves that the read-only XBE table values match
+    the translated switch arms; it does not prove that a runtime index is
+    valid, that the tail path executes, or that arbitrary runtime targets are
+    safe.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    rows: list[dict[str, Any]] = []
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        current: int | None = None
+        function_start_line = 0
+        for line_index, line in enumerate(lines):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+                function_start_line = line_index
+            if current is None or current not in directly_reachable:
+                continue
+            tail_match = INDIRECT_TAIL_RE.search(line)
+            if tail_match is None:
+                continue
+
+            row: dict[str, Any] = {
+                "function": f"0x{current:08X}",
+                "function_name": str(function_by_address[current].get("name", "")),
+                "tail_target_expression": tail_match.group("target").strip(),
+                "source": f"{source_path.name}:{line_index + 1}",
+                "status": "indirect-tail-no-static-switch-provenance",
+            }
+            header_index: int | None = None
+            header_match: re.Match[str] | None = None
+            for candidate in range(line_index - 1, function_start_line - 1, -1):
+                if "}" in lines[candidate]:
+                    break
+                candidate_match = INDIRECT_TAIL_SWITCH_HEADER_RE.match(lines[candidate])
+                if candidate_match is not None:
+                    header_index = candidate
+                    header_match = candidate_match
+                    break
+            if header_match is None or header_index is None:
+                rows.append(row)
+                continue
+
+            expression = header_match.group("expression").strip()
+            declared_entries = int(header_match.group("entries"), 10)
+            declared_targets = int(header_match.group("targets"), 10)
+            target_values = [
+                int(match.group("value"), 16)
+                for candidate in lines[header_index + 1 : line_index + 1]
+                if (match := INDIRECT_TAIL_SWITCH_TARGET_RE.match(candidate))
+            ]
+            target_labels = [
+                match.group("label")
+                for candidate in lines[header_index + 1 : line_index + 1]
+                if (match := INDIRECT_TAIL_SWITCH_TARGET_RE.match(candidate))
+            ]
+            row.update(
+                {
+                    "switch_table_expression": expression,
+                    "switch_declared_entry_count": declared_entries,
+                    "switch_declared_target_count": declared_targets,
+                    "switch_target_values": [f"0x{value:08X}" for value in target_values],
+                    "switch_target_labels": target_labels,
+                }
+            )
+            table_match = INDIRECT_TAIL_TABLE_EXPRESSION_RE.fullmatch(expression)
+            if table_match is None:
+                row["status"] = "switch-table-expression-unresolved"
+                rows.append(row)
+                continue
+
+            table_base = int(table_match.group("base"), 16)
+            row["switch_table_base"] = f"0x{table_base:08X}"
+            row["switch_table_index_expression"] = table_match.group("index")
+            data = xbe["data"]
+            sections = xbe["sections"]
+            table_values: list[int] = []
+            table_read_failure = False
+            for index in range(declared_entries):
+                table_address = table_base + index * 4
+                file_offset = _file_offset(sections, len(data), table_address)
+                if file_offset is None or file_offset + 4 > len(data):
+                    table_read_failure = True
+                    break
+                table_values.append(_u32(data, file_offset))
+            row["switch_table_values"] = [
+                f"0x{value:08X}" for value in table_values
+            ]
+            if table_read_failure:
+                row["status"] = "switch-table-read-unresolved"
+            elif (
+                declared_entries == declared_targets
+                and len(target_values) == declared_targets
+                and sorted(table_values) == sorted(target_values)
+            ):
+                row["status"] = "static-table-entries-match-switch-targets"
+            elif len(table_values) == declared_entries and all(
+                value in set(target_values) for value in table_values
+            ):
+                row["status"] = "static-table-values-match-local-switch-branches"
+            else:
+                row["status"] = "switch-target-set-mismatch"
+            row["switch_table_unexpected_values"] = [
+                f"0x{value:08X}"
+                for value in table_values
+                if value not in set(target_values)
+            ]
+            row["switch_targets_missing_from_table"] = [
+                f"0x{value:08X}"
+                for value in target_values
+                if value not in set(table_values)
+            ]
+            rows.append(row)
+    return rows
 
 
 def recover_runtime_fixed_slot_initializers(
@@ -3685,6 +3831,9 @@ def audit(
         generated_dir, functions, None
     )
     xbe = load_xbe_layout(xbe_path)
+    indirect_tail_switch_provenance = recover_indirect_tail_switch_provenance(
+        generated_dir, functions, directly_reachable, xbe
+    )
     classified = classify_sites(
         sites,
         xbe,
@@ -4269,12 +4418,49 @@ def audit(
         == "local-linear-source-assignments-observed"
     ]
     aliased_sites = [row for row in classified if row.get("classification_source") == "linear-register-alias"]
+    verified_indirect_tail_statuses = {
+        "static-table-entries-match-switch-targets",
+        "static-table-values-match-local-switch-branches",
+    }
+    indirect_tail_switch_sites = [
+        row
+        for row in indirect_tail_switch_provenance
+        if "switch_table_expression" in row
+    ]
     summary = {
         "entry_point": f"0x{entry:08X}",
         "directly_reachable_functions": len(directly_reachable),
         "direct_external_call_targets": len(external_targets),
         "indirect_call_sites": len(classified),
         "functions_with_indirect_calls": len({row["function"] for row in classified}),
+        "indirect_tail_sites": len(indirect_tail_switch_provenance),
+        "indirect_tail_switch_sites": len(indirect_tail_switch_sites),
+        "indirect_tail_switch_verified_sites": sum(
+            row["status"] in verified_indirect_tail_statuses
+            for row in indirect_tail_switch_sites
+        ),
+        "indirect_tail_switch_unresolved_sites": sum(
+            row["status"] not in verified_indirect_tail_statuses
+            for row in indirect_tail_switch_sites
+        ),
+        "indirect_tail_switch_mismatched_sites": sum(
+            row["status"] == "switch-target-set-mismatch"
+            for row in indirect_tail_switch_sites
+        ),
+        "indirect_tail_switch_status": (
+            "no-indirect-tail-sites"
+            if not indirect_tail_switch_provenance
+            else (
+                "verified-static-tail-switch-table-provenance"
+                if len(indirect_tail_switch_sites)
+                == len(indirect_tail_switch_provenance)
+                and all(
+                    row["status"] in verified_indirect_tail_statuses
+                    for row in indirect_tail_switch_provenance
+                )
+                else "incomplete-static-tail-switch-table-provenance"
+            )
+        ),
         "fixed_slot_sites": len(fixed_slots),
         "unique_fixed_slots": len({row["fixed_slot"] for row in fixed_slots}),
         "linear_register_alias_sites": len(aliased_sites),
@@ -5199,6 +5385,7 @@ def audit(
         "dynamic_callback_object_field_provenance": (
             dynamic_callback_object_field_provenance
         ),
+        "indirect_tail_switch_provenance": indirect_tail_switch_provenance,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "dynamic_indexed_callback_table_provenance": indexed_callback_table_provenance,
         "dynamic_indexed_callback_table_all_provenance": (

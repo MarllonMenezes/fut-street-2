@@ -27,6 +27,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     classify_kernel_bridge_argument_use,
     recover_indexed_callback_table_provenance,
     recover_dynamic_indexed_callback_consumer_layout,
+    recover_indirect_tail_switch_provenance,
     recover_kernel_call_argument_counts,
     recover_kernel_constant_arguments,
     recover_kernel_register_constant_arguments,
@@ -123,6 +124,67 @@ void sub_00001020(void)
         self.assertEqual(summary["kernel_thunk_table_entries"], 1)
         self.assertEqual(result["sites"][0]["kernel_ordinal"], 0x42)
         self.assertEqual(result["sites"][2]["classification_source"], "linear-register-alias")
+
+    def test_verifies_indirect_tail_switch_table_against_xbe(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1030",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    { uint32_t _jt = MEM32(eax * 4 + 0x10100); /* switch: 2 entries, 2 targets */
+        if (_jt == 0x00001010u) goto loc_00001010;
+        if (_jt == 0x00001020u) goto loc_00001020;
+        g_seh_ebp = ebp; RECOMP_ITAIL(_jt); return; }
+loc_00001010: ;
+loc_00001020: ;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            data = bytearray(0x400)
+            base = 0x10000
+            data[:4] = b"XBEH"
+            struct.pack_into("<I", data, 0x104, base)
+            struct.pack_into("<I", data, 0x11C, 1)
+            struct.pack_into("<I", data, 0x120, base + 0x200)
+            struct.pack_into(
+                "<IIIII", data, 0x200, 0x5, base, len(data), 0, len(data)
+            )
+            struct.pack_into("<II", data, 0x100, 0x00001010, 0x00001020)
+            xbe = {
+                "data": bytes(data),
+                "sections": [
+                    {
+                        "virtual_address": base,
+                        "virtual_size": len(data),
+                        "file_address": 0,
+                        "file_size": len(data),
+                    }
+                ],
+            }
+            rows = recover_indirect_tail_switch_provenance(
+                generated, functions, {0x1000}, xbe
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0]["status"], "static-table-entries-match-switch-targets"
+        )
+        self.assertEqual(rows[0]["switch_table_base"], "0x00010100")
+        self.assertEqual(
+            rows[0]["switch_table_values"], ["0x00001010", "0x00001020"]
+        )
 
     def test_preserves_dynamic_memory_provenance(self) -> None:
         functions = [
