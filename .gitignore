@@ -52,6 +52,10 @@
 !/native_recomp/no_emulation_optional_hooks.c
 !/native_recomp/recomp_runtime_diagnostics.c
 !/native_recomp/host_bootstrap.c
+!/native_recomp/graphics_command_stream.c
+!/native_recomp/graphics_command_stream.h
+!/native_recomp/graphics_native_backend.c
+!/native_recomp/graphics_native_backend.h
 !/native_recomp/tests/
 /native_recomp/tests/*
 !/native_recomp/tests/*.c

@@ -1,5 +1,7 @@
 #include "recomp_types.h"
 #include "xbox_memory_layout.h"
+#include "graphics_command_stream.h"
+#include "graphics_native_backend.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -114,6 +116,111 @@ static int validate_preflight_dynamic_guards(void)
     return 1;
 }
 
+/* Read-only snapshots of the title's D3D command/fence state. Addresses and
+ * field offsets come from its disassembly at 0x002931B0/0x00293500. Sampling
+ * does not acknowledge DMA, advance a fence, or signal a guest event. */
+static int snapshot_read32(uint32_t va, uint32_t *value)
+{
+    SIZE_T copied = 0;
+    if (va > UINT32_MAX - 3u)
+        return 0;
+    return ReadProcessMemory(GetCurrentProcess(),
+        (const void *)((uintptr_t)xbox_GetMemoryOffset() + va),
+        value, sizeof(*value), &copied) && copied == sizeof(*value);
+}
+
+typedef struct {
+    unsigned release_words;
+} GraphicsSnapshotMethods;
+
+static int snapshot_method(void *context, unsigned subchannel,
+                           uint32_t method, uint32_t value, size_t offset)
+{
+    GraphicsSnapshotMethods *methods = context;
+    if (method == 0)
+        fprintf(stderr, "[GRAPHICS-STREAM] object binding sub=%u handle=%08X offset=%zu\n",
+                subchannel, value, offset);
+    if (subchannel == 0 && method == 0x1D70u) {
+        ++methods->release_words;
+        fprintf(stderr, "[GRAPHICS-STREAM] release word=%08X offset=%zu (decoded only)\n",
+                value, offset);
+    }
+    return 1; /* Inspection accepted the word; no renderer work was executed. */
+}
+
+static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
+{
+    for (unsigned sample = 0; sample < 12; ++sample) {
+        uint32_t device = 0, start = 0, end = 0, submitted = 0;
+        uint32_t consumer_ptr = 0, consumed = 0, channel = 0, put = 0, get = 0;
+        uint32_t write_ptr = 0, fence_tag = 0, fence_end = 0;
+        uint32_t pfifo_put = 0, pfifo_get = 0;
+        if (WaitForSingleObject((HANDLE)stop_event, 1000) != WAIT_TIMEOUT)
+            break;
+        if (!snapshot_read32(0x0029E968u, &device) || !device ||
+            device > UINT32_MAX - 0x1C28u) {
+            fprintf(stderr, "[GRAPHICS-SNAPSHOT] device not initialized\n");
+            continue;
+        }
+        snapshot_read32(device, &write_ptr);
+        snapshot_read32(device + 0x24u, &start);
+        snapshot_read32(device + 0x28u, &end);
+        snapshot_read32(device + 0x2Cu, &submitted);
+        snapshot_read32(device + 0x30u, &consumer_ptr);
+        const int consumer_valid = consumer_ptr && snapshot_read32(consumer_ptr, &consumed);
+        snapshot_read32(device + 0x1C20u, &channel);
+        if (channel && channel <= UINT32_MAX - 0x44u) {
+            snapshot_read32(channel + 0x40u, &put);
+            snapshot_read32(channel + 0x44u, &get);
+        }
+        /* Descriptor selected for fence 11 by the observed init call. */
+        snapshot_read32(device + 0x8Cu, &fence_tag);
+        snapshot_read32(device + 0x90u, &fence_end);
+        snapshot_read32(0xFD003240u, &pfifo_put);
+        snapshot_read32(0xFD003244u, &pfifo_get);
+        fprintf(stderr,
+            "[GRAPHICS-SNAPSHOT] sample=%u device=%08X write=%08X ring=[%08X,%08X) "
+            "submitted=%08X consumer_ptr=%08X consumed=%08X valid=%d "
+            "channel=%08X put=%08X get=%08X pfifo_put=%08X pfifo_get=%08X "
+            "fence11_tag=%08X fence11_end=%08X\n",
+            sample, device, write_ptr, start, end, submitted, consumer_ptr,
+            consumed, consumer_valid, channel, put, get, pfifo_put, pfifo_get,
+            fence_tag, fence_end);
+        const uint32_t submitted_end = put | 0x80000000u;
+        if (sample == 0 && start && submitted_end > start &&
+            submitted_end <= end && submitted_end - start <= 65536u) {
+            uint8_t bytes[65536];
+            SIZE_T copied = 0;
+            if (ReadProcessMemory(GetCurrentProcess(),
+                    (const void *)((uintptr_t)xbox_GetMemoryOffset() + start),
+                    bytes, submitted_end - start, &copied) && copied == submitted_end - start) {
+                HANDLE dump = CreateFileA("graphics-pushbuffer.bin", GENERIC_WRITE,
+                    0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (dump != INVALID_HANDLE_VALUE) {
+                    DWORD written = 0;
+                    if (WriteFile(dump, bytes, (DWORD)copied, &written, NULL) &&
+                        written == copied)
+                        fprintf(stderr, "[GRAPHICS-SNAPSHOT] captured %lu bytes from %08X\n",
+                                written, start);
+                    CloseHandle(dump);
+                }
+                FutGraphicsDecodeResult decoded;
+                GraphicsSnapshotMethods methods = {0};
+                const FutGraphicsDecodeStatus status = fut_graphics_decode(
+                    bytes, copied, snapshot_method, &methods, &decoded);
+                fprintf(stderr, "[GRAPHICS-STREAM] status=%d bytes=%zu packets=%zu "
+                        "methods=%zu release_words=%u blocked_offset=%zu "
+                        "blocked_header=%08X execution=none\n",
+                        status, decoded.decoded_bytes, decoded.packets,
+                        decoded.methods, methods.release_words,
+                        decoded.blocked_offset, decoded.blocked_header);
+            }
+        }
+        fflush(stderr);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     void *xbe_data = NULL;
@@ -122,6 +229,8 @@ int main(int argc, char **argv)
     int memory_ready = 0;
     int kernel_ready = 0;
     int result = 1;
+    HANDLE snapshot_stop = NULL;
+    HANDLE snapshot_thread = NULL;
 
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("Fut Street 2 static recompilation host");
@@ -130,6 +239,13 @@ int main(int argc, char **argv)
         puts("Usage: fut-street-2-recompiled --launch <default.xbe> <game-data-directory> <save-directory>");
         puts("This build excludes the XboxRecomp NV2A/APU emulators.");
         return 0;
+    }
+    /* The optional survey hooks in this build do not execute GPU commands.
+     * They must never authorize DMA completion in the shared runtime. */
+    if (_putenv_s("RECOMP_EXTERNAL_GRAPHICS_COMPLETION", "1") != 0 ||
+        !SetEnvironmentVariableA("RECOMP_EXTERNAL_GRAPHICS_COMPLETION", "1")) {
+        fprintf(stderr, "Cannot select native graphics completion ownership.\n");
+        return 1;
     }
     if ((argc == 3 || argc == 5) && strcmp(argv[1], "--preflight") == 0) {
         const int runtime_preflight = argc == 5;
@@ -242,10 +358,32 @@ int main(int argc, char **argv)
             "Calling translated entry 0x%08X in experimental bring-up; "
             "this is not a validated game runtime.\n",
             FUT_STREET_2_ENTRY_POINT);
+    if (environment_variable_is_set("RECOMP_GRAPHICS_SNAPSHOT")) {
+        snapshot_stop = CreateEventA(NULL, TRUE, FALSE, NULL);
+        if (snapshot_stop)
+            snapshot_thread = CreateThread(NULL, 0, graphics_snapshot_thread,
+                                           snapshot_stop, 0, NULL);
+        if (!snapshot_stop || !snapshot_thread) {
+            fprintf(stderr, "Cannot start read-only graphics snapshot.\n");
+            goto cleanup;
+        }
+    }
+    if (!fut_graphics_native_start()) {
+        fprintf(stderr, "Cannot start native graphics backend.\n");
+        goto cleanup;
+    }
     entry();
     result = 0;
 
 cleanup:
+    fut_graphics_native_stop();
+    if (snapshot_thread) {
+        SetEvent(snapshot_stop);
+        WaitForSingleObject(snapshot_thread, INFINITE);
+        CloseHandle(snapshot_thread);
+    }
+    if (snapshot_stop)
+        CloseHandle(snapshot_stop);
     if (kernel_ready)
         xbox_kernel_shutdown();
     if (memory_ready)

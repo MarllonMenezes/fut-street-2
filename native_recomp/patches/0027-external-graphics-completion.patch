@@ -1,0 +1,27 @@
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+index c6cec8b..e88270a 100644
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -876,6 +876,10 @@ static void framebuffer_probe_tick(void)
+ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
+ {
+     volatile uint32_t *regs = (volatile uint32_t *)param;
++    /* Native backends own completion when this is set. A survey callback
++     * returning void cannot prove that the submitted commands executed. */
++    const int external_graphics_completion =
++        getenv("RECOMP_EXTERNAL_GRAPHICS_COMPLETION") != NULL;
+     while (!InterlockedCompareExchange(&g_nv2a_ack_stop, 0, 0)) {
+         for (size_t i = 0; i < sizeof(NV2A_ACK) / sizeof(NV2A_ACK[0]); i++) {
+             volatile uint32_t *r =
+@@ -1003,8 +1007,9 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
+                         nv2a_pb_scan_report();
+                     }
+                 }
+-                /* Consumed, now that it has actually been executed. */
+-                {
++                /* Legacy compatibility acknowledgement is disabled when
++                 * completion belongs to an explicit native backend. */
++                if (!external_graphics_completion) {
+                     volatile uint32_t *get =
+                         (volatile uint32_t *)((char *)regs
+                                               + NV2A_USER_DMA_GET);

@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory = $true)][string]$XbePath,
     [Parameter(Mandatory = $true)][string]$GameDataDirectory,
     [string]$OutputRoot = 'D:\projeto zeta\artifacts\bringup',
-    [ValidateRange(1, 60)][int]$TimeoutSeconds = 20
+    [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
+    [switch]$GraphicsSnapshot
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +37,7 @@ $variables = @{
     RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
     RECOMP_TRACE_BUDGET = '20000'
 }
+if ($GraphicsSnapshot) { $variables.RECOMP_GRAPHICS_SNAPSHOT = '1' }
 $previous = @{}
 $process = $null
 $stdoutFile = $null
@@ -77,6 +79,7 @@ try {
         game_data = $GameDataDirectory; save_directory = $saveDirectory
         timeout_seconds = $TimeoutSeconds; timed_out = $timedOut
         exit_code = $process.ExitCode; diagnostic_trap = $true
+        graphics_snapshot = [bool]$GraphicsSnapshot
         stdout = $stdout; stderr = $stderr
     }
     $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'run.json') -Encoding UTF8

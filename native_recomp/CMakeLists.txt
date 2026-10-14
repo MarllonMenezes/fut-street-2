@@ -53,6 +53,7 @@ target_include_directories(fut_street_2_recompiled_code PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 add_library(fut_street_2_no_emulation_runtime_support STATIC
+    graphics_command_stream.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -60,6 +61,10 @@ target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 if(BUILD_TESTING)
+    add_executable(graphics_command_stream_test tests/graphics_command_stream_test.c)
+    target_include_directories(graphics_command_stream_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(graphics_command_stream_test PRIVATE fut_street_2_no_emulation_runtime_support)
+    add_test(NAME graphics_command_stream COMMAND graphics_command_stream_test)
     add_executable(no_emulation_runtime_support_test
         tests/no_emulation_runtime_support_test.c)
     target_link_libraries(no_emulation_runtime_support_test PRIVATE
@@ -134,8 +139,9 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")

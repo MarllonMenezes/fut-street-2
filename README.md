@@ -14,6 +14,46 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.62
+
+O host agora inicia um dispositivo D3D11 nativo no caminho `--launch` e possui
+um frontend para decodificar os pacotes gráficos produzidos pelo código
+recompilado. A execução local confirmou criação do dispositivo com feature
+level `0xB000` e inicialização de uma fila vazia. Isso não cria uma imagem do
+jogo: os handlers de objetos, recursos, estados e desenhos ainda precisam ser
+conectados ao backend.
+
+O patch `0027-external-graphics-completion.patch` desativa no nosso host a cópia
+automática de DMA PUT para GET feita pelo runtime compartilhado. A medição
+anterior mostrava PUT=GET mesmo com o contador consumidor parado em `3`,
+enquanto os marcadores `5`, `7`, `9` e `11` aguardavam execução. Inicializar o
+cursor de uma fila comprovadamente vazia é permitido; avançar sua conclusão
+ou seu semáforo sem executar os métodos não é.
+
+`graphics_command_stream.c` decodifica pacotes incrementais e não incrementais
+para um receptor de métodos. Rejeita pacotes truncados, intervalos inválidos,
+controle de fluxo ainda não suportado e rejeições do receptor. O formato foi
+conferido com a [referência de PFIFO do xemu](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pfifo.c);
+o módulo foi implementado localmente e não liga o executor NV2A do XboxRecomp.
+Decodificar bytes não autoriza conclusão de GPU.
+
+O decoder leu os `5.464` bytes da captura de inicialização anterior como `444`
+pacotes e `922` parâmetros. No novo caminho nativo, a primeira submissão
+capturada contém `640` bytes, `32` pacotes e `128` parâmetros. O processo
+interrompe explicitamente no primeiro método sem handler: objeto `0x0D`,
+subcanal `0`, método `0x0000`. Essa interrupção com código `3` aconteceu em duas
+execuções, antes do timeout; os métodos e o marcador `5` não foram declarados
+executados. Próximo alvo: resolver esse binding com os descritores reais do
+jogo e implementar os recursos e estados exigidos por essa submissão.
+
+O runner aceita `-GraphicsSnapshot` para medir os campos de fila/semáforo e
+capturar apenas um trecho submetido, de até 64 KiB, no diretório local da
+execução. Capturas e insumos proprietários permanecem fora do Git. Build
+Release e testes do host passaram `9/9`, incluindo preservação dos dados,
+rejeição de comandos não suportados e recusa de inicializar filas não vazias.
+Os testes públicos passaram `161/161`; a ISO permaneceu intacta.
+`NOT_READY` permanece: ainda não há primeiro frame nem PoC jogável.
+
 ## Estado verificável — release 2.61
 
 A primeira execução controlada do programa nativo recompilado entrou em
