@@ -140,6 +140,51 @@ void xbe_entry_point(void)
             "dynamic-object-field-target",
         )
 
+    def test_resolves_proven_bss_slot_initializer(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1010",
+                "name": "xbe_entry_point",
+                "calls_to": [],
+            },
+            {"start": "0x1020", "end": "0x1030", "name": "sub_00001020", "calls_to": []},
+        ]
+        generated_source = """
+void xbe_entry_point(void)
+{
+    MEM32(0x00011180) = 0x00001020;
+    { uint32_t _icall_target = MEM32(0x00011180); PUSH32(esp, 0x00001008u); RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }
+}
+void sub_00001020(void)
+{
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            functions_path = root / "functions.json"
+            generated = root / "generated"
+            xbe_path = root / "default.xbe"
+            generated.mkdir()
+            functions_path.write_text(json.dumps(functions), encoding="utf-8")
+            (generated / "recomp_0000.c").write_text(generated_source, encoding="utf-8")
+            self._write_fixture_xbe(xbe_path)
+            xbe = bytearray(xbe_path.read_bytes())
+            struct.pack_into("<I", xbe, 0x208, 0x200)
+            xbe_path.write_bytes(xbe)
+
+            result = audit(functions_path, generated, xbe_path, 0x1000)
+
+        self.assertEqual(
+            result["sites"][0]["classification"],
+            "runtime-initialized-known-function-pointer",
+        )
+        self.assertEqual(result["sites"][0]["target_function"], "0x00001020")
+        self.assertEqual(
+            result["summary"]["runtime_initialized_known_function_pointer_sites"],
+            1,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

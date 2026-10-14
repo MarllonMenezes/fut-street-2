@@ -43,6 +43,10 @@ INDIRECT_CALL_RE = re.compile(
     r"RECOMP_ICALL_SAFE_AT\([^,]+,\s*[^,]+,\s*0x(?P<site>[0-9A-Fa-f]{8})u\)"
 )
 FIXED_SLOT_RE = re.compile(r"MEM32\(0x(?P<address>[0-9A-Fa-f]{1,8})\)")
+FIXED_SLOT_WRITE_RE = re.compile(
+    r"MEM32\(0x(?P<slot>[0-9A-Fa-f]{1,8})\)\s*=\s*"
+    r"0x(?P<value>[0-9A-Fa-f]{1,8})u?;"
+)
 XBE_MAGIC = b"XBEH"
 SECTION_SIZE = 0x38
 KERNEL_XOR_KEYS = (0x5B6D40B6, 0xEFB1F152)
@@ -290,6 +294,51 @@ def recover_indirect_sites(
     return sites
 
 
+def recover_runtime_fixed_slot_initializers(
+    generated_dir: Path,
+    functions: list[dict[str, Any]],
+    directly_reachable: set[int],
+) -> dict[int, list[dict[str, Any]]]:
+    """Collect direct constant writes to BSS-style callback slots.
+
+    A write is evidence of an initializer, not a claim that every possible
+    runtime path reaches it.  Callers decide whether the initialized value is
+    safe to classify alongside the corresponding indirect site.
+    """
+    address_by_name = {
+        str(function.get("name", "")): _address(function["start"])
+        for function in functions
+    }
+    function_by_address = {
+        _address(function["start"]): function for function in functions
+    }
+    initializers: dict[int, list[dict[str, Any]]] = {}
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current: int | None = None
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = FUNCTION_SYMBOL_RE.match(line)
+            if symbol_match:
+                current = address_by_name.get(symbol_match.group(1))
+            if current is None or current not in directly_reachable:
+                continue
+            write_match = FIXED_SLOT_WRITE_RE.search(line)
+            if write_match is None:
+                continue
+            slot = int(write_match.group("slot"), 16)
+            value = int(write_match.group("value"), 16)
+            initializers.setdefault(slot, []).append(
+                {
+                    "function": f"0x{current:08X}",
+                    "function_name": str(function_by_address[current].get("name", "")),
+                    "source": f"{source_path.name}:{line_number}",
+                    "value": f"0x{value:08X}",
+                }
+            )
+    return initializers
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -310,12 +359,14 @@ def classify_sites(
     sites: list[dict[str, Any]],
     xbe: dict[str, Any],
     function_starts: set[int],
+    runtime_initializers: dict[int, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Classify each site without resolving dynamic object or register calls."""
     data: bytes = xbe["data"]
     sections: list[dict[str, int]] = xbe["sections"]
     thunk_base = xbe["kernel_thunk_base"]
     thunk_count = xbe["kernel_thunk_count"]
+    runtime_initializers = runtime_initializers or {}
     rows: list[dict[str, Any]] = []
     for site in sites:
         row = dict(site)
@@ -368,7 +419,18 @@ def classify_sites(
             row["classification"] = "kernel-thunk-slot"
             row["kernel_ordinal"] = raw_value & 0x7FFFFFFF
         elif raw_value is None:
-            row["classification"] = "runtime-initialized-fixed-slot"
+            initializers = runtime_initializers.get(slot, [])
+            initializer_values = {int(str(item["value"]), 0) for item in initializers}
+            if (
+                len(initializer_values) == 1
+                and next(iter(initializer_values)) in function_starts
+            ):
+                target = next(iter(initializer_values))
+                row["classification"] = "runtime-initialized-known-function-pointer"
+                row["target_function"] = f"0x{target:08X}"
+                row["runtime_initializer_sites"] = initializers
+            else:
+                row["classification"] = "runtime-initialized-fixed-slot"
         elif raw_value in function_starts:
             row["classification"] = "fixed-known-function-pointer"
             row["target_function"] = f"0x{raw_value:08X}"
@@ -387,11 +449,15 @@ def audit(
     functions = json.loads(functions_path.read_text(encoding="utf-8"))
     directly_reachable, external_targets = recover_direct_reachable(functions, entry)
     sites = recover_indirect_sites(generated_dir, functions, directly_reachable)
+    runtime_initializers = recover_runtime_fixed_slot_initializers(
+        generated_dir, functions, directly_reachable
+    )
     xbe = load_xbe_layout(xbe_path)
     classified = classify_sites(
         sites,
         xbe,
         {_address(function["start"]) for function in functions},
+        runtime_initializers,
     )
     classifications = Counter(row["classification"] for row in classified)
     fixed_slots = [row for row in classified if "fixed_slot" in row]
@@ -443,6 +509,9 @@ def audit(
         ],
         "runtime_initialized_fixed_slot_sites": classifications[
             "runtime-initialized-fixed-slot"
+        ],
+        "runtime_initialized_known_function_pointer_sites": classifications[
+            "runtime-initialized-known-function-pointer"
         ],
         "fixed_data_pointer_not_proven_function_sites": classifications[
             "fixed-data-pointer-not-proven-function"
