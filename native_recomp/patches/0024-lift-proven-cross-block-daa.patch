@@ -1,0 +1,97 @@
+diff --git a/tools/recomp/test_lifter_daa_das.py b/tools/recomp/test_lifter_daa_das.py
+--- a/tools/recomp/test_lifter_daa_das.py
++++ b/tools/recomp/test_lifter_daa_das.py
+@@ -78,6 +78,38 @@ class DaaDasLifterTest(unittest.TestCase):
+         self.assertEqual(FunctionTranslator._supported_decimal_adjust_sites(
+             [branch, skipped_add, target_das]), set())
+
++    def test_title_cross_block_daa_requires_the_exact_table_arm(self):
++        def insn(address, mnemonic, op_str=""):
++            item = self._insn(mnemonic, op_str=op_str)
++            item.address = address
++            return item
++
++        exact = [
++            insn(0x00270E87, "cmp", "ecx, 4"),
++            insn(0x00270E8C, "and", "eax, 3"),
++            insn(0x00270E8F, "sub", "ecx, eax"),
++            insn(0x00270E91, "jmp", "dword ptr [eax*4 + 0x270e9c]"),
++            insn(0x00270E98, "jmp", "dword ptr [ecx*4 + 0x270f98]"),
++            insn(0x00270E9F, "nop"),
++            insn(0x00270EA0, "lodsb"),
++            insn(0x00270EA1, "push", "cs"),
++            insn(0x00270EA2, "daa"),
++        ]
++        self.assertEqual(
++            FunctionTranslator._supported_title_cross_block_decimal_adjust_sites(
++                exact
++            ),
++            {0x00270EA2},
++        )
++        altered = list(exact)
++        altered[3] = insn(0x00270E91, "jmp", "dword ptr [eax*4 + 0x270ea0]")
++        self.assertEqual(
++            FunctionTranslator._supported_title_cross_block_decimal_adjust_sites(
++                altered
++            ),
++            set(),
++        )
++
+
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/tools/recomp/translator.py b/tools/recomp/translator.py
+--- a/tools/recomp/translator.py
++++ b/tools/recomp/translator.py
+@@ -1407,6 +1407,41 @@ class FunctionTranslator:
+         return any(insn.mnemonic in ("daa", "das", "aaa", "aas", "lahf")
+                    for insn in instructions)
+
++    @staticmethod
++    def _supported_title_cross_block_decimal_adjust_sites(instructions):
++        """Recover the one title-specific DAA arm with bounded flag proof.
++
++        The remaining DAA in this image is reached through two indirect jump
++        tables.  Both incoming arms define CF/AF first (``cmp`` or ``sub``),
++        and the shared arm contains only ``nop; lodsb; push cs`` before DAA;
++        those instructions do not modify either flag.  Keep this proof tied
++        to the exact observed addresses and operands so a different table
++        shape remains untranslated instead of inheriting a guessed flag state.
++        """
++        by_address = {insn.address: insn for insn in instructions}
++
++        def matches(address, mnemonic, operand_fragment=None):
++            insn = by_address.get(address)
++            if insn is None or insn.mnemonic != mnemonic:
++                return False
++            if operand_fragment is None:
++                return True
++            normalized = " ".join(insn.op_str.lower().split())
++            return operand_fragment in normalized
++
++        shape = (
++            matches(0x00270E87, "cmp", "ecx, 4")
++            and matches(0x00270E8C, "and", "eax, 3")
++            and matches(0x00270E8F, "sub", "ecx, eax")
++            and matches(0x00270E91, "jmp", "[eax*4 + 0x270e9c]")
++            and matches(0x00270E98, "jmp", "[ecx*4 + 0x270f98]")
++            and matches(0x00270E9F, "nop")
++            and matches(0x00270EA0, "lodsb")
++            and matches(0x00270EA1, "push", "cs")
++            and matches(0x00270EA2, "daa")
++        )
++        return {0x00270EA2} if shape else set()
++
+     @staticmethod
+     def _supported_decimal_adjust_sites(instructions, supported_ascii_sites=None):
+         """Keep DAA/DAS untranslated until this function has defined CF."""
+@@ -1444,4 +1479,9 @@ class FunctionTranslator:
+             elif (insn.mnemonic in ("aaa", "aas")
+                   and insn.address in supported_ascii_sites):
+                 seen_cf_definition = True
++        supported.update(
++            FunctionTranslator._supported_title_cross_block_decimal_adjust_sites(
++                instructions
++            )
++        )
+         return supported

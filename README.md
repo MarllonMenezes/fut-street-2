@@ -14,6 +14,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.40
+
+O release 2.40 recupera uma única instrução `DAA` em `0x00270EA2`, mas
+somente quando o armamento exato da tabela observado no título é reconhecido:
+`CMP`/`SUB` definem `CF`/`AF` nas duas entradas e `NOP`, `LODSB` e `PUSH CS`
+não alteram essas flags antes do `DAA`. O lowering é específico para essa
+forma e tem teste negativo; outras formas continuam `RECOMP_UNIMPL`.
+
+A pilha limpa de `24` patches aplicou em ordem sem erro e a suíte focal passou
+em `570/570` testes, com `38` skips. A geração limpa emitiu
+`15.600/15.600` funções, sem falhas, em `61` unidades e `1.775.817` linhas
+de C. Restam `3` instruções não implementadas: `OUT DX,AL` (`0x00298030`),
+`SGDT` (`0x00253FD8`) e `STI` (`0x0026FBC9`). O build nativo Release passou
+e o CTest passou em `3/3`.
+
+Essa redução é evidência de tradução estática para um padrão de controle
+específico; ela não prova execução do bloco, equivalência completa de flags,
+ABI, boot, rendering, assets, gameplay, animação ou áudio. A auditoria
+indireta continua encontrando `62` sites, dos quais `48` são thunks de kernel
+e `7` callbacks dinâmicos sem destino provado. A prontidão permanece
+`NOT_READY` e a estimativa conservadora do PoC jogável continua em
+aproximadamente `31% concluído / 69% restante`. O XBE não é executado.
+
 ## Estado verificável — release 2.39
 
 O release 2.39 valida a pilha completa de `23` patches do XboxRecomp em uma
