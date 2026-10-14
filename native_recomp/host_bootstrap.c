@@ -66,11 +66,28 @@ int main(int argc, char **argv)
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("Fut Street 2 static recompilation host");
         puts("Usage: fut-street-2-recompiled --preflight <default.xbe>");
+        puts("Usage: fut-street-2-recompiled --preflight <default.xbe> <game-data-directory> <save-directory>");
         puts("Usage: fut-street-2-recompiled --launch <default.xbe> <game-data-directory> <save-directory>");
         puts("This build excludes the XboxRecomp NV2A/APU emulators.");
         return 0;
     }
-    if (argc == 3 && strcmp(argv[1], "--preflight") == 0) {
+    if ((argc == 3 || argc == 5) && strcmp(argv[1], "--preflight") == 0) {
+        const int runtime_preflight = argc == 5;
+
+        if (environment_variable_is_set("RECOMP_AC97_READY") ||
+            environment_variable_is_set("RECOMP_PB_EXEC") ||
+            environment_variable_is_set("RECOMP_VBLANK")) {
+            fprintf(stderr,
+                    "Refusing emulator or synthetic-hardware opt-in in the "
+                    "no-emulation preflight.\n");
+            return 2;
+        }
+        if (runtime_preflight &&
+            (_putenv_s("RECOMP_TITLE_KEVENTS", "1") != 0 ||
+             !SetEnvironmentVariableA("RECOMP_TITLE_KEVENTS", "1"))) {
+            fprintf(stderr, "Cannot enable title-built event compatibility.\n");
+            return 1;
+        }
         if (!read_xbe(argv[2], &xbe_data, &xbe_size))
             return 1;
 
@@ -79,6 +96,13 @@ int main(int argc, char **argv)
             goto cleanup;
         }
         memory_ready = 1;
+
+        if (runtime_preflight) {
+            xbox_kernel_init();
+            kernel_ready = 1;
+            xbox_path_init(argv[3], argv[4]);
+            xbox_kernel_bridge_init();
+        }
 
         if (!recomp_dispatch_init())
             fprintf(stderr, "Dispatch acceleration unavailable; using lookup fallback.\n");
@@ -90,16 +114,21 @@ int main(int argc, char **argv)
             goto cleanup;
         }
 
-        puts("Static preflight OK: XBE memory layout initialized and translated "
-             "entry point resolved; no guest code executed.");
+        if (runtime_preflight) {
+            puts("Runtime preflight OK: XBE memory, kernel bridge, dispatch and "
+                 "translated entry point resolved; no guest code executed.");
+        } else {
+            puts("Static preflight OK: XBE memory layout initialized and translated "
+                 "entry point resolved; no guest code executed.");
+        }
         result = 0;
         goto cleanup;
     }
     if (argc != 5 || strcmp(argv[1], "--launch") != 0) {
         fprintf(stderr,
-                "Refusing implicit launch. Use --help, --preflight <default.xbe>, "
-                "or explicitly provide --launch <default.xbe> <game-data-directory> "
-                "<save-directory>.\n");
+                "Refusing implicit launch. Use --help, --preflight <default.xbe> "
+                "[<game-data-directory> <save-directory>], or explicitly provide "
+                "--launch <default.xbe> <game-data-directory> <save-directory>.\n");
         return 2;
     }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
