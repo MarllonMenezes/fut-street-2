@@ -85,6 +85,15 @@ int main(void)
     if (fut_graphics_dma_view(&dma, &view)) return 16;
     dma.words[0] = 0x0402B03Du; dma.words[2] = 0x04000003u;
     if (fut_graphics_dma_view(&dma, &view)) return 17;
+    dma.words[0] = 0x0000B03Du; dma.words[1] = 0x07FFAFFFu; dma.words[2] = 3;
+    if (fut_graphics_dma_view(&dma, &view) || !fut_graphics_dma_surface_view(&dma, &view) ||
+        view.guest_address != 0x80000000u || view.size != 0x04000000u) return 18;
+    dma.words[0] = 0x0001B03Du;
+    if (fut_graphics_dma_surface_view(&dma, &view)) return 19; /* Tiled target not guessed. */
+    dma.words[0] = 0x0000B03Du; dma.words[2] = 0x04000003;
+    if (fut_graphics_dma_surface_view(&dma, &view)) return 20;
+    dma.words[2] = 3; dma.words[1] = UINT32_MAX;
+    if (fut_graphics_dma_surface_view(&dma, &view)) return 21;
     puts("Exact object resolution, typed references and failure-state preservation OK");
     return 0;
 }

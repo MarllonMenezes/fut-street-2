@@ -11,6 +11,8 @@ typedef struct {
     int program_dirty;
     float attributes[16][4];
     uint32_t clip_min, clip_max;
+    uint32_t control0, line_width, anti_aliasing_control;
+    unsigned depth_test, stencil_test;
     unsigned constant_load;
     int constants_dirty;
     unsigned provoking_first, edge_flag, compress_depth;

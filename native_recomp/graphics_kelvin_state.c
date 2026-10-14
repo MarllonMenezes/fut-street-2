@@ -63,6 +63,15 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         break;
     case 0x394: state->clip_min = value; break;
     case 0x398: state->clip_max = value; break;
+    case 0x290: state->control0 = value; break;
+    case 0x30C:
+        if (value > 1) return FUT_KELVIN_REJECTED;
+        state->depth_test = value; break;
+    case 0x32C:
+        if (value > 1) return FUT_KELVIN_REJECTED;
+        state->stencil_test = value; break;
+    case 0x380: state->line_width = value; break;
+    case 0x1D7C: state->anti_aliasing_control = value; break;
     case 0x1E94:
         if ((value & 3u) > 2 || value > 7) return FUT_KELVIN_REJECTED;
         state->program_mode = value; state->program_dirty = 1; break;

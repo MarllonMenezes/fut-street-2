@@ -14,6 +14,49 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.66
+
+O programa recompilado criou os recursos nativos de cor e profundidade com
+os descritores recebidos do jogo: superfície lógica `640×480`, armazenamento
+de `1280×480` para duas amostras, pitch `5.120`, cor em `0x82C04000` e
+profundidade em `0x830B4000`. As chamadas de criação/upload D3D11 passaram;
+**não houve draw original, clear original nem apresentação de frame**.
+
+`graphics_surfaces.c` interpreta os métodos `0x0200–0x0214`, valida pitch,
+dimensões, limites DMA e sobreposição de attachments. O plano atual cobre
+superfícies pitched A8R8G8B8/Z24S8 inteiro. O formato e a expansão de
+armazenamento das amostras foram conferidos com as definições de
+[superfícies](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/nv2a_regs.h)
+e [dimensões por amostragem](https://github.com/xemu-project/xemu/blob/36334d95b86f9c3c6ae34efb9af06785273f8e1a/hw/xbox/nv2a/pgraph/pgraph.h).
+O DMA IN_MEMORY/NVM observado descreve uma abertura maior; o host expõe
+somente sua interseção com os 64 MiB suportados, sem wrap de endereço.
+
+`graphics_native_surfaces.c` cria texturas BGRA8 e R24G8 com RTV/DSV e dados
+iniciais pela [API CreateTexture2D](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/nf-d3d11-id3d11device-createtexture2d).
+Cada amostra armazenada permanece um pixel físico separado. Isso **não** é
+um resolve nem uma declaração de equivalência de rasterização MSAA: posições
+de amostra, cobertura e apresentação ainda precisam ser implementadas.
+A conversão Z24S8 rearranja os campos de profundidade/stencil sem passar por
+float. Superfícies swizzled, profundidade float, aliasing e troca de recursos
+sem caminho de coerência implementado são recusados, não descartados.
+
+O teste D3D11 WARP, com dados **sintéticos**, fez upload/readback de cada
+amostra de cor e profundidade, verificou pitch/padding sem alterar a origem,
+e confirmou clear de cor e depth/stencil nos recursos criados. Também cobre
+descrições incompletas, limites, dimensões 1/2/4 amostras, leitura inválida e
+preservação dos recursos após falha. `WAIT_FOR_IDLE`, valor zero, usa a consulta
+de conclusão nativa; não publica um marcador guest. Controles de depth/stencil,
+largura de linha e antialiasing são retidos para aplicação pelos draws futuros.
+
+Build Release e CTest passaram `14/14`; testes públicos passaram `161/161`.
+Build/self-test .NET passaram com `105` testes (somente o protótipo), sem
+avisos/erros. A ISO permaneceu intacta e as saídas controláveis ficaram no D:.
+A execução encerrou com diagnóstico `3`, antes do limite de cinco segundos,
+no método `0x02B4` (`SET_WINDOW_CLIP_TYPE`), valor zero, offset `684` da segunda
+submissão. Seu marcador `7` e DMA GET permanecem sem avanço. Próximo: clipping
+e estados necessários aos clears/draws originais, incluindo as notificações
+software não nulas que aparecem depois. `NOT_READY` permanece.
+
 ## Estado verificável — release 2.65
 
 O backend recompilou o primeiro programa de vértice original recebido do jogo:

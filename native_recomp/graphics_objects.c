@@ -76,6 +76,21 @@ int fut_graphics_dma_view(const FutGraphicsObject *object, FutGraphicsDmaView *v
     return 1;
 }
 
+int fut_graphics_dma_surface_view(const FutGraphicsObject *object, FutGraphicsDmaView *view)
+{
+    if (!object || !view || (object->words[0] & 0xFFFu) != 0x3Du) return 0;
+    if ((object->words[0] & 0x000FF000u) == 0x0002B000u)
+        return fut_graphics_dma_view(object, view);
+    if ((object->words[0] & 0x000FF000u) != 0x0000B000u) return 0;
+    uint32_t address = (object->words[2] & 0xFFFFF000u) | (object->words[0] >> 20);
+    uint64_t size = (uint64_t)object->words[1] + 1;
+    if (address >= 0x04000000u || size > 0x08000000u - address) return 0;
+    uint32_t available = 0x04000000u - address;
+    view->guest_address = address | 0x80000000u;
+    view->size = size > available ? available : (uint32_t)size;
+    return 1;
+}
+
 FutGraphicsBindingStatus fut_graphics_apply_binding(FutGraphicsBindings *state,
     unsigned subchannel, uint32_t method, uint32_t value)
 {

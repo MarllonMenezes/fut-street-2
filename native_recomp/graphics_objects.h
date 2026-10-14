@@ -18,6 +18,10 @@ typedef struct { uint32_t guest_address, size; } FutGraphicsDmaView;
 /* The linear PCI/unified-RAM descriptor form observed in the title. Other
  * descriptor forms remain unsupported; this does not perform a DMA transfer. */
 int fut_graphics_dma_view(const FutGraphicsObject *object, FutGraphicsDmaView *view);
+/* Surface IN_MEMORY/NVM aperture may describe 128 MiB. Expose only its
+ * intersection with the 64 MiB supported contiguous mapping, never an
+ * address wrap or a claim that the full aperture has backing. */
+int fut_graphics_dma_surface_view(const FutGraphicsObject *object, FutGraphicsDmaView *view);
 
 /* Resolve an exact handle/channel from the title-built RAMHT and retain
  * the original context words. Failure never supplies a guessed object. */

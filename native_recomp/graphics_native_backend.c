@@ -12,6 +12,7 @@
 #include "graphics_kelvin_state.h"
 #include "graphics_native_constants.h"
 #include "graphics_native_vertex.h"
+#include "graphics_native_surfaces.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
@@ -54,9 +55,47 @@ typedef struct {
     ID3DBlob *vertex_bytecode;
     FutGraphicsBindings bindings;
     FutGraphicsKelvinState kelvin;
+    FutGraphicsSurfaceState surfaces;
+    FutNativeSurfaces native_surfaces;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
+
+static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
+static int native_prepare_surfaces(NativeGraphicsState *state)
+{
+    if (state->surfaces.valid != 63) return 1; /* Description still being assembled. */
+    FutGraphicsDmaView color, depth;
+    FutGraphicsSurfacePlan plan;
+    const unsigned mask = (1u << 5) | (1u << 6);
+    if ((state->bindings.reference_masks[0] & mask) != mask ||
+        !fut_graphics_dma_surface_view(&state->bindings.references[0][5], &color) ||
+        !fut_graphics_dma_surface_view(&state->bindings.references[0][6], &depth)) {
+        fprintf(stderr, "[GRAPHICS] unsupported surface DMA descriptors: color=%08X/%08X/%08X depth=%08X/%08X/%08X\n",
+            state->bindings.references[0][5].words[0], state->bindings.references[0][5].words[1],
+            state->bindings.references[0][5].words[2], state->bindings.references[0][6].words[0],
+            state->bindings.references[0][6].words[1], state->bindings.references[0][6].words[2]);
+        return 0;
+    }
+    FutGraphicsSurfaceStatus status = fut_graphics_surface_plan(&state->surfaces, &color, &depth, &plan);
+    if (status != FUT_SURFACE_READY || (state->kelvin.control0 & 0x1000u)) {
+        fprintf(stderr, "[GRAPHICS] unsupported/invalid surface plan: status=%d format=%08X pitch=%08X control=%08X\n",
+            status, state->surfaces.format, state->surfaces.pitch, state->kelvin.control0);
+        return 0;
+    }
+    int previously_valid = state->native_surfaces.valid;
+    HRESULT hr = fut_native_surfaces_prepare(&state->native_surfaces, state->device, &plan, object_memory_read, NULL);
+    if (FAILED(hr)) {
+        fprintf(stderr, "[GRAPHICS] native surface preparation failed: HRESULT=%08lX\n", hr);
+        return 0;
+    }
+    ID3D11DeviceContext_OMSetRenderTargets(state->context, 1, &state->native_surfaces.target,
+        state->native_surfaces.depth_target);
+    if (!previously_valid) fprintf(stderr,
+        "[GRAPHICS] native surfaces uploaded: logical=%ux%u stored=%ux%u samples=%u color=%08X depth=%08X; no draw\n",
+        plan.logical_width, plan.logical_height, plan.width, plan.height, plan.samples, plan.color_address, plan.depth_address);
+    return 1;
+}
 
 static int native_prepare_vertex(NativeGraphicsState *state)
 {
@@ -87,6 +126,7 @@ static int native_prepare_vertex(NativeGraphicsState *state)
 
 static int native_finish(NativeGraphicsState *state)
 {
+    if (!native_prepare_surfaces(state)) return 0;
     if (!native_prepare_vertex(state)) return 0;
     if (!fut_native_constants_finish(&state->native_constants,
         state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
@@ -145,6 +185,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
+        if (method == 0x110u) {
+            if (value || !native_finish(state)) return 0;
+            return 1; /* Wait for actual native work; no guest marker written. */
+        }
+        if (fut_graphics_surface_state(&state->surfaces, method, value))
+            return native_prepare_surfaces(state);
         if (method == 0x1D70u) {
             FutGraphicsDmaView view;
             if (!(state->bindings.reference_masks[subchannel] & (1u << 9)) ||
@@ -252,6 +298,7 @@ static DWORD WINAPI native_worker(void *unused)
         cursor = submitted;
     }
     fut_native_constants_destroy(&state.native_constants);
+    fut_native_surfaces_destroy(&state.native_surfaces);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     ID3D11DeviceContext_Release(context);

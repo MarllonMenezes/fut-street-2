@@ -38,7 +38,7 @@ int main(void)
     for (unsigned i = 0; i < sizeof(rejected)/sizeof(rejected[0]); ++i)
         if (fut_graphics_kelvin_state(&state, rejected[i][0], rejected[i][1]) != FUT_KELVIN_REJECTED ||
             memcmp(&before, &state, sizeof(state))) return 12;
-    if (fut_graphics_kelvin_state(&state, 0x20C, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
+    if (fut_graphics_kelvin_state(&state, 0x2B4, UINT32_MAX) != FUT_KELVIN_NOT_HANDLED ||
         memcmp(&before, &state, sizeof(state))) return 13;
     if (fut_graphics_kelvin_state(&state, 0x194C, 0xFF804000u) != FUT_KELVIN_APPLIED ||
         state.attributes[3][0] != 0 || state.attributes[3][1] != 64.0f/255.0f ||
@@ -64,6 +64,16 @@ int main(void)
         state.constants[0x3B][0] != 0x7FC01234u ||
         fut_graphics_kelvin_state(&state, 0xAF0, 0x80000000u) != FUT_KELVIN_APPLIED ||
         state.constants[0x3A][0] != 0x80000000u) return 22;
+    if (fut_graphics_kelvin_state(&state, 0x30C, 1) != FUT_KELVIN_APPLIED || !state.depth_test ||
+        fut_graphics_kelvin_state(&state, 0x32C, 1) != FUT_KELVIN_APPLIED || !state.stencil_test ||
+        fut_graphics_kelvin_state(&state, 0x290, 0x110001) != FUT_KELVIN_APPLIED || state.control0 != 0x110001 ||
+        fut_graphics_kelvin_state(&state, 0x380, 8) != FUT_KELVIN_APPLIED || state.line_width != 8 ||
+        fut_graphics_kelvin_state(&state, 0x1D7C, 0xFFFF0001) != FUT_KELVIN_APPLIED ||
+        state.anti_aliasing_control != 0xFFFF0001) return 23;
+    before = state;
+    if (fut_graphics_kelvin_state(&state, 0x30C, 2) != FUT_KELVIN_REJECTED ||
+        fut_graphics_kelvin_state(&state, 0x32C, 2) != FUT_KELVIN_REJECTED ||
+        memcmp(&before, &state, sizeof(state))) return 24;
     puts("Native initial-state slots, bit preservation, load sequencing and rejection OK");
     return 0;
 }
