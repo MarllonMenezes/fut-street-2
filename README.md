@@ -27,8 +27,8 @@ A geração limpa integral produziu `15.600/15.600` funções, sem falhas, `61`
 unidades C e `1.775.604` linhas de C, com `0` alvos de chamada não resolvidos
 gerados como stub. Restam somente `2` instruções não implementadas no
 artefato: `OUT DX,AL` em `0x00298030` e `SGDT` em `0x00253FD8`; o `STI` real
-em `0x00253FE8` continua deliberadamente sem lowering dentro do helper de
-GDT. O build nativo Release passou e o CTest passou em `3/3`.
+em `0x00253FE8` já é traduzido pelo helper host de máscara de interrupção. O
+build nativo Release passou e o CTest passou em `3/3`.
 
 Os gates auxiliares também passaram: a suíte focal do XboxRecomp teve
 `570` testes aprovados e `38` skips; a regressão Python teve `118/118`; o
