@@ -80,13 +80,16 @@ prioritárias, mas não prova que os códigos de status, ponteiros, efeitos
 colaterais ou regras de ownership sejam compatíveis com o Xbox.
 
 A checagem seguinte atravessa a fronteira entre o adaptador e o corpo do
-bridge: `kernel_bridge_body_status=verified-source-body-with-stack-index-gap`
+bridge: `kernel_bridge_body_status=verified-source-body-stack-index-coverage-with-explicit-stub-exception`
 para os `48` sites dos `19` targets usados. Todos os `19/19` corpos
 `bridge_*` foram localizados; em `47/48` sites, os índices `STACK_ARG`
 observados ficam dentro da contagem ABI esperada e da janela de argumentos
 empurrados pelo caller. O único caso sem `STACK_ARG` identificado é o ordinal
-178 (`bridge_MmPersistContiguousMemory`), por isso ele continua sendo uma
-lacuna de forma, não uma aprovação da chamada. A fonte também mostra
+178 (`bridge_MmPersistContiguousMemory`); a análise agora o classifica como
+`kernel_bridge_body_explicit_no_arg_stub_sites=1`, porque o corpo contém um
+`No-op stub` explícito e o host correspondente também é um stub. Assim, ele
+não é contado como uma lacuna de leitura ABI (`kernel_bridge_body_stack_index_gap_sites=0`),
+mas continua sendo uma lacuna semântica e não uma aprovação da chamada. A fonte também mostra
 atribuição a `g_eax` em `18/19` targets, `XBOX_TO_NATIVE` em `8/19` e
 `BRIDGE_MEM32` em `9/19`. Essa checagem registra somente formas textuais do
 corpo host e a comparação estática de janelas; não prova tipos, convenção

@@ -851,6 +851,7 @@ void xbe_entry_point(void)
                 "    uint32_t options = STACK_ARG(2);\n"
                 "    path = XBOX_TO_NATIVE(path);\n"
                 "    options = BRIDGE_MEM32(path);\n"
+                "    /* no-op stub marker */\n"
                 "    g_eax = options;\n"
                 "}\n",
                 encoding="utf-8",
@@ -874,6 +875,9 @@ void xbe_entry_point(void)
         )
         self.assertEqual(
             len(evidence["bridge_IoCreateFile"]["g_eax_assignment_sites"]), 1
+        )
+        self.assertEqual(
+            len(evidence["bridge_IoCreateFile"]["explicit_no_op_markers"]), 1
         )
 
     def test_counts_kernel_call_push_arguments(self) -> None:

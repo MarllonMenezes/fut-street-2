@@ -1188,6 +1188,7 @@ def recover_kernel_bridge_body_provenance(
             "source": None,
             "stack_arg_indices": [],
             "g_eax_assignment_sites": [],
+            "explicit_no_op_markers": [],
             "pointer_translation_sites": 0,
             "guest_memory_access_sites": 0,
             "body_line_count": 0,
@@ -1226,11 +1227,18 @@ def recover_kernel_bridge_body_provenance(
                 for line_number, body_line in body_lines
                 if re.search(r"\bg_eax\s*=", body_line) is not None
             ]
+            explicit_no_op_markers = [
+                f"{source_path.name}:{line_number}"
+                for line_number, body_line in body_lines
+                if re.search(r"\b(?:no[- ]op|stub)\b", body_line, re.IGNORECASE)
+                is not None
+            ]
             item = evidence[target]
             item["status"] = "source-body-found"
             item["source"] = f"{source_path.name}:{index + 1}"
             item["stack_arg_indices"] = sorted(stack_args)
             item["g_eax_assignment_sites"] = g_eax_sources
+            item["explicit_no_op_markers"] = explicit_no_op_markers
             item["pointer_translation_sites"] = sum(
                 len(re.findall(r"\bXBOX_TO_NATIVE\s*\(", body_line))
                 for _, body_line in body_lines
@@ -3276,7 +3284,17 @@ def audit(
                     row["kernel_bridge_body_stack_arg_status"] = (
                         "no-stack-arg-read-and-zero-arg-call"
                         if expected_arg_count == 0
-                        else "no-stack-arg-read"
+                        else (
+                            "no-stack-arg-read-explicit-host-stub"
+                            if bridge_body["explicit_no_op_markers"]
+                            and any(
+                                marker["kind"] == "explicit-stub-or-no-op"
+                                for marker in row.get(
+                                    "host_implementation_body_markers", []
+                                )
+                            )
+                            else "no-stack-arg-read"
+                        )
                     )
                 elif expected_arg_count is None:
                     row["kernel_bridge_body_stack_arg_status"] = (
@@ -3388,7 +3406,14 @@ def audit(
         not in {
             "indices-within-expected-and-observed-window",
             "no-stack-arg-read-and-zero-arg-call",
+            "no-stack-arg-read-explicit-host-stub",
         }
+    ]
+    bridge_body_explicit_no_arg_stub_sites = [
+        row
+        for row in kernel_slots
+        if row.get("kernel_bridge_body_stack_arg_status")
+        == "no-stack-arg-read-explicit-host-stub"
     ]
     abi_count_sites = [
         row for row in kernel_slots if row.get("kernel_abi_stack_status") == "argument-count-match"
@@ -3550,10 +3575,16 @@ def audit(
                 "verified-source-body-and-stack-index-coverage"
                 if len(bridge_body_sites) == len(kernel_slots)
                 and not bridge_body_stack_index_gap_sites
+                and not bridge_body_explicit_no_arg_stub_sites
                 else (
-                    "verified-source-body-with-stack-index-gap"
+                    "verified-source-body-stack-index-coverage-with-explicit-stub-exception"
                     if len(bridge_body_sites) == len(kernel_slots)
-                    else "source-body-or-stack-index-gap"
+                    and not bridge_body_stack_index_gap_sites
+                    else (
+                        "verified-source-body-with-stack-index-gap"
+                        if len(bridge_body_sites) == len(kernel_slots)
+                        else "source-body-or-stack-index-gap"
+                    )
                 )
             )
         ),
@@ -3594,6 +3625,11 @@ def audit(
             None
             if kernel_bridge_body_provenance is None
             else len(bridge_body_stack_index_gap_sites)
+        ),
+        "kernel_bridge_body_explicit_no_arg_stub_sites": (
+            None
+            if kernel_bridge_body_provenance is None
+            else len(bridge_body_explicit_no_arg_stub_sites)
         ),
         "kernel_bridge_body_g_eax_assignment_targets": (
             None
