@@ -14,6 +14,29 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.55
+
+O release 2.55 adiciona
+`tools/analysis/recomp_kernel_service_contract_gate.py`, um gate estático
+para os serviços kernel usados pelos `48` sites de thunk do subgrafo direto.
+Com a fonte `kernel_thunks.c`, ele confirma cobertura explícita de resolver e
+bridge em `48/48` sites, `19/19` targets definidos, `19/19` assinaturas
+compatíveis e `0` targets ausentes.
+
+O gate também preserva os riscos em vez de escondê-los: os targets
+`xbox_MmPersistContiguousMemory` e `xbox_NtOpenSymbolicLinkObject` continuam
+marcados como stub/no-op, enquanto
+`xbox_NtQueryInformationFile`, `xbox_NtSetInformationFile` e
+`xbox_RtlNtStatusToDosError` mantêm tokens `STATUS_NOT_IMPLEMENTED`. Os
+call sites e argumentos constantes observados ficam fechados no contrato para
+detectar regressões.
+
+Isso é cobertura de fonte, ABI estrutural e classificação de risco; não prova
+efeitos colaterais, status codes, handles ou semântica Xbox. O XBE não é
+executado, nenhum serviço é promovido a equivalente original e a estimativa
+conservadora do PoC jogável permanece em aproximadamente `31% concluído / 69%
+restante`.
+
 ## Estado verificável — release 2.54
 
 O release 2.54 adiciona
@@ -1022,6 +1045,20 @@ python tools/analysis/recomp_dynamic_callback_evidence_gate.py `
 Esse gate é específico dos sete sites atualmente auditados e mantém a
 distinção entre evidência estática e inicialização de runtime; saída aprovada
 não significa que qualquer callback esteja resolvido ou executável.
+
+A cobertura dos serviços kernel usados por esses sites pode ser fechada com:
+
+```powershell
+python tools/analysis/recomp_kernel_service_contract_gate.py `
+  --functions C:/caminho/local/disasm/functions.json `
+  --generated C:/caminho/local/xboxrecomp/gen `
+  --xbe C:/caminho/local/game_files/default.xbe `
+  --kernel-source C:/caminho/local/xboxrecomp/src/kernel/kernel_thunks.c
+```
+
+O gate exige o resolver, o bridge, as assinaturas e os marcadores de risco
+observados; ele mantém `host_service_semantics=not-proven` e não executa o
+XBE.
 
 O inventário complementar dos slots BSS fixos pode ser repetido com:
 
