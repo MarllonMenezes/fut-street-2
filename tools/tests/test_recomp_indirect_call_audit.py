@@ -12,6 +12,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     audit,
     recover_dynamic_target_writes,
     recover_fixed_slot_writes,
+    recover_indirect_call_nonzero_guards,
     recover_indirect_call_skip_branches,
     recover_kernel_bridge_cases,
     recover_kernel_call_argument_counts,
@@ -681,6 +682,46 @@ loc_00001010: ;
 
         self.assertEqual(evidence["0x1008"]["kind"], "conditional-branch-skips-call")
         self.assertEqual(evidence["0x1008"]["target_label"], "loc_00001010")
+
+    def test_records_nonzero_guard_for_indirect_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                "void sub_00001000(void)\n"
+                "{\n"
+                "loc_00001000: ;\n"
+                "    _fa = (uint32_t)(MEM32(ecx)) & 0xFFFFFFFFu;\n"
+                "    _fb = (uint32_t)(0) & 0xFFFFFFFFu;\n"
+                "    if (CMP_NE(_fa, _fb)) goto loc_00001006;\n"
+                "    goto loc_0000100A;\n"
+                "loc_00001006: ;\n"
+                "    { uint32_t _icall_target = MEM32(ecx); "
+                "RECOMP_ICALL_SAFE_AT(_icall_target, _icall_esp, 0x00001008u); }\n"
+                "loc_0000100A: ;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+
+            evidence = recover_indirect_call_nonzero_guards(
+                generated,
+                [
+                    {
+                        "call_site": "0x00001008",
+                        "source": "recomp_0000.c:9",
+                        "target_expression": "MEM32(ecx)",
+                    }
+                ],
+            )
+
+        self.assertEqual(
+            evidence["0x00001008"]["kind"],
+            "nonzero-guarded-indirect-call",
+        )
+        self.assertEqual(
+            evidence["0x00001008"]["target_label"],
+            "loc_00001006",
+        )
 
 
 if __name__ == "__main__":

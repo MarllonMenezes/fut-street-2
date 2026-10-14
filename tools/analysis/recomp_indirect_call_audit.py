@@ -621,6 +621,77 @@ def recover_indirect_call_skip_branches(
     return evidence
 
 
+def recover_indirect_call_nonzero_guards(
+    generated_dir: Path,
+    sites: list[dict[str, Any]],
+    window: int = 32,
+) -> dict[str, dict[str, Any]]:
+    """Find a local non-zero branch that gates an indirect call.
+
+    The generated form is intentionally narrow: a nearby ``CMP_NE`` branch
+    must target a label immediately before the call, and the same bounded
+    block must mention the call's recovered target expression.  This records
+    control-flow evidence only; it does not prove the slot is always zero or
+    that the target has valid ABI/semantics when populated.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    evidence: dict[str, dict[str, Any]] = {}
+    for site in sites:
+        source_text = str(site.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            continue
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        call_index = int(line_text) - 1
+        if not 0 <= call_index < len(lines):
+            continue
+        function_start = 0
+        for index in range(call_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]):
+                function_start = index
+                break
+        label_lines: dict[str, int] = {}
+        for index in range(function_start, call_index + 1):
+            label_match = LOCAL_LABEL_RE.match(lines[index])
+            if label_match is not None:
+                label_lines[label_match.group("label")] = index
+
+        first_index = max(function_start, call_index - window)
+        for index in range(first_index, call_index):
+            branch_match = LOCAL_BRANCH_RE.match(lines[index])
+            if branch_match is None or "CMP_NE" not in branch_match.group("condition"):
+                continue
+            label = branch_match.group("label")
+            target_index = label_lines.get(label)
+            if target_index is None or target_index <= index or target_index > call_index:
+                continue
+            target_block = lines[target_index : call_index + 1]
+            if not any("RECOMP_ICALL_SAFE_AT" in line for line in target_block):
+                continue
+            target_expression = str(site.get("target_expression", ""))
+            guard_context = lines[max(function_start, index - 6) : index + 1]
+            if target_expression and not any(
+                target_expression in line for line in guard_context
+            ):
+                continue
+            call_site = str(site["call_site"])
+            evidence[call_site] = {
+                "kind": "nonzero-guarded-indirect-call",
+                "branch_source": f"{source_path.name}:{index + 1}",
+                "condition": branch_match.group("condition"),
+                "target_label": label,
+                "target_source": f"{source_path.name}:{target_index + 1}",
+                "target_expression": target_expression,
+            }
+            break
+    return evidence
+
+
 def recover_prcb_cache_writes(
     generated_dir: Path,
     functions: list[dict[str, Any]],
@@ -1540,6 +1611,9 @@ def audit(
     skip_branch_evidence = recover_indirect_call_skip_branches(
         generated_dir, classified
     )
+    nonzero_guard_evidence = recover_indirect_call_nonzero_guards(
+        generated_dir, classified
+    )
     kernel_file_operations = {
         211: "xbox_NtQueryInformationFile",
         226: "xbox_NtSetInformationFile",
@@ -1548,6 +1622,9 @@ def audit(
         evidence = skip_branch_evidence.get(str(row["call_site"]))
         if evidence is not None:
             row["conditional_skip_evidence"] = evidence
+        nonzero_guard = nonzero_guard_evidence.get(str(row["call_site"]))
+        if nonzero_guard is not None:
+            row["conditional_nonzero_guard_evidence"] = nonzero_guard
         observed_call_stack = kernel_call_argument_counts.get(str(row["call_site"]))
         if observed_call_stack is not None:
             row["indirect_call_observed_push_count"] = observed_call_stack[
@@ -1683,6 +1760,12 @@ def audit(
         for row in classified
         if row["classification"] in dynamic_classifications
         and "conditional_skip_evidence" in row
+    ]
+    dynamic_nonzero_guard_sites = [
+        row
+        for row in classified
+        if row["classification"] in dynamic_classifications
+        and "conditional_nonzero_guard_evidence" in row
     ]
     dynamic_stack_rows = [
         row for row in classified if row["classification"] in dynamic_classifications
@@ -1824,6 +1907,9 @@ def audit(
         },
         "conditional_skip_branch_sites": len(skip_branch_evidence),
         "dynamic_conditional_skip_branch_sites": len(dynamic_skip_branch_sites),
+        "dynamic_conditional_nonzero_guard_sites": len(
+            dynamic_nonzero_guard_sites
+        ),
         "dynamic_call_stack_shape_status": (
             "observed-push-counts-not-abi-proof"
             if len(dynamic_stack_observed_rows) == len(dynamic_stack_rows)
@@ -1897,6 +1983,7 @@ def audit(
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
         "runtime_fixed_slot_writer_inventory": runtime_fixed_slot_writer_inventory,
         "conditional_skip_branches": skip_branch_evidence,
+        "conditional_nonzero_guards": nonzero_guard_evidence,
         "kernel_implementation_evidence": kernel_implementation_evidence or {},
         "kernel_file_information_evidence": kernel_file_information_evidence or {},
         "kernel_bridge_cases": kernel_bridge_cases or {},
