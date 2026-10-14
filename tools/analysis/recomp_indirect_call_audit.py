@@ -152,8 +152,23 @@ def recover_indirect_sites(
             if symbol_match:
                 current = address_by_name.get(symbol_match.group(1))
                 register_aliases = {}
+                prcb_cache_sequence_pending = False
+                prcb_cache_loaded = False
+                prcb_cache_guard_checked = False
             if current is None or current not in directly_reachable:
                 continue
+            if "eax = MEM32(XBOX_FS_BASE + 0x20);" in line:
+                prcb_cache_sequence_pending = True
+                prcb_cache_loaded = False
+                prcb_cache_guard_checked = False
+            elif (
+                prcb_cache_sequence_pending
+                and "eax = MEM32(eax + 0x250);" in line
+            ):
+                prcb_cache_sequence_pending = False
+                prcb_cache_loaded = True
+            elif prcb_cache_loaded and "if (CMP_EQ(_fa, _fb))" in line:
+                prcb_cache_guard_checked = True
             call_match = INDIRECT_CALL_RE.search(line)
             if call_match is not None:
                 expression = call_match.group("expression").strip()
@@ -167,6 +182,11 @@ def recover_indirect_sites(
                 if expression in register_aliases:
                     row["aliased_fixed_slot"] = f"0x{register_aliases[expression]:08X}"
                     row["target_alias_register"] = expression
+                if (
+                    expression == "MEM32(eax + 0x14)"
+                    and prcb_cache_guard_checked
+                ):
+                    row["prcb_cache_guarded"] = True
                 sites.append(row)
 
             assignment_match = REGISTER_ASSIGNMENT_RE.match(line)
@@ -199,6 +219,10 @@ def classify_sites(
     for site in sites:
         row = dict(site)
         expression = site["target_expression"]
+        if site.get("prcb_cache_guarded"):
+            row["classification"] = "prcb-guarded-dynamic-callback"
+            rows.append(row)
+            continue
         fixed_match = FIXED_SLOT_RE.fullmatch(expression)
         aliased_slot = site.get("aliased_fixed_slot")
         if fixed_match is None and aliased_slot is None:
@@ -265,6 +289,12 @@ def audit(
         "dynamic_register_or_object_targets": classifications[
             "dynamic-register-or-object-target"
         ],
+        "prcb_guarded_dynamic_callback_sites": classifications[
+            "prcb-guarded-dynamic-callback"
+        ],
+        "unresolved_dynamic_sites": classifications[
+            "dynamic-register-or-object-target"
+        ] + classifications["prcb-guarded-dynamic-callback"],
         "fixed_known_function_pointer_sites": classifications[
             "fixed-known-function-pointer"
         ],

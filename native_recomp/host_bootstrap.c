@@ -2,11 +2,16 @@
 #include "xbox_memory_layout.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <windows.h>
 
 #define FUT_STREET_2_ENTRY_POINT 0x0024D8BEu
+#define FUT_PRCB_CACHE_OFFSET 0x250u
+#define FUT_BSS_CALLBACK_SLOT_0 0x00360A70u
+#define FUT_BSS_CALLBACK_SLOT_1 0x00360AA8u
+#define FUT_BSS_CALLBACK_SLOT_2 0x00360AB4u
 
 /* These host-runtime declarations match the pinned XboxRecomp kernel.h ABI. */
 void xbox_kernel_init(void);
@@ -54,6 +59,50 @@ static int environment_variable_is_set(const char *name)
     return getenv(name) != NULL;
 }
 
+/* Read-only bring-up check for the seven indirect sites that are not fixed
+ * kernel thunks. The memory layout deliberately starts the PRCB cache and
+ * these callback slots at zero; no guest instruction is called here. */
+static int preflight_read32(uint32_t xbox_va, uint32_t *value)
+{
+    const size_t mapped_size = xbox_GetMappedSize();
+    const uint8_t *memory = (const uint8_t *)xbox_GetMemoryOffset();
+
+    if (value == NULL || (uint64_t)xbox_va + sizeof(*value) > mapped_size)
+        return 0;
+    *value = *(const uint32_t *)(memory + xbox_va);
+    return 1;
+}
+
+static int validate_preflight_dynamic_guards(void)
+{
+    uint32_t prcb_va;
+    uint32_t prcb_cache;
+    uint32_t callback_slot_0;
+    uint32_t callback_slot_1;
+    uint32_t callback_slot_2;
+
+    if (!preflight_read32(XBOX_FS_BASE + 0x20u, &prcb_va) ||
+        !preflight_read32(prcb_va + FUT_PRCB_CACHE_OFFSET, &prcb_cache) ||
+        !preflight_read32(FUT_BSS_CALLBACK_SLOT_0, &callback_slot_0) ||
+        !preflight_read32(FUT_BSS_CALLBACK_SLOT_1, &callback_slot_1) ||
+        !preflight_read32(FUT_BSS_CALLBACK_SLOT_2, &callback_slot_2)) {
+        fprintf(stderr, "Cannot inspect indirect-call guard memory.\n");
+        return 0;
+    }
+    if (prcb_cache != 0 || callback_slot_0 != 0 || callback_slot_1 != 0 ||
+        callback_slot_2 != 0) {
+        fprintf(stderr,
+                "Unexpected dynamic-call guard state: PRCB cache=0x%08X, "
+                "BSS callbacks=[0x%08X,0x%08X,0x%08X].\n",
+                prcb_cache, callback_slot_0, callback_slot_1, callback_slot_2);
+        return 0;
+    }
+    printf("Dynamic-call guards OK: PRCB cache=0 and BSS callback slots="
+           "0x%08X/0x%08X/0x%08X; no guest code executed.\n",
+           callback_slot_0, callback_slot_1, callback_slot_2);
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     void *xbe_data = NULL;
@@ -96,6 +145,9 @@ int main(int argc, char **argv)
             goto cleanup;
         }
         memory_ready = 1;
+
+        if (!validate_preflight_dynamic_guards())
+            goto cleanup;
 
         if (runtime_preflight) {
             xbox_kernel_init();
@@ -153,6 +205,9 @@ int main(int argc, char **argv)
         goto cleanup;
     }
     memory_ready = 1;
+
+    if (!validate_preflight_dynamic_guards())
+        goto cleanup;
 
     xbox_kernel_init();
     kernel_ready = 1;
