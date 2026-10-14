@@ -28,6 +28,9 @@ UNIMPLEMENTED_RE = re.compile(
 FALLTHROUGH_RE = re.compile(
     r"/\*\s*fallthrough\s+0x(?P<target>[0-9A-Fa-f]{8})\s*\*/"
 )
+TAIL_JUMP_RE = re.compile(
+    r"/\*\s*tail\s+jmp\s+0x(?P<target>[0-9A-Fa-f]{8})\s*\*/"
+)
 
 
 def _address(value: Any) -> int:
@@ -172,6 +175,88 @@ def recover_generated_fallthrough_edges(
     return edges
 
 
+def recover_generated_direct_tail_edges(
+    generated_dir: Path,
+    functions: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Recover direct ``tail jmp`` edges emitted in generated C.
+
+    Only the explicit target in the generated comment is recorded.  Indirect
+    ``RECOMP_ITAIL`` sites are intentionally excluded because their target is
+    still dynamic and is audited separately.
+    """
+    known_functions = (
+        set() if functions is None else {_address(row["start"]) for row in functions}
+    )
+    edges: list[dict[str, Any]] = []
+    for source_path in sorted(generated_dir.rglob("recomp_*.c")):
+        current_function: str | None = None
+        current_address: int | None = None
+        for line_number, line in enumerate(
+            source_path.read_text(encoding="utf-8").splitlines(), 1
+        ):
+            symbol_match = GENERATED_FUNCTION_NAME_RE.search(line)
+            if symbol_match is not None:
+                current_function = symbol_match.group(1)
+                current_address = int(current_function[4:], 16)
+            match = TAIL_JUMP_RE.search(line)
+            if match is None:
+                continue
+            target = int(match.group("target"), 16)
+            edges.append(
+                {
+                    "source_function": (
+                        None
+                        if current_address is None
+                        else f"0x{current_address:08X}"
+                    ),
+                    "source_function_name": current_function,
+                    "target": f"0x{target:08X}",
+                    "source": f"{source_path.name}:{line_number}",
+                    "target_in_metadata": target in known_functions,
+                }
+            )
+    return edges
+
+
+def recover_tail_augmented_reachable(
+    functions: list[dict[str, Any]],
+    entry: int,
+    tail_edges: list[dict[str, Any]],
+) -> tuple[set[int], set[int]]:
+    """Follow metadata calls plus explicit generated direct-tail edges."""
+    by_start = _function_map(functions)
+    tail_targets: dict[int, set[int]] = {}
+    for row in tail_edges:
+        source = row.get("source_function")
+        if source is None:
+            continue
+        tail_targets.setdefault(_address(source), set()).add(
+            _address(row["target"])
+        )
+
+    reachable: set[int] = set()
+    external_targets: set[int] = set()
+    pending: deque[int] = deque([entry])
+    while pending:
+        address = pending.popleft()
+        if address in reachable:
+            continue
+        function = by_start.get(address)
+        if function is None:
+            external_targets.add(address)
+            continue
+        reachable.add(address)
+        targets = {_address(raw) for raw in function.get("calls_to", [])}
+        targets.update(tail_targets.get(address, set()))
+        for target in targets:
+            if target in by_start:
+                pending.append(target)
+            else:
+                external_targets.add(target)
+    return reachable, external_targets
+
+
 def _owners(functions: list[dict[str, Any]], address: int) -> list[int]:
     owners = []
     for function in functions:
@@ -193,6 +278,17 @@ def audit(
     generated = recover_generated_functions(generated_dir, functions)
     missing = sorted(reachable - generated)
     fallthrough_edges = recover_generated_fallthrough_edges(generated_dir, functions)
+    direct_tail_edges = recover_generated_direct_tail_edges(generated_dir, functions)
+    tail_augmented_reachable, tail_augmented_external_targets = (
+        recover_tail_augmented_reachable(functions, entry, direct_tail_edges)
+    )
+    direct_reachable_tail_edges = [
+        row
+        for row in direct_tail_edges
+        if row["source_function"] is not None
+        and _address(row["source_function"]) in reachable
+    ]
+    tail_augmented_missing = sorted(tail_augmented_reachable - generated)
     direct_reachable_fallthrough_edges = [
         row
         for row in fallthrough_edges
@@ -229,6 +325,26 @@ def audit(
         "direct_external_call_targets": len(external_targets),
         "generated_function_definitions": len(generated),
         "directly_reachable_missing_translations": len(missing),
+        "generated_direct_tail_edges": len(direct_tail_edges),
+        "direct_reachable_direct_tail_edges": len(direct_reachable_tail_edges),
+        "tail_augmented_directly_reachable_functions": len(
+            tail_augmented_reachable
+        ),
+        "tail_augmented_new_functions": len(tail_augmented_reachable - reachable),
+        "tail_augmented_external_targets": len(tail_augmented_external_targets),
+        "tail_augmented_missing_translations": len(tail_augmented_missing),
+        "tail_augmented_missing_translation_addresses": [
+            f"0x{address:08X}" for address in tail_augmented_missing
+        ],
+        "direct_tail_status": (
+            "no-generated-direct-tail-edges-observed"
+            if not direct_tail_edges
+            else (
+                "tail-augmented-translation-coverage-incomplete"
+                if tail_augmented_missing
+                else "tail-augmented-translation-coverage-observed"
+            )
+        ),
         "generated_fallthrough_edges": len(fallthrough_edges),
         "direct_reachable_fallthrough_edges": len(
             direct_reachable_fallthrough_edges
@@ -275,6 +391,7 @@ def audit(
         "missing_direct_reachable_translations": [f"0x{address:08X}" for address in missing],
         "unimplemented_sites": unimplemented_rows,
         "fallthrough_edges": fallthrough_edges,
+        "direct_tail_edges": direct_tail_edges,
     }
 
 
