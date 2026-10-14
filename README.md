@@ -14,6 +14,35 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
+## Estado verificável — release 2.41
+
+O release 2.41 refaz a análise integral do XBE com a pilha atual de `24`
+patches, sem o modo `text-only`. A recuperação da tabela indexada enviesada
+em `sub_0026FB60` agora registra `0x0026FBC4–0x0026FBD0` como dados; o byte em
+`0x0026FBC9` pertence a esse slot de tabela e não é uma instrução `STI`
+executável. Portanto o falso site `STI 0x0026FBC9` foi removido da tradução
+sem adicionar um lowering especulativo.
+
+A geração limpa integral produziu `15.600/15.600` funções, sem falhas, `61`
+unidades C e `1.775.604` linhas de C, com `0` alvos de chamada não resolvidos
+gerados como stub. Restam somente `2` instruções não implementadas no
+artefato: `OUT DX,AL` em `0x00298030` e `SGDT` em `0x00253FD8`; o `STI` real
+em `0x00253FE8` continua deliberadamente sem lowering dentro do helper de
+GDT. O build nativo Release passou e o CTest passou em `3/3`.
+
+Os gates auxiliares também passaram: a suíte focal do XboxRecomp teve
+`570` testes aprovados e `38` skips; a regressão Python teve `118/118`; o
+build .NET terminou com `0` warnings e `0` errors; e o self-test do produto
+passou em `105/105`. A auditoria indireta permanece em `62` sites, com `48`
+thunks de kernel, `7` callbacks dinâmicos sem destino provado e `4/4`
+callbacks protegidos pelo PRCB com disposição de retorno classificada.
+
+Esse resultado é evidência estática da correção da fronteira entre código e
+dados; não prova boot, execução, equivalência de hardware/GDT, ABI, rendering,
+assets, gameplay, animação ou áudio. A prontidão permanece `NOT_READY`, a
+estimativa conservadora do PoC jogável continua em aproximadamente `31%
+concluído / 69% restante` e o XBE não é executado.
+
 ## Estado verificável — release 2.40
 
 O release 2.40 recupera uma única instrução `DAA` em `0x00270EA2`, mas
