@@ -102,3 +102,7 @@
 *.log
 *.pem
 *.key
+
+# Keep documentation local except for the public root README.
+**/*.md
+!/README.md
