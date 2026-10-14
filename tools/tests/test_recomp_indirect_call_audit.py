@@ -13,6 +13,7 @@ from tools.analysis.recomp_indirect_call_audit import (
     recover_dynamic_callback_caller_provenance,
     recover_dynamic_callback_container_field_provenance,
     recover_dynamic_callback_object_field_provenance,
+    recover_dynamic_object_field_writer_context,
     recover_callback_return_use_provenance,
     recover_dynamic_source_provenance,
     recover_dynamic_target_writes,
@@ -618,6 +619,48 @@ void sub_00002000(void)
             "caller-object-field-write-shape-observed",
         )
         self.assertEqual(evidence[0]["fields"][0]["writes"][0]["rhs"], "edx")
+
+    def test_recovers_dynamic_object_field_writer_context(self) -> None:
+        functions = [
+            {
+                "start": "0x1000",
+                "end": "0x1020",
+                "name": "sub_00001000",
+                "calls_to": [],
+            }
+        ]
+        generated_source = """
+void sub_00001000(void)
+{
+    PUSH32(esp, 0x00001005u);
+    RECOMP_ABI_CALL(0x00002000u, sub_00002000);
+    eax = MEM32(ebp + -28);
+    ecx = MEM32(ebp + -84);
+    MEM32(eax + 0x584) = ecx;
+}
+"""
+        with tempfile.TemporaryDirectory() as temporary:
+            generated = Path(temporary) / "generated"
+            generated.mkdir()
+            (generated / "recomp_0000.c").write_text(
+                generated_source, encoding="utf-8"
+            )
+            writers = recover_dynamic_target_writes(
+                generated, functions, None, []
+            )
+            evidence = recover_dynamic_object_field_writer_context(
+                generated, writers["dynamic-object-field-target"]
+            )
+
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0]["status"], "post-call-register-sources-observed")
+        self.assertEqual(
+            evidence[0]["construction_shape"],
+            "local-object-base-and-value-load-shape",
+        )
+        self.assertEqual(evidence[0]["base_source"]["rhs"], "MEM32(ebp + -28)")
+        self.assertEqual(evidence[0]["value_source"]["rhs"], "MEM32(ebp + -84)")
+        self.assertEqual(evidence[0]["value_source_kind"], "memory-read")
 
     def test_resolves_proven_bss_slot_initializer(self) -> None:
         functions = [

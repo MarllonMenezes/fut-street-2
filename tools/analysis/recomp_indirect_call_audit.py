@@ -2274,6 +2274,150 @@ def recover_dynamic_target_writes(
     return writers
 
 
+def recover_dynamic_object_field_writer_context(
+    generated_dir: Path,
+    writers: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover immediate register sources for ``object + 0x584`` writers.
+
+    The result is deliberately a local, post-call window.  It records the
+    nearest assignments to the base and value registers after the previous
+    direct call in the same generated function.  This can expose a repeated
+    construction shape, but it does not prove path dominance, object identity,
+    allocation semantics, or that the value is a callable target.
+    """
+    source_paths = {
+        path.name: path for path in generated_dir.rglob("recomp_*.c")
+    }
+    contexts: list[dict[str, Any]] = []
+
+    def nearest_assignment(
+        lines: list[str], register: str, start: int, lower_bound: int
+    ) -> dict[str, Any] | None:
+        for index in range(start, lower_bound - 1, -1):
+            match = REGISTER_ASSIGNMENT_RE.match(lines[index])
+            if match is None or match.group("register") != register:
+                continue
+            return {
+                "source": f"{source_name}:{index + 1}",
+                "expression": lines[index].strip(),
+                "register": register,
+                "rhs": match.group("rhs").strip(),
+            }
+        return None
+
+    for writer in writers:
+        source_text = str(writer.get("source", ""))
+        source_name, separator, line_text = source_text.rpartition(":")
+        if not separator or not line_text.isdigit():
+            contexts.append(
+                {
+                    "writer": writer,
+                    "status": "writer-source-unresolved",
+                }
+            )
+            continue
+        source_path = source_paths.get(source_name)
+        if source_path is None:
+            contexts.append(
+                {
+                    "writer": writer,
+                    "status": "writer-source-file-unresolved",
+                }
+            )
+            continue
+
+        lines = source_path.read_text(encoding="utf-8").splitlines()
+        writer_index = int(line_text) - 1
+        if writer_index < 0 or writer_index >= len(lines):
+            contexts.append(
+                {
+                    "writer": writer,
+                    "status": "writer-source-line-unresolved",
+                }
+            )
+            continue
+
+        function_start = 0
+        for index in range(writer_index, -1, -1):
+            if FUNCTION_SYMBOL_RE.match(lines[index]) is not None:
+                function_start = index
+                break
+
+        field_write = DYNAMIC_OBJECT_FIELD_WRITE_RE.search(lines[writer_index])
+        value_match = DYNAMIC_WRITER_ASSIGNMENT_RE.search(lines[writer_index])
+        if field_write is None or value_match is None:
+            contexts.append(
+                {
+                    "writer": writer,
+                    "status": "object-field-write-shape-unresolved",
+                }
+            )
+            continue
+
+        last_direct_call = function_start
+        for index in range(function_start, writer_index):
+            if "RECOMP_ABI_CALL(" in lines[index]:
+                last_direct_call = index
+
+        base_register = field_write.group("register")
+        value_expression = value_match.group("value").strip()
+        value_register_match = REGISTER_NAME_RE.fullmatch(value_expression)
+        value_register = (
+            value_register_match.group("register")
+            if value_register_match is not None
+            else None
+        )
+        base_source = nearest_assignment(
+            lines, base_register, writer_index - 1, last_direct_call + 1
+        )
+        value_source = (
+            nearest_assignment(
+                lines, value_register, writer_index - 1, last_direct_call + 1
+            )
+            if value_register is not None
+            else None
+        )
+        if base_source is not None and value_source is not None:
+            status = "post-call-register-sources-observed"
+        elif base_source is not None or value_source is not None:
+            status = "partial-post-call-register-sources-observed"
+        else:
+            status = "post-call-register-sources-unresolved"
+
+        base_rhs = base_source["rhs"] if base_source is not None else None
+        value_rhs = value_source["rhs"] if value_source is not None else None
+        construction_shape = (
+            "local-object-base-and-value-load-shape"
+            if base_rhs == "MEM32(ebp + -28)"
+            and value_rhs == "MEM32(ebp + -84)"
+            else "not-observed"
+        )
+        contexts.append(
+            {
+                "writer": writer,
+                "status": status,
+                "base_register": base_register,
+                "value_expression": value_expression,
+                "value_register": value_register,
+                "base_source": base_source,
+                "value_source": value_source,
+                "base_source_kind": (
+                    _dynamic_writer_value_kind(base_rhs)
+                    if base_rhs is not None
+                    else "unresolved"
+                ),
+                "value_source_kind": (
+                    _dynamic_writer_value_kind(value_rhs)
+                    if value_rhs is not None
+                    else "unresolved"
+                ),
+                "construction_shape": construction_shape,
+            }
+        )
+    return contexts
+
+
 def _dynamic_target_family(site: dict[str, Any]) -> str:
     """Name the conservative data-flow shape, without resolving its value."""
     if site.get("prcb_cache_guarded"):
@@ -3509,6 +3653,12 @@ def audit(
         None,
         dynamic_memory_ranges,
     )
+    dynamic_object_field_writer_context = (
+        recover_dynamic_object_field_writer_context(
+            generated_dir,
+            all_dynamic_target_writers.get("dynamic-object-field-target", []),
+        )
+    )
     dynamic_target_outside_direct_writers = {
         family: [
             row
@@ -4679,6 +4829,24 @@ def audit(
             if sum(dynamic_outside_writer_counts.values())
             else "none-observed"
         ),
+        "dynamic_object_field_writer_context_sites": len(
+            dynamic_object_field_writer_context
+        ),
+        "dynamic_object_field_writer_context_status_counts": dict(
+            Counter(row["status"] for row in dynamic_object_field_writer_context)
+        ),
+        "dynamic_object_field_writer_context_construction_shape_counts": dict(
+            Counter(
+                row.get("construction_shape", "not-observed")
+                for row in dynamic_object_field_writer_context
+            )
+        ),
+        "dynamic_object_field_writer_context_value_source_kinds": dict(
+            Counter(
+                row.get("value_source_kind", "unresolved")
+                for row in dynamic_object_field_writer_context
+            )
+        ),
         "runtime_fixed_slot_all_writer_counts": {
             slot: len(rows)
             for slot, rows in runtime_fixed_slot_writer_inventory.items()
@@ -5000,6 +5168,7 @@ def audit(
         "sites": classified,
         "prcb_cache_writes": prcb_cache_writes,
         "dynamic_target_outside_direct_writers": dynamic_target_outside_direct_writers,
+        "dynamic_object_field_writer_context": dynamic_object_field_writer_context,
         "dynamic_source_provenance": dynamic_source_provenance,
         "prcb_callback_cache_provenance": prcb_callback_cache_provenance,
         "callback_return_use_provenance": callback_return_use_provenance,
