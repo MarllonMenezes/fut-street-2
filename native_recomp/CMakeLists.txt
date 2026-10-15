@@ -169,7 +169,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -180,7 +180,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
     target_link_libraries(fut_street_2_recompiled_app PRIVATE
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel
-        ${RECOMP_HOST_LIBRARIES} dxguid)
+        ${RECOMP_HOST_LIBRARIES} dxguid dxgi user32)
 
     add_executable(no_emulation_kernel_file_contract_test
         tests/no_emulation_kernel_file_contract_test.c)
@@ -207,6 +207,11 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_backend COMMAND graphics_native_backend_test)
         set_tests_properties(graphics_native_backend PROPERTIES TIMEOUT 15)
+        add_executable(graphics_native_display_test tests/graphics_native_display_test.c graphics_native_display.c graphics_native_constants.c)
+        target_include_directories(graphics_native_display_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_display_test PRIVATE d3d11 dxgi dxguid user32)
+        add_test(NAME graphics_native_display COMMAND graphics_native_display_test)
+        set_tests_properties(graphics_native_display PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77)
         add_executable(graphics_native_draw_test tests/graphics_native_draw_test.c graphics_native_draw.c graphics_native_immediate.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_surfaces.c graphics_native_constants.c)
         target_include_directories(graphics_native_draw_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_draw_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)

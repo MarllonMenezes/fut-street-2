@@ -14,7 +14,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.79
+## Estado verificável — release 2.80
 
 **A terceira submissão gráfica original concluiu**, processando `323`
 métodos e confirmando os semáforos `9` e `11` após a conclusão nativa
@@ -31,18 +31,26 @@ Callbacks, extrapolação temporal, fila cheia e scanout imediatamente devido
 permanecem recusados. O endereço e o pitch devem corresponder à superfície
 validada; o snapshot é relido antes das escritas para recusar alterações
 detectadas entre as leituras.
-Não há implementação genérica da notificação ou da apresentação.
+Não há implementação genérica da notificação.
 
-Build Release e CTest passaram `23/23`. Os novos testes verificam slots,
-intervalos, wrap dos contadores, recusas sem mutação e integração pelo
-receptor real de comandos com memória sintética. As regressões WARP de
-shaders, pixels, padding e writeback continuam aprovadas.
+Uma nova camada Win32/DXGI flip-sequential apresenta superfícies BGRA8
+single-sample em uma janela nativa. O teste confirmou duas imagens
+**sintéticas**, com readback exato dos pixels do backbuffer e recibos de
+apresentação correspondentes às contagens DXGI. `Present` enfileirado não é
+tratado como recibo; há somente uma imagem em voo, com espera limitada,
+cancelamento e recusa de dispositivos/contextos incompatíveis.
+Essa camada está compilada no host, mas **ainda não está conectada à fila
+original do jogo** e não gera interrupções guest.
+
+Build Release e CTest passaram `24/24`, sem testes pulados. A validação inclui
+a apresentação DXGI, o fechamento com frame pendente, a recusa de acesso
+por outra thread e as regressões existentes de fila, shaders e writeback.
 
 Na execução do jogo recompilado, a solicitação ficou pendente no slot `0`,
 aguardando o primeiro intervalo de VBlank. A observação posterior confirmou
 que ela não foi retirada nem tratada como apresentada. O programa foi
 encerrado pelo limite de cinco segundos; **o timeout não é aprovação de
-boot completo ou fidelidade**. Nenhum frame foi apresentado e não há gameplay.
+boot completo ou fidelidade**. Nenhum frame do jogo foi apresentado e não há gameplay.
 
 Permanece a **aproximação de dithering ARGB8 single-sample aceita pelo
 usuário**, marcada `ACCEPTED_APPROXIMATION`: conversão UNORM do host sem
@@ -51,9 +59,10 @@ menores/MSAA e não transforma testes host em prova de equivalência.
 A especialização da textura RGB zero também não implementa quincunx genérico.
 ISO intacta; novas saídas controláveis no D:.
 
-Próximo experimento: implementar a apresentação nativa e a entrega de seus
-eventos de temporização ao código original, preservando a ordem da fila e
-os callbacks, sem injetar um VBlank artificial de frequência fixa.
+Próximo experimento: conectar a temporização nativa à entrega segura de
+interrupções e DPCs do código original, com stack/TIB guest, máscara de
+interrupções e serialização da fila. Um recibo DXGI não equivale, sozinho,
+a um VBlank NV2A. Não injetar um VBlank artificial de frequência fixa.
 Precisão gráfica, filtro genérico, gameplay e áudio seguem pendentes.
 `NOT_READY` permanece.
 
