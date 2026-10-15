@@ -190,6 +190,10 @@ if(FUT_STREET2_BUILD_HOST_APP)
 
     add_executable(no_emulation_kernel_file_contract_test
         tests/no_emulation_kernel_file_contract_test.c)
+    add_executable(native_interrupt_ownership_test tests/native_interrupt_ownership_test.c)
+    target_include_directories(native_interrupt_ownership_test PRIVATE
+        "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+    add_test(NAME native_interrupt_ownership COMMAND native_interrupt_ownership_test)
     target_include_directories(no_emulation_kernel_file_contract_test PRIVATE
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")

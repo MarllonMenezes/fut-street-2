@@ -1,0 +1,43 @@
+diff --git a/src/kernel/nv2a_ack_ownership.h b/src/kernel/nv2a_ack_ownership.h
+new file mode 100644
+--- /dev/null
++++ b/src/kernel/nv2a_ack_ownership.h
+@@ -0,0 +1,13 @@
++#ifndef XBOX_NV2A_ACK_OWNERSHIP_H
++#define XBOX_NV2A_ACK_OWNERSHIP_H
++#include <stdint.h>
++/* Native scanout must retain pending status until an explicit translated
++ * acknowledgement. This does not implement W1C or produce interrupts. */
++static inline uint32_t xbox_Nv2aLegacyAckMask(uint32_t offset,uint32_t mask,
++                                           int external_graphics_completion)
++{
++    if(external_graphics_completion && (offset==0x000100u || offset==0x600100u))
++        return 0;
++    return mask;
++}
++#endif
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -873,6 +873,8 @@
+     fflush(stderr);
+ }
+ 
++#include "nv2a_ack_ownership.h"
++
+ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
+ {
+     volatile uint32_t *regs = (volatile uint32_t *)param;
+@@ -884,8 +886,10 @@
+         for (size_t i = 0; i < sizeof(NV2A_ACK) / sizeof(NV2A_ACK[0]); i++) {
+             volatile uint32_t *r =
+                 (volatile uint32_t *)((char *)regs + NV2A_ACK[i].offset);
+-            if (*r & NV2A_ACK[i].busy_mask) {
+-                *r &= ~NV2A_ACK[i].busy_mask;
++            uint32_t mask = xbox_Nv2aLegacyAckMask(NV2A_ACK[i].offset,
++                NV2A_ACK[i].busy_mask, external_graphics_completion);
++            if (*r & mask) {
++                *r &= ~mask;
+             }
+         }
+         for (size_t i = 0; i < sizeof(NV2A_IDLE) / sizeof(NV2A_IDLE[0]); i++) {
