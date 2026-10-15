@@ -146,18 +146,27 @@ static int native_preview_original_draw(NativeGraphicsState *state)
     }
     HRESULT hr = fut_native_display_open(&state->diagnostic_preview,
         state->device, plan->width, plan->height, 1);
-    if (SUCCEEDED(hr))
+    if (hr == S_OK)
         hr = fut_native_display_stage(&state->diagnostic_preview, state->context,
             state->native_surfaces.color, 2000, backend_stop);
-    if (SUCCEEDED(hr))
+    if (hr == S_OK)
         hr = fut_native_display_submit(&state->diagnostic_preview, 1);
-    if (FAILED(hr)) {
+    FutNativeDisplayReceipt receipt;
+    if (hr == S_OK) {
+        ULONGLONG deadline = GetTickCount64() + 2000;
+        do {
+            hr = fut_native_display_poll(&state->diagnostic_preview, &receipt);
+            if (hr == S_FALSE) Sleep(1);
+        } while (hr == S_FALSE && GetTickCount64() < deadline);
+    }
+    if (hr != S_OK) {
         fprintf(stderr, "[GRAPHICS] diagnostic preview failed: HRESULT=%08lX; guest flip/IRQ unchanged\n", hr);
         fut_native_display_close(&state->diagnostic_preview);
         return 0;
     }
     state->diagnostic_preview_submitted = 1;
-    fputs("[GRAPHICS] diagnostic preview submitted from original draw; host Present only, no guest flip/retirement/VBlank/IRQ\n", stderr);
+    fprintf(stderr, "[GRAPHICS] diagnostic preview received DXGI frame statistics: present=%u present_refresh=%u sync_refresh=%u; host receipt only, no guest flip/retirement/VBlank/IRQ\n",
+        receipt.present_count, receipt.present_refresh, receipt.sync_refresh);
     return 1;
 }
 
