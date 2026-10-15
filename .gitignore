@@ -6,7 +6,8 @@
 !/README.md
 !/CONTINUAR_FIFA_STREET_2*.md
 !/INSTRUCAO_CONTINUAR_FIFA_STREET_2_ATE_FINALIZAR.md
-!/PROMPT_CONTINUAR_FIFA_STREET_2*.txt
+# Continuation prompts stay local; never publish them.
+/PROMPT*.txt
 
 !/docs/
 /docs/*
