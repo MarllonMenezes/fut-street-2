@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "graphics_native_display.h"
+#include "graphics_native_vblank.h"
 #include "graphics_native_constants.h"
 #include <stdio.h>
 #include <string.h>
@@ -59,6 +60,14 @@ int main(void)
     if(unavailable_environment(hr)) {fprintf(stderr,"Display unavailable HRESULT=%08lX; no presentation validation\n",hr);
         fut_native_constants_destroy(&completion);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);return 77;}
     CHECK(hr==S_OK,35);
+    IDXGIOutput *timing_output=NULL;FutNativeVBlank clock={0};FutNativeVBlankReceipt edge;
+    CHECK(IDXGISwapChain2_GetContainingOutput(d.swap,&timing_output)==S_OK,49);
+    CHECK(fut_native_vblank_start(&clock,timing_output)==S_OK &&
+        fut_native_vblank_wait(&clock,0,2000,NULL,&edge)==S_OK &&
+        edge.monitor==MonitorFromWindow(d.window,MONITOR_DEFAULTTONULL),50);
+    CHECK(fut_native_vblank_close(&clock,2000)==S_OK,51);
+    IDXGIOutput_Release(timing_output);
+    puts("Native output wait confirmed on presenter monitor before first Present; no guest VBlank");
     HWND original=d.window;
     CHECK(fut_native_display_open(&d,device,128,64,1)==E_PENDING && d.window==original,4);
     uint32_t pixels[128*64];
