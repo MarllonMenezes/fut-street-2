@@ -78,6 +78,10 @@ static void native_scanout_diagnostic(uint32_t notification)
         w[0x174/4],w[0x178/4],w[0x17C/4],w[0x180/4],w[0x184/4],w[0x188/4]);
     fprintf(stderr,"[GRAPHICS] scanout interrupt snapshot: enabled=%u servicing=%u dpc_routine=%08X dpc_context=%08X flags=%08X vblank_callback=%08X\n",
         w[0xA0/4],w[0xA4/4],w[0x90/4],w[0x94/4],w[0x1B4/4],w[0x190/4]);
+    uint32_t object=xbox_GetConnectedInterrupt(3),irq[5];
+    if(object && read_guest(object,irq,sizeof(irq)))
+        fprintf(stderr,"[GRAPHICS] registered interrupt object: address=%08X routine=%08X context=%08X bus=%u irql=%u flags=%08X\n",
+            object,irq[0],irq[1],irq[2],irq[3],irq[4]);
 }
 
 

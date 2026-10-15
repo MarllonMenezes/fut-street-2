@@ -61,6 +61,10 @@ void fut_guest_interrupt_lock_state(void)
 {
     ready();EnterCriticalSection(&gate);
 }
+uint8_t fut_guest_interrupt_scope_active(void)
+{
+    return (uint8_t)(host_owned!=0);
+}
 void fut_guest_interrupt_unlock_state(void)
 {
     LeaveCriticalSection(&gate);

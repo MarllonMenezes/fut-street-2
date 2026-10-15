@@ -1,0 +1,201 @@
+diff --git a/src/kernel/xbox_irq_contract.h b/src/kernel/xbox_irq_contract.h
+new file mode 100644
+--- /dev/null
++++ b/src/kernel/xbox_irq_contract.h
+@@ -0,0 +1,16 @@
++#ifndef XBOX_IRQ_CONTRACT_H
++#define XBOX_IRQ_CONTRACT_H
++#include <stdint.h>
++/* Guest ABI constants; not host structure sizes or a hardware dispatcher. */
++#define XBOX_BUS_IRQ_MAX 27u
++#define XBOX_DEVICE_VECTOR_BASE 0x30u
++#define XBOX_GUEST_KINTERRUPT_SIZE 0x70u
++static inline uint32_t xbox_BusInterruptVector(uint32_t bus)
++{
++    return bus<=XBOX_BUS_IRQ_MAX?XBOX_DEVICE_VECTOR_BASE+bus:0;
++}
++static inline uint8_t xbox_BusInterruptIrql(uint32_t bus)
++{
++    return (uint8_t)(XBOX_BUS_IRQ_MAX-bus); /* caller validates bus first */
++}
++#endif
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -26,6 +26,7 @@
+  */
+ 
+ #include "kernel.h"
++#include "xbox_irq_contract.h"
+ #include "guest_vmem.h"
+ #include "xbox_memory_layout.h"
+ #include "recomp_icall_feedback.h"
+@@ -2070,6 +2071,7 @@
+  */
+ static void bridge_KeSynchronizeExecution(void)
+ {
++    uint32_t interrupt=STACK_ARG(0);
+     uint32_t routine = STACK_ARG(1);
+     uint32_t context = STACK_ARG(2);
+     recomp_func_t fn;
+@@ -2084,6 +2086,10 @@
+         return;
+     }
+ 
++    if (!interrupt || !bridge_va_mapped(interrupt,XBOX_GUEST_KINTERRUPT_SIZE)
++            || BRIDGE_MEM32(interrupt+12)>31) {
++        g_eax=0;return;
++    }
+     /* BOOLEAN SynchronizeRoutine(PVOID Context), __stdcall. Its `ret 4` takes
+      * the dummy return address and the argument, so g_esp needs no fixup. */
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
+@@ -2091,7 +2097,8 @@
+ #ifdef FUT_NATIVE_INTERRUPT_GATES
+     fut_guest_interrupt_lock_state();
+ #endif
+-    fn();
++    { int previous=xbox_IrqlEnterInterrupt((int)BRIDGE_MEM32(interrupt+12));
++      fn();xbox_IrqlLeaveInterrupt(previous); }
+ #ifdef FUT_NATIVE_INTERRUPT_GATES
+     fut_guest_interrupt_unlock_state();
+ #endif
+@@ -2228,10 +2235,15 @@
+     uint32_t routine, context;
+     recomp_func_t fn;
+ 
+-    if (!kint)
++    if (!kint || !bridge_va_mapped(kint,XBOX_GUEST_KINTERRUPT_SIZE))
+         return -1;
+     routine = BRIDGE_MEM32(kint + 0);
+     context = BRIDGE_MEM32(kint + 4);
++    uint32_t level=BRIDGE_MEM32(kint+12);
++    if (!BRIDGE_MEM8(kint+0x10) || level>31 || level<3)
++        return -1;
++    if (!g_fs_base || !bridge_va_mapped(g_fs_base,0x28)) return -1;
++    if (BRIDGE_MEM8(g_fs_base+0x24)>=level) return -2;
+     if (!routine)
+         return -1;
+     fn = recomp_lookup(routine);
+@@ -2242,10 +2254,26 @@
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = kint;
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
+-    { int _irql = xbox_IrqlEnterInterrupt(16); fn(); xbox_IrqlLeaveInterrupt(_irql); }
++    { int _irql = xbox_IrqlEnterInterrupt((int)level); fn(); xbox_IrqlLeaveInterrupt(_irql); }
+     return (int)(g_eax & 1u);
+ }
+ 
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++/* Caller owns a guest execution context and an active host interrupt gate.
++ * No pending register bits are fabricated here. -2 means not delivered,
++ * -1 invalid/unresolved, 0 declined, 1 claimed. DPC draining is separate. */
++int xbox_InvokeConnectedInterrupt(uint32_t bus)
++{
++    if (!fut_guest_interrupt_scope_active()) return -2;
++    if (!g_fs_base || !g_esp || !bridge_va_mapped(g_fs_base,0x28)
++            || g_esp<12 || !bridge_va_mapped(g_esp-12,16)) return -1;
++    uint32_t before=g_esp;
++    int result=kernel_raise_interrupt(bus);
++    if (g_esp!=before) return -1;
++    return result;
++}
++#endif
++
+ /* The GPU's vertical blank, delivered rather than merely enabled.
+  *
+  * The D3D8 library linked into a title installs an ISR for this and then waits
+@@ -2403,11 +2431,10 @@
+     uint32_t level   = STACK_ARG(0);
+     uint32_t irql_va = STACK_ARG(1);
+ 
+-    if (irql_va) {
+-        /* IRQL is conventionally the vector for device interrupts. */
+-        BRIDGE_MEM8(irql_va) = (uint8_t)level;
+-    }
+-    g_eax = level;
++    uint32_t vector=xbox_BusInterruptVector(level);
++    if (vector && irql_va)
++        BRIDGE_MEM8(irql_va)=xbox_BusInterruptIrql(level);
++    g_eax=vector;
+ }
+ 
+ /* VOID KeInitializeInterrupt(PKINTERRUPT, ServiceRoutine, ServiceContext,
+@@ -2419,16 +2446,22 @@
+     uint32_t context      = STACK_ARG(2);
+     uint32_t vector       = STACK_ARG(3);
+ 
+-    if (!bridge_buf_ok(interrupt_va, 44, "KeInitializeInterrupt")) {
++    if (!bridge_buf_ok(interrupt_va, XBOX_GUEST_KINTERRUPT_SIZE, "KeInitializeInterrupt")) {
+         g_eax = 0;
+         return;
+     }
+ 
+-    /* Xbox KINTERRUPT is 44 bytes. */
+-    memset(XBOX_TO_NATIVE(interrupt_va), 0, 44);
++    if (vector<XBOX_DEVICE_VECTOR_BASE || vector>XBOX_DEVICE_VECTOR_BASE+XBOX_BUS_IRQ_MAX) {
++        fputs("[KERNEL] unsupported interrupt vector\n",stderr);fflush(stderr);_Exit(3);
++    }
++    /* Guest 32-bit KINTERRUPT layout, independent of host pointer size. */
++    memset(XBOX_TO_NATIVE(interrupt_va), 0, XBOX_GUEST_KINTERRUPT_SIZE);
+     BRIDGE_MEM32(interrupt_va + 0)  = routine;
+     BRIDGE_MEM32(interrupt_va + 4)  = context;
+-    BRIDGE_MEM32(interrupt_va + 8)  = vector;
++    BRIDGE_MEM32(interrupt_va + 8)  = vector-XBOX_DEVICE_VECTOR_BASE;
++    BRIDGE_MEM32(interrupt_va + 12) = (uint8_t)STACK_ARG(4);
++    BRIDGE_MEM8(interrupt_va + 0x11) = (uint8_t)STACK_ARG(6);
++    BRIDGE_MEM8(interrupt_va + 0x12) = (uint8_t)STACK_ARG(5);
+     g_eax = 0;
+ }
+ 
+@@ -2451,10 +2484,14 @@
+ {
+     uint32_t interrupt_va = STACK_ARG(0);
+ 
+-    if (interrupt_va) {
++    g_eax=0;
++    if (interrupt_va && bridge_va_mapped(interrupt_va,XBOX_GUEST_KINTERRUPT_SIZE)) {
+         uint32_t vector = BRIDGE_MEM32(interrupt_va + 8);
+-        if (vector < XBOX_MAX_VECTORS) {
++        if (vector<=XBOX_BUS_IRQ_MAX &&
++            (!g_connected_isr[vector] || g_connected_isr[vector]==interrupt_va)) {
+             g_connected_isr[vector] = interrupt_va;
++            BRIDGE_MEM8(interrupt_va+0x10)=1;
++            g_eax=1;
+             fprintf(stderr, "  [KERNEL] KeConnectInterrupt: vector %u -> "
+                             "routine 0x%08X context 0x%08X\n",
+                     vector, BRIDGE_MEM32(interrupt_va + 0),
+@@ -2462,7 +2499,7 @@
+             fflush(stderr);
+         }
+     }
+-    g_eax = 1;  /* connected -- see the note above */
++    /* Unsupported sharing must not overwrite another registered handler. */
+ }
+ 
+ /* The KINTERRUPT a title connected on this vector, or 0. Device models use it
+diff --git a/src/kernel/kernel_hal.c b/src/kernel/kernel_hal.c
+--- a/src/kernel/kernel_hal.c
++++ b/src/kernel/kernel_hal.c
+@@ -12,6 +12,7 @@
+  */
+ 
+ #include "kernel.h"
++#include "xbox_irq_contract.h"
+ #include "xbox_memory_layout.h"   /* RECOMP_TLS, g_fs_base */
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -579,10 +580,10 @@
+ 
+ ULONG __stdcall xbox_HalGetInterruptVector(ULONG BusInterruptLevel, PKIRQL Irql)
+ {
+-    (void)BusInterruptLevel;
+-    if (Irql)
+-        *Irql = PASSIVE_LEVEL;
+-    return 0;
++    ULONG vector=xbox_BusInterruptVector(BusInterruptLevel);
++    if (vector && Irql)
++        *Irql=xbox_BusInterruptIrql(BusInterruptLevel);
++    return vector;
+ }
+ 
+ /* ============================================================================

@@ -11,6 +11,7 @@ uint8_t fut_guest_interrupt_enabled(void);
  * even if the guest routine returned with CLI active. */
 int fut_guest_interrupt_try_enter(void);
 void fut_guest_interrupt_leave(void);
+uint8_t fut_guest_interrupt_scope_active(void);
 /* Reentrant serialization of MMIO state, preserving IF. Pair on same thread;
  * safe inside CLI or a host interrupt scope. Does not deliver an interrupt. */
 void fut_guest_interrupt_lock_state(void);
