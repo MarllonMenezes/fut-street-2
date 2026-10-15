@@ -21,6 +21,7 @@
 #include "graphics_native_immediate.h"
 #include "graphics_native_draw.h"
 #include "graphics_scanout.h"
+#include "guest_interrupt_gate.h"
 #include "graphics_vertex_program.h"
 
 static HANDLE backend_stop;
@@ -275,20 +276,20 @@ static int native_finish(NativeGraphicsState *state)
     return 1;
 }
 
-static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notification)
+static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t notification)
 {
     uint32_t address=0,w[FUT_SCANOUT_CONTEXT_WORDS],again[FUT_SCANOUT_CONTEXT_WORDS],checked=0;
     FutGraphicsScanoutEnqueue plan;
-    if(!native_finish(state) || !state->native_surfaces.valid ||
+    if(!state->native_surfaces.valid ||
         state->native_surfaces.plan.samples!=1 || !native_scanout_context(&address,w) ||
         !fut_graphics_scanout_enqueue_plan(w,notification,&plan) || w[0]!=0xFD000000u ||
         w[1]!=state->native_surfaces.plan.color_pitch ||
         (plan.physical_address|0x80000000u)!=state->native_surfaces.plan.color_address) {
         native_scanout_diagnostic(notification);return 0;
     }
-    /* Do not overwrite a context that changed during GPU completion/reads.
-     * No presentation/interrupt source consumes this queue yet. Such a source
-     * will require explicit serialization before extending this path. */
+    /* Gate excludes concurrent CLI-protected guest work and future host
+     * interrupt delivery. Re-read also detects changes from nonparticipants;
+     * it does not make unprotected guest writes safe. */
     if(!native_scanout_context(&checked,again) || checked!=address || memcmp(w,again,sizeof(w))) return 0;
     unsigned slot_offset=0x174+plan.slot*12;
     if(!write32(address+0x1C4,plan.next_deadline) || !write32(address+0x1C8,plan.deadline) ||
@@ -300,6 +301,24 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
     state->deferred_scanout_notification=notification;
     state->scanout_idle_report=GetTickCount64()+1000;
     return 1;
+}
+
+static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notification)
+{
+    /* Never wait for GPU completion while holding the guest interrupt gate. */
+    if(!native_finish(state)) return 0;
+    ULONGLONG deadline=GetTickCount64()+2000;
+    for(;;) {
+        if(backend_stop && WaitForSingleObject(backend_stop,0)!=WAIT_TIMEOUT) return 0;
+        if(fut_guest_interrupt_try_enter()) break;
+        if(GetTickCount64()>=deadline) {
+            fputs("[GRAPHICS] scanout interrupt gate timed out; no queue mutation\n",stderr);
+            return 0;
+        }
+        Sleep(1);
+    }
+    int result=native_scanout_enqueue_locked(state,notification);
+    fut_guest_interrupt_leave();return result;
 }
 
 static int native_prepare_fragment(NativeGraphicsState *state)

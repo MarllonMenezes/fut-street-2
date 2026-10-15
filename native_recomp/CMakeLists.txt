@@ -64,6 +64,7 @@ add_library(fut_street_2_no_emulation_runtime_support STATIC
     graphics_draw_state.c
     graphics_software_state.c
     graphics_scanout.c
+    guest_interrupt_gate.c
     no_emulation_optional_hooks.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
@@ -71,6 +72,11 @@ target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
 if(BUILD_TESTING)
+    add_executable(guest_interrupt_gate_test tests/guest_interrupt_gate_test.c)
+    target_include_directories(guest_interrupt_gate_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(guest_interrupt_gate_test PRIVATE fut_street_2_no_emulation_runtime_support)
+    add_test(NAME guest_interrupt_gate COMMAND guest_interrupt_gate_test)
+    set_tests_properties(guest_interrupt_gate PROPERTIES TIMEOUT 10)
     add_executable(graphics_scanout_test tests/graphics_scanout_test.c)
     target_include_directories(graphics_scanout_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(graphics_scanout_test PRIVATE fut_street_2_no_emulation_runtime_support)

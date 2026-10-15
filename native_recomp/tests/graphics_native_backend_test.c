@@ -63,9 +63,23 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     memset(guest_memory+0x6000,0,FUT_SCANOUT_CONTEXT_WORDS*4);
     uint32_t registers=0xFD000000,pitch=16;
     memcpy(guest_memory+0x6000,&registers,4);memcpy(guest_memory+0x6004,&pitch,4);
+    uint8_t before_mask[FUT_SCANOUT_CONTEXT_WORDS*4];
+    memcpy(before_mask,guest_memory+0x6000,sizeof(before_mask));
+    fut_guest_interrupt_cli();
+    ULONGLONG gate_started=GetTickCount64();
+    CHECK(!native_scanout_enqueue(state,(0x3001u<<5)|1) &&
+        !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)) &&
+        !fut_guest_interrupt_enabled() && GetTickCount64()-gate_started<3500,77);
+    fut_guest_interrupt_sti();
+    backend_stop=CreateEventA(NULL,TRUE,TRUE,NULL);CHECK(backend_stop,78);
+    CHECK(!native_scanout_enqueue(state,(0x3001u<<5)|1) &&
+        !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)) &&
+        fut_guest_interrupt_enabled(),79);
+    CloseHandle(backend_stop);backend_stop=NULL;
     CHECK(native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
         guest_word(0x61C4)==2 && guest_word(0x61C8)==1 && guest_word(0x61CC)==1 &&
         guest_word(0x6174)==1 && guest_word(0x6178)==1 && guest_word(0x617C)==0x3000,73);
+    CHECK(fut_guest_interrupt_enabled(),80);
     uint8_t first_queued[FUT_SCANOUT_CONTEXT_WORDS*4];memcpy(first_queued,guest_memory+0x6000,sizeof(first_queued));
     CHECK(!native_method(state,0,0x100,(0x4001u<<5)|1,0) &&
         !memcmp(first_queued,guest_memory+0x6000,sizeof(first_queued)),77);

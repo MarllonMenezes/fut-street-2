@@ -1,10 +1,10 @@
 #include "recomp_types.h"
+#include "guest_interrupt_gate.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 
 static uint8_t g_tv_encoder_field_pin;
-static atomic_bool g_xbox_interrupts_enabled = ATOMIC_VAR_INIT(1);
 
 static void stop_on_runtime_gap(void)
 {
@@ -55,22 +55,17 @@ void recomp_xbox_io_write8(uint16_t port, uint8_t value)
 
 void recomp_xbox_cli(void)
 {
-    /* Compatibility state only: no synthetic interrupt producer exists in
-     * this no-emulation host. */
-    atomic_store_explicit(&g_xbox_interrupts_enabled, 0,
-                          memory_order_seq_cst);
+    fut_guest_interrupt_cli();
 }
 
 void recomp_xbox_sti(void)
 {
-    atomic_store_explicit(&g_xbox_interrupts_enabled, 1,
-                          memory_order_seq_cst);
+    fut_guest_interrupt_sti();
 }
 
 uint8_t recomp_xbox_interrupts_enabled(void)
 {
-    return (uint8_t)atomic_load_explicit(&g_xbox_interrupts_enabled,
-                                         memory_order_seq_cst);
+    return fut_guest_interrupt_enabled();
 }
 
 void recomp_icall_fail_log(uint32_t va)
