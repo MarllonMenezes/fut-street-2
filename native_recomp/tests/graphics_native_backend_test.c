@@ -4,6 +4,11 @@
 
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "backend lifecycle test failed: %d\n", code); return code; } } while (0)
 static uint8_t guest_memory[0x10000];
+static uint32_t connected_interrupt;
+uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
+{
+    return vector==3?connected_interrupt:0;
+}
 ptrdiff_t xbox_GetMemoryOffset(void)
 {
     return (ptrdiff_t)((uintptr_t)guest_memory - (uintptr_t)0x80000000u);
@@ -53,10 +58,44 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     }
     CHECK(!memcmp(depth_before,guest_memory+0x4000,sizeof(depth_before)),66);
     CHECK(state->kelvin.flip_read==0 && state->kelvin.flip_write==0,67);
+    connected_interrupt=0x80000080;
+    uint32_t queue_context=0x80006000;memcpy(guest_memory+0x84,&queue_context,4);
+    memset(guest_memory+0x6000,0,FUT_SCANOUT_CONTEXT_WORDS*4);
+    uint32_t registers=0xFD000000,pitch=16;
+    memcpy(guest_memory+0x6000,&registers,4);memcpy(guest_memory+0x6004,&pitch,4);
+    CHECK(native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
+        guest_word(0x61C4)==2 && guest_word(0x61C8)==1 && guest_word(0x61CC)==1 &&
+        guest_word(0x6174)==1 && guest_word(0x6178)==1 && guest_word(0x617C)==0x3000,73);
+    uint8_t first_queued[FUT_SCANOUT_CONTEXT_WORDS*4];memcpy(first_queued,guest_memory+0x6000,sizeof(first_queued));
+    CHECK(!native_method(state,0,0x100,(0x4001u<<5)|1,0) &&
+        !memcmp(first_queued,guest_memory+0x6000,sizeof(first_queued)),77);
+    CHECK(native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
+        guest_word(0x61CC)==2 && guest_word(0x6180)==1 && guest_word(0x6184)==2,74);
+    uint8_t queued[FUT_SCANOUT_CONTEXT_WORDS*4];memcpy(queued,guest_memory+0x6000,sizeof(queued));
+    CHECK(!native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
+        !memcmp(queued,guest_memory+0x6000,sizeof(queued)),75);
+    CHECK(state->kelvin.flip_read==0 && state->kelvin.flip_write==0 &&
+        !memcmp(depth_before,guest_memory+0x4000,sizeof(depth_before)),76);
+    connected_interrupt=0;
     return 0;
 }
 int main(void)
 {
+    uint32_t context_address=0x12345678,context_words[119],saved_words[119];
+    memset(context_words,0xA5,sizeof(context_words));memcpy(saved_words,context_words,sizeof(saved_words));
+    CHECK(!native_scanout_context(&context_address,context_words) && context_address==0x12345678 &&
+        !memcmp(context_words,saved_words,sizeof(saved_words)),70);
+    connected_interrupt=0x80000080;
+    uint32_t synthetic_context=0x80006000;
+    memcpy(guest_memory+0x84,&synthetic_context,4);
+    for(unsigned i=0;i<119;++i) memcpy(guest_memory+0x6000+i*4,&i,4);
+    CHECK(native_scanout_context(&context_address,context_words) && context_address==synthetic_context &&
+        context_words[0]==0 && context_words[118]==118,71);
+    synthetic_context=4;memcpy(guest_memory+0x84,&synthetic_context,4);
+    memcpy(saved_words,context_words,sizeof(saved_words));
+    CHECK(!native_scanout_context(&context_address,context_words) &&
+        !memcmp(context_words,saved_words,sizeof(saved_words)),72);
+    connected_interrupt=0;
     NativeGraphicsState state = {0}; D3D_FEATURE_LEVEL level;
     memset(guest_memory, 0xCD, sizeof(guest_memory));
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,

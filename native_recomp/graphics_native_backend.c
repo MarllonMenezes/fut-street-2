@@ -20,10 +20,14 @@
 #include "graphics_software_state.h"
 #include "graphics_native_immediate.h"
 #include "graphics_native_draw.h"
+#include "graphics_scanout.h"
 #include "graphics_vertex_program.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
+/* Existing kernel bridge records the connected title ISR object. Reading its
+ * context is diagnostic only, not permission to invoke its callback ABI. */
+extern uint32_t xbox_GetConnectedInterrupt(uint32_t vector);
 
 static int read_guest(uint32_t va, void *data, size_t size)
 {
@@ -47,6 +51,32 @@ static int write32(uint32_t va, uint32_t value)
         (void *)((uintptr_t)xbox_GetMemoryOffset() + va), &value, sizeof(value), &written)
         && written == sizeof(value);
 }
+
+static int native_scanout_context(uint32_t *address,uint32_t words[119])
+{
+    uint32_t object=xbox_GetConnectedInterrupt(3),context=0;
+    uint32_t snapshot[119];
+    if(!address || !words || !object || object>UINT32_MAX-8 ||
+        !read32(object+4,&context) || !context || (context&3) ||
+        !read_guest(context,snapshot,sizeof(snapshot))) return 0;
+    memcpy(words,snapshot,sizeof(snapshot));*address=context;return 1;
+}
+static void native_scanout_diagnostic(uint32_t notification)
+{
+    uint32_t address=0,w[119];
+    uint32_t data=notification>>5;
+    fprintf(stderr,"[GRAPHICS] scanout request pending: physical=%08X interval=%u flags=%X; no presentation/flip/VBlank acknowledged\n",
+        data&0xFFFFFFF0u,data&7u,data&8u);
+    if(!native_scanout_context(&address,w)) {
+        fprintf(stderr,"[GRAPHICS] scanout ISR context unavailable; no state changed\n");return;
+    }
+    fprintf(stderr,"[GRAPHICS] scanout context snapshot: context=%08X registers=%08X pitch=%u mode=%08X disabled=%u callback=%08X completed=%u scheduled=%u last=%u enqueue=%u retire=%u ticks=%u/%u\n",
+        address,w[0],w[1],w[2],w[0x1B8/4],w[0x18C/4],w[0x1C0/4],w[0x1C4/4],w[0x1C8/4],
+        w[0x1CC/4],w[0x1BC/4],w[0x1D4/4],w[0x1D8/4]);
+    fprintf(stderr,"[GRAPHICS] scanout slots snapshot: slot0=%u/%u/%08X slot1=%u/%u/%08X\n",
+        w[0x174/4],w[0x178/4],w[0x17C/4],w[0x180/4],w[0x184/4],w[0x188/4]);
+}
+
 
 static int object_memory_write(void *context, uint32_t address, const void *data, size_t size)
 {
@@ -82,6 +112,8 @@ typedef struct {
     FutGraphicsSoftwareState software;
     FutGraphicsImmediate immediate;
     FutNativeImmediate native_immediate;
+    ULONGLONG scanout_idle_report;
+    uint32_t deferred_scanout_notification;
     unsigned constant_coordinates;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
@@ -240,6 +272,33 @@ static int native_finish(NativeGraphicsState *state)
         state->kelvin.constants_dirty ? state->kelvin.constants : NULL, 2000, backend_stop))
         return 0;
     state->kelvin.constants_dirty = 0;
+    return 1;
+}
+
+static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notification)
+{
+    uint32_t address=0,w[FUT_SCANOUT_CONTEXT_WORDS],again[FUT_SCANOUT_CONTEXT_WORDS],checked=0;
+    FutGraphicsScanoutEnqueue plan;
+    if(!native_finish(state) || !state->native_surfaces.valid ||
+        state->native_surfaces.plan.samples!=1 || !native_scanout_context(&address,w) ||
+        !fut_graphics_scanout_enqueue_plan(w,notification,&plan) || w[0]!=0xFD000000u ||
+        w[1]!=state->native_surfaces.plan.color_pitch ||
+        (plan.physical_address|0x80000000u)!=state->native_surfaces.plan.color_address) {
+        native_scanout_diagnostic(notification);return 0;
+    }
+    /* Do not overwrite a context that changed during GPU completion/reads.
+     * No presentation/interrupt source consumes this queue yet. Such a source
+     * will require explicit serialization before extending this path. */
+    if(!native_scanout_context(&checked,again) || checked!=address || memcmp(w,again,sizeof(w))) return 0;
+    unsigned slot_offset=0x174+plan.slot*12;
+    if(!write32(address+0x1C4,plan.next_deadline) || !write32(address+0x1C8,plan.deadline) ||
+        !write32(address+slot_offset,1) || !write32(address+slot_offset+4,plan.deadline) ||
+        !write32(address+slot_offset+8,plan.physical_address) ||
+        !write32(address+0x1CC,plan.next_enqueue)) return 0;
+    fprintf(stderr,"[GRAPHICS] deferred scanout enqueued in title context: slot=%u physical=%08X deadline=%u; no presentation/retirement/flip-read/VBlank\n",
+        plan.slot,plan.physical_address,plan.deadline);
+    state->deferred_scanout_notification=notification;
+    state->scanout_idle_report=GetTickCount64()+1000;
     return 1;
 }
 
@@ -437,6 +496,9 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1;
         }
         if (method == 0x100u && value) {
+            if((value&31u)==1u) {
+                return native_scanout_enqueue(state,value);
+            }
             if (!fut_graphics_software_state(&state->software, value, state->kelvin.clear_depth,
                     state->kelvin.clear_color, state->kelvin.clear_valid)) {
                 fprintf(stderr,"[GRAPHICS] software notification untranslated: value=%08X selector=%u data=%u parameters=%08X/%08X valid=%X\n",
@@ -563,8 +625,14 @@ static DWORD WINAPI native_worker(void *unused)
         if (start != ring_start || end != ring_end || title_channel != channel)
             fail_backend("submission queue reconfiguration is not implemented");
         uint32_t submitted = put | 0x80000000u;
-        if (submitted == cursor)
+        if (submitted == cursor) {
+            if(state.scanout_idle_report && GetTickCount64()>=state.scanout_idle_report) {
+                fprintf(stderr,"[GRAPHICS] queue idle after GPU submission completion; checking deferred scanout without generating timing events\n");
+                native_scanout_diagnostic(state.deferred_scanout_notification);
+                state.scanout_idle_report=0;
+            }
             continue;
+        }
         if (submitted < cursor || submitted > ring_end || (submitted - cursor) % 4u)
             fail_backend("submission wrap or invalid range is not implemented");
         uint8_t bytes[65536];

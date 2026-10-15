@@ -14,42 +14,47 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.78
+## Estado verificável — release 2.79
 
-**O primeiro draw do jogo recompilado executou na GPU nativa.** A consulta
-de estatísticas mediu `3` vértices de entrada e `307.200` invocações do pixel
-shader traduzido. A espera limitada da GPU e o readback/gravação das
-superfícies na memória guest concluíram antes do consumo da primitiva.
-Isso demonstra execução de shaders e rasterização nesse draw, **não um
-frame apresentado, fidelidade NV2A comprovada ou gameplay**.
+**A terceira submissão gráfica original concluiu**, processando `323`
+métodos e confirmando os semáforos `9` e `11` após a conclusão nativa
+correspondente. O primeiro draw continua medindo `3` vértices de entrada e
+`307.200` invocações do pixel shader traduzido, com readback das superfícies
+para a memória guest antes do consumo da primitiva.
 
-Para seguir sem testador de Xbox, foi aceita explicitamente uma
-**aproximação de dithering em ARGB8 single-sample**: o backend usa a
-conversão UNORM do host, sem acrescentar ruído espacial. O bit original
-continua preservado, e o log marca `ACCEPTED_APPROXIMATION`.
-Essa aceitação de engenharia não equivale a medição em hardware original;
-não implementa dithering genérico em formatos menores nem em MSAA.
-Valores não booleanos e dithering com AA continuam recusados.
-As demais verificações de shaders, texturas e controles permanecem ativas.
+O seletor software `1` foi identificado como agendamento de flip. O backend
+agora implementa seu ramo de **enfileiramento adiado**, atualizando os slots
+e contadores no contexto de scanout registrado pelo próprio título.
+Uma solicitação enfileirada não é uma imagem exibida: não há retirada da
+fila, avanço do índice de leitura de flip ou geração de VBlank.
+Callbacks, extrapolação temporal, fila cheia e scanout imediatamente devido
+permanecem recusados. O endereço e o pitch devem corresponder à superfície
+validada; o snapshot é relido antes das escritas para recusar alterações
+detectadas entre as leituras.
+Não há implementação genérica da notificação ou da apresentação.
 
-Build Release e CTest passaram `22/22`. Os testes WARP conferem pixels,
-padding e depth/stencil desabilitados intactos no domínio aceito, além
-de consulta de invocações, consumo após writeback e falha parcial sem
-replay. Isso verifica a implementação host, não a equivalência da
-aproximação com a NV2A.
+Build Release e CTest passaram `23/23`. Os novos testes verificam slots,
+intervalos, wrap dos contadores, recusas sem mutação e integração pelo
+receptor real de comandos com memória sintética. As regressões WARP de
+shaders, pixels, padding e writeback continuam aprovadas.
 
-Na execução original limitada a cinco segundos, o processo encerrou por
-diagnóstico antes do timeout. O draw usa os programas originais traduzidos
-e a especialização restrita da textura RGB zero; quincunx genérico continua
-sem implementação. As duas primeiras submissões e os dois clears seguem
-concluídos. A terceira avançou até o offset `1.880` e parou no seletor
-software `1`, ainda não traduzido, **sem concluir a submissão**.
-Não houve apresentação de frame nem avanço artificial de flip/VBlank.
+Na execução do jogo recompilado, a solicitação ficou pendente no slot `0`,
+aguardando o primeiro intervalo de VBlank. A observação posterior confirmou
+que ela não foi retirada nem tratada como apresentada. O programa foi
+encerrado pelo limite de cinco segundos; **o timeout não é aprovação de
+boot completo ou fidelidade**. Nenhum frame foi apresentado e não há gameplay.
+
+Permanece a **aproximação de dithering ARGB8 single-sample aceita pelo
+usuário**, marcada `ACCEPTED_APPROXIMATION`: conversão UNORM do host sem
+ruído espacial adicional. Não foi medida na NV2A, não se estende a formatos
+menores/MSAA e não transforma testes host em prova de equivalência.
+A especialização da textura RGB zero também não implementa quincunx genérico.
 ISO intacta; novas saídas controláveis no D:.
 
-Próximo experimento: identificar e implementar a notificação software `1`
-com seus efeitos reais antes de concluir a terceira submissão. Precisão
-gráfica, filtro genérico, apresentação, gameplay e áudio seguem pendentes.
+Próximo experimento: implementar a apresentação nativa e a entrega de seus
+eventos de temporização ao código original, preservando a ordem da fila e
+os callbacks, sem injetar um VBlank artificial de frequência fixa.
+Precisão gráfica, filtro genérico, gameplay e áudio seguem pendentes.
 `NOT_READY` permanece.
 
 ## Abordagem
