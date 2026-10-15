@@ -22,6 +22,7 @@ void xbox_kernel_init(void);
 void xbox_kernel_shutdown(void);
 void xbox_kernel_bridge_init(void);
 void xbox_path_init(const char *game_dir, const char *save_dir);
+uint32_t xbox_GetConnectedInterrupt(uint32_t bus);
 
 static int read_xbe(const char *path, void **out_data, size_t *out_size)
 {
@@ -116,8 +117,8 @@ static int validate_preflight_dynamic_guards(void)
     return 1;
 }
 
-/* Read-only snapshots of the title's D3D command/fence state. Addresses and
- * field offsets come from its disassembly at 0x002931B0/0x00293500. Sampling
+/* Read-only snapshots of the title's D3D command/fence and graphics IRQ state.
+ * DMA field offsets come from disassembly at 0x002931B0/0x00293500. Sampling
  * does not acknowledge DMA, advance a fence, or signal a guest event. */
 static int snapshot_read32(uint32_t va, uint32_t *value)
 {
@@ -155,6 +156,10 @@ static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
         uint32_t consumer_ptr = 0, consumed = 0, channel = 0, put = 0, get = 0;
         uint32_t write_ptr = 0, fence_tag = 0, fence_end = 0;
         uint32_t pfifo_put = 0, pfifo_get = 0;
+        uint32_t interrupt = xbox_GetConnectedInterrupt(3), irq_context = 0;
+        uint32_t blank = 0, completed = 0, scheduled = 0, retired = 0;
+        uint32_t pcrtc_pending = 0, pcrtc_enable = 0, pmc_pending = 0, pmc_enable = 0;
+        uint32_t crtc_start = 0;
         if (WaitForSingleObject((HANDLE)stop_event, 1000) != WAIT_TIMEOUT)
             break;
         if (!snapshot_read32(0x0029E968u, &device) || !device ||
@@ -178,14 +183,33 @@ static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
         snapshot_read32(device + 0x90u, &fence_end);
         snapshot_read32(0xFD003240u, &pfifo_put);
         snapshot_read32(0xFD003244u, &pfifo_get);
+        if (interrupt && interrupt <= UINT32_MAX - 8u &&
+            snapshot_read32(interrupt + 4u, &irq_context) && irq_context &&
+            irq_context <= UINT32_MAX - 0x1C7u) {
+            snapshot_read32(irq_context + 0x1B8u, &blank);
+            snapshot_read32(irq_context + 0x1C0u, &completed);
+            snapshot_read32(irq_context + 0x1C4u, &scheduled);
+            snapshot_read32(irq_context + 0x1BCu, &retired);
+        } else {
+            irq_context = 0;
+        }
+        snapshot_read32(0xFD600100u, &pcrtc_pending);
+        snapshot_read32(0xFD600140u, &pcrtc_enable);
+        snapshot_read32(0xFD000100u, &pmc_pending);
+        snapshot_read32(0xFD000140u, &pmc_enable);
+        snapshot_read32(0xFD600800u, &crtc_start);
         fprintf(stderr,
             "[GRAPHICS-SNAPSHOT] sample=%u device=%08X write=%08X ring=[%08X,%08X) "
             "submitted=%08X consumer_ptr=%08X consumed=%08X valid=%d "
             "channel=%08X put=%08X get=%08X pfifo_put=%08X pfifo_get=%08X "
-            "fence11_tag=%08X fence11_end=%08X\n",
+            "fence11_tag=%08X fence11_end=%08X irq=%08X context=%08X blank=%u "
+            "completed=%u scheduled=%u retired=%u pcrtc=%08X/%08X pmc=%08X/%08X "
+            "crtc_start=%08X (read-only)\n",
             sample, device, write_ptr, start, end, submitted, consumer_ptr,
             consumed, consumer_valid, channel, put, get, pfifo_put, pfifo_get,
-            fence_tag, fence_end);
+            fence_tag, fence_end, interrupt, irq_context, blank, completed,
+            scheduled, retired, pcrtc_pending, pcrtc_enable, pmc_pending,
+            pmc_enable, crtc_start);
         const uint32_t submitted_end = put | 0x80000000u;
         if (sample == 0 && start && submitted_end > start &&
             submitted_end <= end && submitted_end - start <= 65536u) {
