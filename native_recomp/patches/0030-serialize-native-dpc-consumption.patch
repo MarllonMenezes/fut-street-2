@@ -1,0 +1,101 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -30,6 +30,9 @@
+ #include "guest_vmem.h"
+ #include "xbox_memory_layout.h"
+ #include "recomp_icall_feedback.h"
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++#include "guest_interrupt_gate.h"
++#endif
+ #include <stdio.h>
+ /* stdlib.h is load-bearing, not tidiness. Without it C89 implicit declaration
+  * makes malloc return `int`, so bridge_spawn_thread truncated its heap pointer
+@@ -2004,7 +2007,7 @@
+  *
+  * Returns 1 if the routine was found and called.
+  */
+-static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
++static int kernel_run_dpc_unlocked(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
+ {
+     uint32_t routine, context;
+     recomp_func_t fn;
+@@ -2037,6 +2040,18 @@
+     return 1;
+ }
+ 
++static int kernel_run_dpc(uint32_t dpc_va, uint32_t arg1, uint32_t arg2)
++{
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++    fut_guest_interrupt_lock_state();
++#endif
++    int result = kernel_run_dpc_unlocked(dpc_va, arg1, arg2);
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++    fut_guest_interrupt_unlock_state();
++#endif
++    return result;
++}
++
+ /* -- KeSynchronizeExecution (ordinal 153) ------------------
+  * BOOLEAN KeSynchronizeExecution(PKINTERRUPT Interrupt,
+  *                                PKSYNCHRONIZE_ROUTINE SynchronizeRoutine,
+@@ -2079,7 +2094,13 @@
+      * the dummy return address and the argument, so g_esp needs no fixup. */
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = context;
+     g_esp -= 4; BRIDGE_MEM32(g_esp) = 0;
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++    fut_guest_interrupt_lock_state();
++#endif
+     fn();
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++    fut_guest_interrupt_unlock_state();
++#endif
+     /* g_eax is whatever the routine returned, which is this call's result. */
+ }
+ 
+@@ -2289,10 +2310,16 @@
+-static void kernel_drain_dpcs(void)
++static int kernel_drain_dpcs(void)
+ {
+     for (;;) {
+         PendingDpc d;
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++        fut_guest_interrupt_lock_state();
++#endif
+         dpc_lock();
+         if (g_dpc_head == g_dpc_tail) {
+             LeaveCriticalSection(&g_dpc_lock);
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++            fut_guest_interrupt_unlock_state();
++#endif
+-            break;
++            return 1;
+         }
+         d = g_dpc_queue[g_dpc_head];
+@@ -2304,9 +2331,24 @@
+         LeaveCriticalSection(&g_dpc_lock);
+-        if (d.dpc)
+-            kernel_run_dpc(d.dpc, d.arg1, d.arg2);
++        int result = !d.dpc || kernel_run_dpc(d.dpc, d.arg1, d.arg2);
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++        fut_guest_interrupt_unlock_state();
++#endif
++        if (!result) return 0;
+     }
+ }
+ 
++#ifdef FUT_NATIVE_INTERRUPT_GATES
++/* Native callers own their guest stack/TIB. This drains existing work only;
++ * it does not set pending device status or generate timing events. */
++int xbox_DrainHostDpcs(void)
++{
++    if (!g_fs_base || !g_esp || !bridge_va_mapped(g_fs_base, 0x28)
++            || g_esp < 20 || !bridge_va_mapped(g_esp - 20, 24))
++        return 0;
++    return kernel_drain_dpcs();
++}
++#endif
++
+ /* ── KeInitializeDpc (ordinal 107) ────────────────────────
+  * VOID KeInitializeDpc(PKDPC Dpc, PKDEFERRED_ROUTINE DeferredRoutine,
+  *                       PVOID DeferredContext)

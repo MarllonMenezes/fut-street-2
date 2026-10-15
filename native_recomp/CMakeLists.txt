@@ -176,7 +176,9 @@ if(FUT_STREET2_BUILD_HOST_APP)
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
     target_compile_definitions(fut_street_2_no_emulation_kernel PRIVATE
-        WIN32_LEAN_AND_MEAN NOMINMAX)
+        WIN32_LEAN_AND_MEAN NOMINMAX FUT_NATIVE_INTERRUPT_GATES=1)
+    target_include_directories(fut_street_2_no_emulation_kernel PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(fut_street_2_no_emulation_kernel PUBLIC
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
@@ -196,6 +198,11 @@ if(FUT_STREET2_BUILD_HOST_APP)
 
     add_executable(no_emulation_kernel_file_contract_test
         tests/no_emulation_kernel_file_contract_test.c)
+    add_executable(native_dpc_gate_test tests/native_dpc_gate_test.c)
+    target_include_directories(native_dpc_gate_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(native_dpc_gate_test PRIVATE fut_street_2_no_emulation_kernel ${RECOMP_HOST_LIBRARIES})
+    add_test(NAME native_dpc_gate COMMAND native_dpc_gate_test)
+    set_tests_properties(native_dpc_gate PROPERTIES TIMEOUT 10)
     add_executable(native_interrupt_ownership_test tests/native_interrupt_ownership_test.c)
     target_include_directories(native_interrupt_ownership_test PRIVATE
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
