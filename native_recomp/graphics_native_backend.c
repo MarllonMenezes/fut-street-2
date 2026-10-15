@@ -20,6 +20,7 @@
 #include "graphics_software_state.h"
 #include "graphics_native_immediate.h"
 #include "graphics_native_draw.h"
+#include "graphics_native_display.h"
 #include "graphics_scanout.h"
 #include "guest_interrupt_gate.h"
 #include "graphics_vertex_program.h"
@@ -119,6 +120,9 @@ typedef struct {
     FutGraphicsSoftwareState software;
     FutGraphicsImmediate immediate;
     FutNativeImmediate native_immediate;
+    FutNativeDisplay diagnostic_preview;
+    int diagnostic_preview_enabled;
+    int diagnostic_preview_submitted;
     ULONGLONG scanout_idle_report;
     uint32_t deferred_scanout_notification;
     unsigned constant_coordinates;
@@ -127,6 +131,36 @@ typedef struct {
 } NativeGraphicsState;
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
+
+/* Diagnostic-only host view of the pixels produced by an original guest draw.
+ * It deliberately does not consume guest flip state or signal guest timing. */
+static int native_preview_original_draw(NativeGraphicsState *state)
+{
+    if (!state->diagnostic_preview_enabled || state->diagnostic_preview_submitted)
+        return 1;
+    FutGraphicsSurfacePlan *plan = &state->native_surfaces.plan;
+    if (!state->native_surfaces.valid || !state->native_surfaces.color ||
+        plan->width != 640 || plan->height != 480 || plan->samples != 1) {
+        fprintf(stderr, "[GRAPHICS] diagnostic preview rejected: expected BGRA8 single-sample 640x480 draw target\n");
+        return 0;
+    }
+    HRESULT hr = fut_native_display_open(&state->diagnostic_preview,
+        state->device, plan->width, plan->height, 1);
+    if (SUCCEEDED(hr))
+        hr = fut_native_display_stage(&state->diagnostic_preview, state->context,
+            state->native_surfaces.color, 2000, backend_stop);
+    if (SUCCEEDED(hr))
+        hr = fut_native_display_submit(&state->diagnostic_preview, 1);
+    if (FAILED(hr)) {
+        fprintf(stderr, "[GRAPHICS] diagnostic preview failed: HRESULT=%08lX; guest flip/IRQ unchanged\n", hr);
+        fut_native_display_close(&state->diagnostic_preview);
+        return 0;
+    }
+    state->diagnostic_preview_submitted = 1;
+    fputs("[GRAPHICS] diagnostic preview submitted from original draw; host Present only, no guest flip/retirement/VBlank/IRQ\n", stderr);
+    return 1;
+}
+
 static int native_writeback_surfaces(NativeGraphicsState *state)
 {
     HRESULT hr = fut_native_surfaces_writeback(&state->native_surfaces, state->device,
@@ -518,6 +552,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
                 count,(unsigned long long)state->native_immediate.ia_vertices,
                 (unsigned long long)state->native_immediate.ps_invocations);
+            if (!native_preview_original_draw(state)) return 0;
             return 1;
         }
         if (method == 0x100u && value) {
@@ -618,6 +653,7 @@ static DWORD WINAPI native_worker(void *unused)
     NativeGraphicsState state = {0};
     state.device = device;
     state.context = context;
+    state.diagnostic_preview_enabled = getenv("RECOMP_NATIVE_PREVIEW") != NULL;
     state.bindings.read = object_memory_read;
     if (FAILED(fut_native_constants_init(&state.native_constants, device, context)))
         fail_backend("cannot create native shader constants/completion query");
@@ -682,6 +718,7 @@ static DWORD WINAPI native_worker(void *unused)
         cursor = submitted;
     }
     fut_native_constants_destroy(&state.native_constants);
+    fut_native_display_close(&state.diagnostic_preview);
     fut_native_surfaces_destroy(&state.native_surfaces);
     for (unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_pipeline_destroy(&state.pipeline);
