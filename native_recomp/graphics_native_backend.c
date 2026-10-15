@@ -132,6 +132,48 @@ typedef struct {
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
 
+static void native_preview_log_source_stats(const FutGraphicsSurfacePlan *plan)
+{
+    size_t row_bytes = (size_t)plan->width * 4u;
+    size_t total_bytes = (size_t)plan->color_pitch * plan->height;
+    uint8_t *pixels;
+    uint64_t hash = UINT64_C(14695981039346656037);
+    uint64_t nonblack = 0, nonzero_alpha = 0;
+    uint32_t first = 0, center = 0, last = 0;
+
+    if (plan->width != 640 || plan->height != 480 ||
+        plan->color_pitch < row_bytes || total_bytes > 16u * 1024u * 1024u) {
+        fputs("[GRAPHICS] diagnostic preview source stats unavailable: invalid bounds\n", stderr);
+        return;
+    }
+    pixels = malloc(total_bytes);
+    if (!pixels || !read_guest(plan->color_address, pixels, total_bytes)) {
+        fputs("[GRAPHICS] diagnostic preview source stats unavailable: guest read failed\n", stderr);
+        free(pixels);
+        return;
+    }
+    for (unsigned y = 0; y < plan->height; ++y) {
+        const uint8_t *row_bytes_ptr = pixels + (size_t)y * plan->color_pitch;
+        const uint32_t *row = (const uint32_t *)(pixels + (size_t)y * plan->color_pitch);
+        for (size_t byte = 0; byte < row_bytes; ++byte)
+            hash = (hash ^ row_bytes_ptr[byte]) * UINT64_C(1099511628211);
+        for (unsigned x = 0; x < plan->width; ++x) {
+            uint32_t pixel = row[x];
+            nonblack += (pixel & 0x00FFFFFFu) != 0;
+            nonzero_alpha += (pixel >> 24) != 0;
+            if (x == 0 && y == 0) first = pixel;
+            if (x == plan->width / 2 && y == plan->height / 2) center = pixel;
+            if (x == plan->width - 1 && y == plan->height - 1) last = pixel;
+        }
+    }
+    fprintf(stderr, "[GRAPHICS] diagnostic source read-only stats: %ux%u pitch=%u RGB_nonblack=%llu/%llu alpha_nonzero=%llu/%llu FNV64=%016llX first/center/last=%08X/%08X/%08X\n",
+        plan->width, plan->height, plan->color_pitch,
+        (unsigned long long)nonblack, (unsigned long long)plan->width * plan->height,
+        (unsigned long long)nonzero_alpha, (unsigned long long)plan->width * plan->height,
+        (unsigned long long)hash, first, center, last);
+    free(pixels);
+}
+
 /* Diagnostic-only host view of the pixels produced by an original guest draw.
  * It deliberately does not consume guest flip state or signal guest timing. */
 static int native_preview_original_draw(NativeGraphicsState *state)
@@ -144,6 +186,7 @@ static int native_preview_original_draw(NativeGraphicsState *state)
         fprintf(stderr, "[GRAPHICS] diagnostic preview rejected: expected BGRA8 single-sample 640x480 draw target\n");
         return 0;
     }
+    native_preview_log_source_stats(plan);
     HRESULT hr = fut_native_display_open(&state->diagnostic_preview,
         state->device, plan->width, plan->height, 1);
     if (hr == S_OK)
