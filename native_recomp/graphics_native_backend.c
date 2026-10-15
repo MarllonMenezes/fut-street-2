@@ -315,6 +315,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
         return 0;
     }
     state->kelvin.draw.dirty=0;
+    if(state->kelvin.draw.dither) fprintf(stderr,
+        "[GRAPHICS] ACCEPTED_APPROXIMATION: ARGB8 single-sample dither uses host UNORM conversion without added noise; no NV2A hardware validation\n");
     return 1;
 }
 
@@ -429,12 +431,18 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     hr,state->native_immediate.submitted,state->native_surfaces.gpu_dirty);
                 return 0;
             }
-            fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u; no present/VBlank\n",count);
+            fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
+                count,(unsigned long long)state->native_immediate.ia_vertices,
+                (unsigned long long)state->native_immediate.ps_invocations);
             return 1;
         }
         if (method == 0x100u && value) {
             if (!fut_graphics_software_state(&state->software, value, state->kelvin.clear_depth,
-                    state->kelvin.clear_color, state->kelvin.clear_valid)) return 0;
+                    state->kelvin.clear_color, state->kelvin.clear_valid)) {
+                fprintf(stderr,"[GRAPHICS] software notification untranslated: value=%08X selector=%u data=%u parameters=%08X/%08X valid=%X\n",
+                    value,value&31,value>>5,state->kelvin.clear_depth,state->kelvin.clear_color,state->kelvin.clear_valid);
+                return 0;
+            }
             fprintf(stderr, "[GRAPHICS] software state retained: selector=%u data=%u; RDI-dependent draws remain gated\n",
                 value & 31, value >> 5);
             return 1;

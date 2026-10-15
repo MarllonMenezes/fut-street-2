@@ -44,7 +44,8 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     }
     CHECK(native_method(state,0,0x17FC,0,0) && !state->immediate.ready &&
         !state->immediate.count && !state->native_immediate.submitted &&
-        !state->native_surfaces.gpu_dirty && native_finish(state),64);
+        !state->native_surfaces.gpu_dirty && native_finish(state) &&
+        state->native_immediate.ia_vertices==3 && state->native_immediate.ps_invocations>0,64);
     for(unsigned i=0;i<12;++i) {
         uint32_t actual=guest_word(0x3000+i*4);
         if(actual!=0xFF000000) fprintf(stderr,"synthetic receiver pixel%u=%08X\n",i,actual);

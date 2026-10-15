@@ -82,14 +82,15 @@ int main(void)
     HANDLE stop=CreateEventA(NULL,TRUE,TRUE,NULL);CHECK(stop,12);
     CHECK(DRAW()==E_ABORT && batch.ready && !native.submitted && !surfaces.gpu_dirty && !m.writes,13);
     ResetEvent(stop);
-    state.draw.dither=1;
-    CHECK(DRAW()==E_NOTIMPL && batch.ready && !native.submitted && !surfaces.gpu_dirty && !m.writes,14);
-    state.draw.dither=0;
+    state.draw.dither=2;
+    CHECK(DRAW()==E_INVALIDARG && batch.ready && !native.submitted && !surfaces.gpu_dirty && !m.writes,14);
+    state.draw.dither=1; /* Accepted host approximation, not an Xbox oracle. */
     surfaces.plan.samples=2;
     CHECK(DRAW()==E_NOTIMPL && batch.ready && !native.submitted && !m.writes,15);
     surfaces.plan.samples=1;
     CHECK(SUCCEEDED(DRAW()) && !batch.ready && !batch.count && !native.submitted &&
-        !native.count && !surfaces.gpu_dirty && m.writes==2 && !m.bad_order,16);
+        !native.count && !surfaces.gpu_dirty && m.writes==2 && !m.bad_order && state.draw.dither==1 &&
+        native.ia_vertices==3 && native.ps_invocations>0,16);
     CHECK(!memcmp(m.depth,depth_before,sizeof(depth_before)),17);
     for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) {
         uint32_t word;memcpy(&word,m.color+y*24+x*4,4);CHECK(word==0xFFFF0000,18);

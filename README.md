@@ -14,47 +14,42 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.77
+## Estado verificável — release 2.78
 
-Foi implementada a etapa nativa de execução de triângulos imediatos, após os
-gates existentes: `Draw`, espera limitada da GPU, readback das superfícies e
-gravação na memória guest **antes de consumir a primitiva**. Falhas após a
-submissão mantêm o lote pendente e impedem novo Draw ou upload sobre ele;
-isso evita repetir blending sobre trabalho parcialmente publicado.
-Essa etapa não apresenta frames nem avança GET, semáforos ou VBlank por conta própria.
-MSAA rasterizado continua recusado.
+**O primeiro draw do jogo recompilado executou na GPU nativa.** A consulta
+de estatísticas mediu `3` vértices de entrada e `307.200` invocações do pixel
+shader traduzido. A espera limitada da GPU e o readback/gravação das
+superfícies na memória guest concluíram antes do consumo da primitiva.
+Isso demonstra execução de shaders e rasterização nesse draw, **não um
+frame apresentado, fidelidade NV2A comprovada ou gameplay**.
 
-O teste integrado encontrou e corrigiu uma divergência real entre as
-assinaturas dos shaders: a entrada de cor do PS lia o registrador reservado
-às coordenadas brutas de tela do VS. Ambos agora usam uma declaração comum,
-e a reflexão do bytecode verifica registradores, componentes, semânticas e
-tipos usados antes do draw. A exigência de alinhamento entre estágios é
-descrita na [documentação de assinaturas do Direct3D](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/dx-graphics-hlsl-signatures).
+Para seguir sem testador de Xbox, foi aceita explicitamente uma
+**aproximação de dithering em ARGB8 single-sample**: o backend usa a
+conversão UNORM do host, sem acrescentar ruído espacial. O bit original
+continua preservado, e o log marca `ACCEPTED_APPROXIMATION`.
+Essa aceitação de engenharia não equivale a medição em hardware original;
+não implementa dithering genérico em formatos menores nem em MSAA.
+Valores não booleanos e dithering com AA continuam recusados.
+As demais verificações de shaders, texturas e controles permanecem ativas.
 
-Build Release e CTest passaram `22/22`. Em WARP, o receptor real de comandos
-executou uma sequência sintética BEGIN/atributos/END com VS e combiners
-traduzidos, e os pixels foram conferidos na memória guest. Outro teste
-verifica padding, depth/stencil desabilitados intactos, consumo somente
-após as escritas, cancelamento e falha parcial de writeback sem replay.
-Assinaturas incompatíveis e dithering ativo são recusados nos testes.
-**Esses resultados são sintéticos, não um frame original nem prova geral
-de fidelidade da rasterização NV2A.**
+Build Release e CTest passaram `22/22`. Os testes WARP conferem pixels,
+padding e depth/stencil desabilitados intactos no domínio aceito, além
+de consulta de invocações, consumo após writeback e falha parcial sem
+replay. Isso verifica a implementação host, não a equivalência da
+aproximação com a NV2A.
 
-Na execução do jogo recompilado, limitada a cinco segundos, o VS original
-executou sem rasterização, e o PS compilado passou pela nova verificação
-de ligação. A textura RGB zero continua permitindo apenas a especialização
-restrita já validada, sem quincunx genérico. O primeiro draw continua
-bloqueado na preparação por **dithering ativo**; o controle não foi desligado.
-Os dois clears originais, as duas primeiras submissões e o marcador `7`
-continuam concluídos. A terceira submissão parou no END, offset `1.248`,
-sem conclusão. **O PS do jogo ainda não executou; nenhum draw rasterizado
-ou frame original foi apresentado.**
+Na execução original limitada a cinco segundos, o processo encerrou por
+diagnóstico antes do timeout. O draw usa os programas originais traduzidos
+e a especialização restrita da textura RGB zero; quincunx genérico continua
+sem implementação. As duas primeiras submissões e os dois clears seguem
+concluídos. A terceira avançou até o offset `1.880` e parou no seletor
+software `1`, ainda não traduzido, **sem concluir a submissão**.
+Não houve apresentação de frame nem avanço artificial de flip/VBlank.
+ISO intacta; novas saídas controláveis no D:.
 
-O processo terminou por diagnóstico antes do timeout, sem avanço artificial
-de flip/VBlank. ISO intacta; novas saídas controláveis no D:.
-Próximo experimento: estabelecer e traduzir o efeito do dithering no alvo
-ARGB8 exercitado antes de liberar o draw original. Filtro genérico,
-precisão gráfica, apresentação, gameplay e áudio continuam pendentes.
+Próximo experimento: identificar e implementar a notificação software `1`
+com seus efeitos reais antes de concluir a terceira submissão. Precisão
+gráfica, filtro genérico, apresentação, gameplay e áudio seguem pendentes.
 `NOT_READY` permanece.
 
 ## Abordagem

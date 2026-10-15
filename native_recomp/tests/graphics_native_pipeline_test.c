@@ -77,6 +77,10 @@ int main(void)
     FutGraphicsSurfacePlan surface={0}; surface.width=16; surface.height=8;
     surface.logical_width=8; surface.logical_height=4; surface.samples=4;
     FutNativePipeline pipeline={0};
+    state.draw.dither=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL &&
+        !pipeline.raster && state.draw.dither==1,44);
+    state.draw.dither=0;
     CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),5);
     D3D11_BLEND_DESC blend; ID3D11BlendState_GetDesc(pipeline.blend,&blend);
     CHECK(blend.RenderTarget[0].SrcBlend==D3D11_BLEND_SRC_ALPHA && blend.RenderTarget[0].DestBlend==D3D11_BLEND_INV_SRC_ALPHA &&

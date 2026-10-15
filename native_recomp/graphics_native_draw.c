@@ -39,12 +39,26 @@ HRESULT fut_native_draw_immediate(FutNativeImmediate *native,FutGraphicsImmediat
     ID3D11DeviceContext_PSSetShader(context,pixel,NULL,0);
     ID3D11DeviceContext_OMSetRenderTargets(context,1,&surfaces->target,surfaces->depth_target);
     if(stop && WaitForSingleObject(stop,0)!=WAIT_TIMEOUT) return E_ABORT;
+    D3D11_QUERY_DESC statistics_desc={D3D11_QUERY_PIPELINE_STATISTICS,0};
+    ID3D11Query *statistics=NULL;
+    hr=ID3D11Device_CreateQuery(device,&statistics_desc,&statistics);
+    if(FAILED(hr)) return hr;
     /* Conservative dirty marking preserves even unchanged channels and Z/S.
      * Mark before Draw: any failure keeps resources/batch pending, not replayed. */
     fut_native_surfaces_mark_dirty(surfaces,3);
     native->submitted=1;
+    ID3D11DeviceContext_Begin(context,(ID3D11Asynchronous*)statistics);
     ID3D11DeviceContext_Draw(context,native->count,0);
-    if(!fut_native_constants_finish(completion,NULL,2000,stop)) return E_FAIL;
+    ID3D11DeviceContext_End(context,(ID3D11Asynchronous*)statistics);
+    if(!fut_native_constants_finish(completion,NULL,2000,stop)) {
+        ID3D11Query_Release(statistics);return E_FAIL;
+    }
+    D3D11_QUERY_DATA_PIPELINE_STATISTICS measured={0};
+    hr=ID3D11DeviceContext_GetData(context,(ID3D11Asynchronous*)statistics,&measured,
+        sizeof(measured),D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    ID3D11Query_Release(statistics);
+    if(hr!=S_OK) return FAILED(hr)?hr:E_FAIL;
+    native->ia_vertices=measured.IAVertices;native->ps_invocations=measured.PSInvocations;
     hr=fut_native_surfaces_writeback(surfaces,device,context,completion,read,write,memory,stop);
     if(FAILED(hr)) return hr;
     if(!fut_graphics_immediate_consume(batch)) return E_FAIL;
