@@ -14,7 +14,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.80
+## Estado verificável — release 2.81
 
 **A terceira submissão gráfica original concluiu**, processando `323`
 métodos e confirmando os semáforos `9` e `11` após a conclusão nativa
@@ -33,6 +33,19 @@ validada; o snapshot é relido antes das escritas para recusar alterações
 detectadas entre as leituras.
 Não há implementação genérica da notificação.
 
+O reconhecimento de interrupções PCRTC agora é traduzido para um serviço
+host **write-one-to-clear (W1C)**: limpa somente os bits escritos e recompõe
+a fonte PCRTC no status PMC, preservando as outras fontes. Três funções
+afetadas foram regeneradas após comparação exata com a geração anterior.
+O boot confirmou a chamada traduzida na inicialização original; os handlers
+regenerados ainda não foram exercitados por uma interrupção entregue.
+
+A thread legada deixa de apagar automaticamente PMC/PCRTC quando o backend
+nativo possui a conclusão gráfica. Um gate compartilhado com `CLI/STI`
+serializa a notificação e os acessos W1C; isso não implementa preempção geral
+nem protege escritores que não participem do gate. Nenhum produtor de VBlank
+ou retirada da fila foi habilitado.
+
 Uma nova camada Win32/DXGI flip-sequential apresenta superfícies BGRA8
 single-sample em uma janela nativa. O teste confirmou duas imagens
 **sintéticas**, com readback exato dos pixels do backbuffer e recibos de
@@ -42,9 +55,11 @@ cancelamento e recusa de dispositivos/contextos incompatíveis.
 Essa camada está compilada no host, mas **ainda não está conectada à fila
 original do jogo** e não gera interrupções guest.
 
-Build Release e CTest passaram `24/24`, sem testes pulados. A validação inclui
-a apresentação DXGI, o fechamento com frame pendente, a recusa de acesso
-por outra thread e as regressões existentes de fila, shaders e writeback.
+Build Release e CTest passaram `27/27`, sem testes pulados, além dos três
+testes focais do tradutor W1C. A validação cobre W1C com memória sintética,
+preservação de IF e das demais fontes PMC, exclusão entre threads e os testes
+existentes de apresentação DXGI, fila, shaders e writeback. Esses testes não
+comprovam a entrega da ISR/DPC original.
 
 Na execução do jogo recompilado, a solicitação ficou pendente no slot `0`,
 aguardando o primeiro intervalo de VBlank. A observação posterior confirmou
@@ -59,10 +74,11 @@ menores/MSAA e não transforma testes host em prova de equivalência.
 A especialização da textura RGB zero também não implementa quincunx genérico.
 ISO intacta; novas saídas controláveis no D:.
 
-Próximo experimento: conectar a temporização nativa à entrega segura de
-interrupções e DPCs do código original, com stack/TIB guest, máscara de
-interrupções e serialização da fila. Um recibo DXGI não equivale, sozinho,
-a um VBlank NV2A. Não injetar um VBlank artificial de frequência fixa.
+Próximo experimento: entregar os eventos nativos à ISR/DPC original com
+stack/TIB guest, IRQL e participação de todo o consumidor no gate, ligando a
+temporização à saída correta e ao modo entrelaçado solicitado pelo título.
+Um recibo DXGI não equivale, sozinho, a um VBlank NV2A. Não injetar um VBlank
+artificial de frequência fixa.
 Precisão gráfica, filtro genérico, gameplay e áudio seguem pendentes.
 `NOT_READY` permanece.
 

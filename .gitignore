@@ -72,6 +72,7 @@
 !/native_recomp/graphics_scanout.h
 !/native_recomp/guest_interrupt_gate.c
 !/native_recomp/guest_interrupt_gate.h
+!/native_recomp/graphics_crtc_ack.c
 !/native_recomp/graphics_native_display.c
 !/native_recomp/graphics_native_display.h
 !/native_recomp/graphics_fragment_program.c

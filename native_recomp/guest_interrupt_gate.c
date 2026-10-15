@@ -57,3 +57,11 @@ void fut_guest_interrupt_leave(void)
     atomic_store_explicit(&enabled,1,memory_order_seq_cst);
     host_owned=0;LeaveCriticalSection(&gate);
 }
+void fut_guest_interrupt_lock_state(void)
+{
+    ready();EnterCriticalSection(&gate);
+}
+void fut_guest_interrupt_unlock_state(void)
+{
+    LeaveCriticalSection(&gate);
+}
