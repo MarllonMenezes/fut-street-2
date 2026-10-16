@@ -63,6 +63,26 @@ bool mcpx_dsp_load_bootstrap_sg(McpxDsp *dsp, const uint8_t *physical_ram,
                                size_t ram_size, uint32_t table_address,
                                uint32_t max_sge);
 
+typedef enum McpxDspDmaResult {
+    MCPX_DSP_DMA_OK,
+    MCPX_DSP_DMA_INVALID,
+    MCPX_DSP_DMA_UNSUPPORTED,
+    MCPX_DSP_DMA_RANGE
+} McpxDspDmaResult;
+
+/* Execute exactly one seven-word DMA node from DSP RAM, under exclusive
+ * caller ownership of DSP and physical_ram. Only linear scratch buffer F,
+ * formats 1 (16-bit, shifted by 8) and 6 (24-bit LSB in LE32) are supported.
+ * Other controls, including interleave and offset writeback, are refused.
+ * next_node is written only after success; no chain traversal, status,
+ * interrupt, command ACK or device timing is synthesized. Output parameters
+ * must not alias DSP/RAM. On failure both memories and next_node are unchanged.
+ * Reference contract: xemu 36334d95 dsp_dma.c; actual title nodes unverified. */
+McpxDspDmaResult mcpx_dsp_dma_scratch_node(
+    McpxDsp *dsp, uint8_t *physical_ram, size_t ram_size,
+    uint32_t table_address, uint32_t max_sge,
+    uint32_t node_address, uint32_t *next_node);
+
 #ifdef __cplusplus
 }
 #endif

@@ -2,6 +2,7 @@
 
 #include <limits.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define MCPX_DSP_MIX_X_START 0x1400u
 #define MCPX_DSP_MIX_X_END 0x1800u
@@ -273,4 +274,104 @@ bool mcpx_dsp_load_bootstrap_sg(McpxDsp *dsp, const uint8_t *physical_ram,
                             byte_offset % 4096u);
     }
     return mcpx_dsp_load_bootstrap(dsp, words, MCPX_DSP_BOOTSTRAP_WORDS);
+}
+
+static bool dma_address(uint32_t encoded, size_t count,
+                        Dsp56300MemSpace *space, uint32_t *address)
+{
+    if (encoded < 0x1800u) {
+        *space = DSP56300_MEM_SPACE_X; *address = encoded;
+    } else if (encoded < 0x2000u) {
+        *space = DSP56300_MEM_SPACE_Y; *address = encoded - 0x1800u;
+    } else if (encoded >= 0x2800u && encoded < 0x3800u) {
+        *space = DSP56300_MEM_SPACE_P; *address = encoded - 0x2800u;
+    } else {
+        return false;
+    }
+    return valid_span(*space, *address, count);
+}
+
+McpxDspDmaResult mcpx_dsp_dma_scratch_node(
+    McpxDsp *dsp, uint8_t *physical_ram, size_t ram_size,
+    uint32_t table_address, uint32_t max_sge,
+    uint32_t node_address, uint32_t *next_node)
+{
+    uint32_t node[7], address, words[MCPX_DSP_P_RAM_WORDS];
+    uint8_t bytes[MCPX_DSP_P_RAM_WORDS * 4u];
+    /* A bounded 16 KiB transfer crosses at most five scratch pages. */
+    struct { size_t physical, offset, length; } spans[5];
+    size_t span_count = 0, length, consumed = 0;
+    Dsp56300MemSpace space;
+    if (!dsp || !physical_ram || !next_node || node_address >= 0x4000u)
+        return MCPX_DSP_DMA_INVALID;
+    if (!dma_address(node_address, 7, &space, &address) ||
+        !mcpx_dsp_read_run(dsp, space, address, node, 7))
+        return MCPX_DSP_DMA_RANGE;
+
+    const uint32_t control = node[1], count = node[2];
+    const uint32_t format = (control >> 10) & 7u;
+    const bool to_scratch = (control & 2u) != 0;
+    if ((control & ~0x1DE2u) != 0 || ((control >> 5) & 15u) != 15u ||
+        (format != 1 && format != 6))
+        return MCPX_DSP_DMA_UNSUPPORTED;
+    if (node[0] > 0x7FFFu || count == 0 || count > MCPX_DSP_P_RAM_WORDS)
+        return MCPX_DSP_DMA_INVALID;
+    if (!dma_address(node[3], count, &space, &address))
+        return MCPX_DSP_DMA_RANGE;
+    const size_t item_size = format == 1 ? 2u : 4u;
+    length = (size_t)count * item_size;
+    const uint64_t start = (uint64_t)node[4] + node[5];
+    if (start + length > (uint64_t)UINT32_MAX + 1u)
+        return MCPX_DSP_DMA_RANGE;
+
+    /* Preflight and snapshot every mapping before the first destination
+     * write, including transfers whose destination overlaps the SG table. */
+    while (consumed < length) {
+        const uint64_t logical = start + consumed;
+        const uint64_t index = logical / 4096u;
+        const size_t in_page = (size_t)(logical % 4096u);
+        const uint64_t entry = (uint64_t)table_address + index * 8u;
+        if (index > max_sge || entry + 8u > (uint64_t)UINT32_MAX + 1u ||
+            entry > ram_size || ram_size - (size_t)entry < 8u)
+            return MCPX_DSP_DMA_RANGE;
+        const uint64_t physical =
+            (uint64_t)read_le32(physical_ram + (size_t)entry) + in_page;
+        size_t chunk = 4096u - in_page;
+        if (chunk > length - consumed) chunk = length - consumed;
+        if (physical + chunk > (uint64_t)UINT32_MAX + 1u ||
+            physical > ram_size || ram_size - (size_t)physical < chunk ||
+            span_count == 5)
+            return MCPX_DSP_DMA_RANGE;
+        spans[span_count].physical = (size_t)physical;
+        spans[span_count].offset = consumed;
+        spans[span_count++].length = chunk;
+        consumed += chunk;
+    }
+
+    if (to_scratch) {
+        if (!mcpx_dsp_read_run(dsp, space, address, words, count))
+            return MCPX_DSP_DMA_RANGE;
+        for (size_t i = 0; i < count; ++i) {
+            const uint32_t value = format == 1 ? words[i] >> 8 : words[i];
+            for (size_t b = 0; b < item_size; ++b)
+                bytes[i * item_size + b] = (uint8_t)(value >> (8u * b));
+        }
+        for (size_t i = 0; i < span_count; ++i)
+            memcpy(physical_ram + spans[i].physical,
+                   bytes + spans[i].offset, spans[i].length);
+    } else {
+        for (size_t i = 0; i < span_count; ++i)
+            memcpy(bytes + spans[i].offset, physical_ram + spans[i].physical,
+                   spans[i].length);
+        for (size_t i = 0; i < count; ++i) {
+            const uint8_t *p = bytes + i * item_size;
+            words[i] = format == 1 ?
+                (((uint32_t)p[0] | (uint32_t)p[1] << 8) << 8) :
+                read_le32(p) & 0xFFFFFFu;
+        }
+        if (!mcpx_dsp_write_run(dsp, space, address, words, count))
+            return MCPX_DSP_DMA_RANGE;
+    }
+    *next_node = node[0];
+    return MCPX_DSP_DMA_OK;
 }

@@ -47,7 +47,11 @@ não participa do boot, não fornece áudio e não injeta READY/ACK artificiais.
 O teste isolado já carrega o programa inicial por duas páginas scratch não
 contíguas, verifica a conversão para palavras de 24 bits e executa um programa
 sintético. Entradas inválidas são recusadas antes de alterar a memória do DSP;
-o processamento DMA dos efeitos ainda não está implementado nesse adaptador.
+o executor DMA isolado transfere um descritor por chamada entre scratch e
+X/Y/P, cobrindo formatos de 16 bits e 24 bits LSB. Os testes verificam limites,
+cruzamento de páginas, sobreposição da tabela e invalidação do programa em P.
+Ainda faltam os registradores e a integração com o processamento dos efeitos;
+os descritores emitidos pelo DSP original não foram validados nesse executor.
 Menu, controles, cenário, partida curta e áudio funcional continuam pendentes.
 O estado permanece **`NOT_READY`**. Planos, logs e artefatos do jogo ficam locais.
 

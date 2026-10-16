@@ -230,6 +230,129 @@ static void test_scattered_bootstrap(void)
     mcpx_dsp_destroy(dsp);
 }
 
+static McpxDspDmaResult transfer_node(McpxDsp *dsp, uint8_t *ram,
+                                      const uint32_t node[7], uint32_t *next)
+{
+    assert(mcpx_dsp_write_run(dsp, DSP56300_MEM_SPACE_X, 0x20, node, 7));
+    return mcpx_dsp_dma_scratch_node(dsp, ram, 0x6000, 0x100, 1, 0x20, next);
+}
+
+static void test_dma_scratch_node(void)
+{
+    PeripheralProbe probe = {0};
+    McpxDsp *dsp = create_test_dsp(&probe);
+    uint8_t ram[0x6000] = {0}, saved[0x6000];
+    uint32_t next = 0xDEADBEEFu, actual[3];
+    const uint32_t values[3] = {0x123456, 0xABCDEF, 0xFEDCBA};
+    /* One terminal node, format 6, DSP -> scratch, crossing the page boundary. */
+    uint32_t node[7] = {0x4000, 0x19E2, 3, 0x200, 4094, 0, 0};
+    const uint8_t packed[12] = {0x56,0x34,0x12,0,0xEF,0xCD,0xAB,0,
+                                0xBA,0xDC,0xFE,0};
+    put_le32(ram + 0x100, 0x4000);
+    put_le32(ram + 0x108, 0x2000);
+    assert(mcpx_dsp_write_run(dsp, DSP56300_MEM_SPACE_X, 0x200, values, 3));
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(next == 0x4000);
+    assert(memcmp(ram + 0x4FFE, packed, 2) == 0);
+    assert(memcmp(ram + 0x2000, packed + 2, 10) == 0);
+    assert(ram[0x4FFD] == 0 && ram[0x200A] == 0);
+
+    /* Reverse into Y, discarding the padding byte of each LE32 word. */
+    node[1] &= ~2u; node[3] = 0x1800;
+    ram[0x2001] = 0xAA;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(mcpx_dsp_read_run(dsp, DSP56300_MEM_SPACE_Y, 0, actual, 3));
+    assert(memcmp(actual, values, sizeof(values)) == 0);
+
+    /* Format 1 uses the upper 16 bits of a DSP word, with no sign extension. */
+    node[1] = 0x5E2; node[3] = 0x200; node[4] = 4095;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(ram[0x4FFF] == 0x34 && ram[0x2000] == 0x12);
+    assert(ram[0x2001] == 0xCD && ram[0x2002] == 0xAB);
+    assert(ram[0x2003] == 0xDC && ram[0x2004] == 0xFE);
+    node[1] &= ~2u; node[3] = 0x1400;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(mcpx_dsp_read_run(dsp, DSP56300_MEM_SPACE_X, 0xC00, actual, 3));
+    for (size_t i = 0; i < 3; ++i) assert(actual[i] == (values[i] & 0xFFFF00));
+
+    /* A late mapping failure must not commit even the first page. */
+    node[1] = 0x19E2; node[3] = 0x200; node[4] = 4094;
+    put_le32(ram + 0x108, sizeof(ram));
+    memcpy(saved, ram, sizeof(ram)); next = 0xDEADBEEFu;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_RANGE);
+    assert(memcmp(saved, ram, sizeof(ram)) == 0 && next == 0xDEADBEEFu);
+    node[1] &= ~2u;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_RANGE);
+    assert(mcpx_dsp_read_run(dsp, DSP56300_MEM_SPACE_X, 0x200, actual, 3));
+    assert(memcmp(actual, values, sizeof(values)) == 0);
+    put_le32(ram + 0x108, 0x2000);
+
+    const uint32_t rejected_controls[] = {0x19E1,0x19F0,0x19E0|0x4000,
+                                          0x9E0,0xDE0,0x1800};
+    memcpy(saved, ram, sizeof(ram));
+    for (size_t i = 0; i < sizeof(rejected_controls)/sizeof(*rejected_controls); ++i) {
+        node[1] = rejected_controls[i];
+        assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_UNSUPPORTED);
+        assert(memcmp(saved, ram, sizeof(ram)) == 0 && next == 0xDEADBEEFu);
+    }
+    node[1] = 0x19E2; node[3] = 0xFFF;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_RANGE);
+    node[3] = 0x200; node[2] = 0;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_INVALID);
+    node[2] = 4097;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_INVALID);
+    node[2] = 3;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(mcpx_dsp_dma_scratch_node(dsp, ram, sizeof(ram), 0x100, 0,
+                                     0x20, &next) == MCPX_DSP_DMA_RANGE);
+    assert(mcpx_dsp_dma_scratch_node(dsp, ram, sizeof(ram), UINT32_MAX, 1,
+                                     0x20, &next) == MCPX_DSP_DMA_RANGE);
+    assert(mcpx_dsp_dma_scratch_node(dsp, ram, sizeof(ram), 0x100, 1,
+                                     0x1000, &next) == MCPX_DSP_DMA_RANGE);
+
+    /* Self-links are returned to the caller; this operation never follows them. */
+    node[0] = 0x20;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK && next == 0x20);
+
+    /* First chunk overwrites the second SG entry. Both mappings must already
+     * be snapshotted, or the last word would follow a corrupted page base. */
+    const uint32_t overlap_values[4] = {0x111111,0x222222,0x333333,0x444444};
+    assert(mcpx_dsp_write_run(dsp, DSP56300_MEM_SPACE_X, 0x200, overlap_values, 4));
+    put_le32(ram + 0x4FF4, 0x4000);
+    put_le32(ram + 0x4FFC, 0x2000);
+    node[0] = 0x4000; node[2] = 4; node[4] = 0xFF4;
+    assert(mcpx_dsp_write_run(dsp, DSP56300_MEM_SPACE_X, 0x20, node, 7));
+    assert(mcpx_dsp_dma_scratch_node(dsp, ram, sizeof(ram), 0x4FF4, 1,
+                                     0x20, &next) == MCPX_DSP_DMA_OK);
+    assert(ram[0x4FF4] == 0x11 && ram[0x4FFC] == 0x33);
+    assert(ram[0x2000] == 0x44 && ram[0x2001] == 0x44 &&
+           ram[0x2002] == 0x44 && ram[0x2003] == 0);
+
+    /* Physical base wrap and next-node flags outside the contract fail closed. */
+    put_le32(ram + 0x100, 0xFFFFF800u);
+    next = 0xDEADBEEFu;
+    memcpy(saved, ram, sizeof(ram));
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_RANGE);
+    assert(memcmp(saved, ram, sizeof(ram)) == 0 && next == 0xDEADBEEFu);
+    put_le32(ram + 0x100, 0x4000);
+    node[0] = 0x8000;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_INVALID);
+
+    /* DMA into executable P memory must invalidate an already compiled branch. */
+    assert(mcpx_dsp_write(dsp, DSP56300_MEM_SPACE_P, 0, 0x0C0000));
+    assert(mcpx_dsp_run(dsp, 16));
+    Dsp56300State state = {0};
+    assert(mcpx_dsp_get_state(dsp, &state) && state.pc == 0);
+    put_le32(ram + 0x4000, 0); /* NOP replacing jmp $0 */
+    node[0] = 0x4000; node[1] = 0x19E0; node[2] = 1;
+    node[3] = 0x2800; node[4] = 0;
+    assert(transfer_node(dsp, ram, node, &next) == MCPX_DSP_DMA_OK);
+    assert(mcpx_dsp_run(dsp, 8));
+    assert(mcpx_dsp_get_state(dsp, &state) && state.pc != 0);
+    assert(probe.read_count == 0 && probe.write_count == 0);
+    mcpx_dsp_destroy(dsp);
+}
+
 int main(void)
 {
     stage("create callback validation begin");
@@ -250,6 +373,9 @@ int main(void)
     stage("scattered bootstrap begin");
     test_scattered_bootstrap();
     stage("scattered bootstrap end");
+    stage("isolated scratch DMA begin");
+    test_dma_scratch_node();
+    stage("isolated scratch DMA end");
     puts("mcpx DSP adapter tests passed");
     return 0;
 }
