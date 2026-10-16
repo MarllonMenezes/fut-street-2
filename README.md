@@ -29,8 +29,8 @@ abertura (`-NativeDisplayOrigin`); o recibo real de apresentação continua
 obrigatório, inclusive no teste do primeiro frame de um contexto novo.
 
 Build Release e CTest passaram **34/34**, sem testes pulados. Também passaram
-os **6 testes de preflight**, o controle negativo de dispatch e o teste do
-adaptador DSP isolado. Uma execução nativa limitada a 30 segundos confirmou
+os **6 testes de preflight**, o controle negativo de dispatch e os testes do
+DSP isolado. Uma execução nativa limitada a 30 segundos confirmou
 duas apresentações com recibo DXGI e retirada pela ISR original, sem a falha
 de acesso anteriormente investigada. O encerramento por timeout não aprova
 boot completo nem fidelidade.
@@ -52,6 +52,13 @@ X/Y/P, cobrindo formatos de 16 bits e 24 bits LSB. Os testes verificam limites,
 cruzamento de páginas, sobreposição da tabela e invalidação do programa em P.
 Ainda faltam os registradores e a integração com o processamento dos efeitos;
 os descritores emitidos pelo DSP original não foram validados nesse executor.
+A ferramenta opcional `mcpx_dsp_probe` observa um bootstrap fornecido localmente
+e para no primeiro START DMA ou acesso desconhecido. O diagnóstico isolado do
+programa original identificou um nó preparado para buffer circular, mas parou
+em um periférico sem semântica confirmada antes do START. A memória restante
+e o estado inicial dessa fixture são sintéticos; isso não comprova boot ou áudio.
+Use `tools/run-dsp-probe.ps1` para impor timeout de até 15 segundos e gravar
+logs no D:. Não publique o bootstrap extraído nem seus logs.
 Menu, controles, cenário, partida curta e áudio funcional continuam pendentes.
 O estado permanece **`NOT_READY`**. Planos, logs e artefatos do jogo ficam locais.
 

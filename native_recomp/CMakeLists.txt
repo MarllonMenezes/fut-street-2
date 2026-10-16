@@ -102,6 +102,9 @@ if(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER)
         "${RECOMP_DSP56300_LIBRARY}"
         ${RECOMP_DSP56300_LINK_LIBRARIES})
 
+    add_executable(mcpx_dsp_probe mcpx_dsp_probe.c)
+    target_link_libraries(mcpx_dsp_probe PRIVATE fut_street_2_mcpx_dsp)
+
     if(BUILD_TESTING)
         add_executable(mcpx_dsp_adapter_test tests/mcpx_dsp_adapter_test.c)
         # Assertions perform the isolated device operations as well as checks.
@@ -114,6 +117,12 @@ if(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER)
         target_link_libraries(mcpx_dsp_adapter_test PRIVATE fut_street_2_mcpx_dsp)
         add_test(NAME mcpx_dsp_adapter COMMAND mcpx_dsp_adapter_test)
         set_tests_properties(mcpx_dsp_adapter PROPERTIES TIMEOUT 15)
+        find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+        add_test(NAME mcpx_dsp_probe_contract
+            COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+                -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/mcpx-dsp-probe-contract.ps1"
+                "$<TARGET_FILE:mcpx_dsp_probe>")
+        set_tests_properties(mcpx_dsp_probe_contract PROPERTIES TIMEOUT 15)
     endif()
 endif()
 

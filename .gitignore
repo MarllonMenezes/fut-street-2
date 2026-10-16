@@ -54,6 +54,7 @@
 !/native_recomp/recomp_runtime_diagnostics.c
 !/native_recomp/mcpx_dsp_adapter.c
 !/native_recomp/mcpx_dsp_adapter.h
+!/native_recomp/mcpx_dsp_probe.c
 !/native_recomp/mcpx_aci.c
 !/native_recomp/mcpx_aci.h
 !/native_recomp/mcpx_aci_host.c
