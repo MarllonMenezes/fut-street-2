@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "graphics_native_fragment.h"
+#include "graphics_native_pipeline.h"
 #include "graphics_native_constants.h"
 #include "graphics_shader_interface.h"
 #include <math.h>
@@ -56,6 +57,108 @@ static int verify_math(ID3D11Device *device,ID3D11DeviceContext *context,FutNati
     ID3D11Buffer_Release(staging);ID3D11UnorderedAccessView_Release(uav);ID3D11Buffer_Release(output);
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);return good?0:69;
 }
+static int verify_alpha_test(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion)
+{
+    FutGraphicsKelvinState state={0};FutNativeTexture textures[4]={0};
+    configure(&state.fragment,0x04200000,0x14200000,0);
+    state.draw.valid=0xFFFFF;state.draw.alpha_test=1;state.draw.alpha_ref=16;
+    state.draw.blend_src=1;state.draw.blend_dst=0;state.draw.blend_op=0x8006;
+    state.draw.color_mask=0x01010101;state.draw.front_mode=state.draw.back_mode=0x1B02;
+    state.draw.front_face=0x901;state.draw.cull_face=0x405;
+    state.depth_test=state.stencil_test=1;state.draw.depth_write=1;
+    state.draw.depth_func=state.draw.stencil_func=0x207;
+    state.draw.stencil_read=state.draw.stencil_write=255;state.draw.stencil_ref=0x3A;
+    state.draw.stencil_op[0]=state.draw.stencil_op[1]=0x1E00;
+    state.draw.stencil_op[2]=0x1E01;
+    FutGraphicsSurfacePlan surface={0};surface.width=surface.height=1;
+    surface.logical_width=surface.logical_height=surface.samples=1;
+    FutNativePipeline pipeline={0};
+    const char *vs_source=FUT_GRAPHICS_VARYINGS_HLSL("O")
+        "cbuffer TestAlpha:register(b3){float alpha;};"
+        "O main(uint id:SV_VertexID){O o=(O)0;"
+        "float2 p=float2(id==1?3:-1,id==2?3:-1);o.pos=float4(p,.5,1);"
+        "o.col0=float4(1,0,0,alpha);return o;}";
+    ID3DBlob *vs_blob=NULL;ID3D11VertexShader *vs=NULL;
+    CHECK(SUCCEEDED(D3DCompile(vs_source,strlen(vs_source),"alpha_fixture",NULL,NULL,
+        "main","vs_5_0",0,0,&vs_blob,NULL)),120);
+    CHECK(SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(vs_blob),
+        ID3D10Blob_GetBufferSize(vs_blob),NULL,&vs)),121);
+    D3D11_BUFFER_DESC bd={0};bd.ByteWidth=16;bd.Usage=D3D11_USAGE_DEFAULT;
+    bd.BindFlags=D3D11_BIND_CONSTANT_BUFFER;ID3D11Buffer *alpha_buffer=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,NULL,&alpha_buffer)),122);
+    D3D11_TEXTURE2D_DESC td={0};td.Width=td.Height=td.MipLevels=td.ArraySize=1;
+    td.SampleDesc.Count=1;td.Usage=D3D11_USAGE_DEFAULT;td.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+    td.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D *color=NULL,*depth=NULL,*color_read=NULL,*depth_read=NULL;
+    ID3D11RenderTargetView *rt=NULL;ID3D11DepthStencilView *ds=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&color)),123);
+    CHECK(SUCCEEDED(ID3D11Device_CreateRenderTargetView(device,(ID3D11Resource*)color,NULL,&rt)),124);
+    td.Usage=D3D11_USAGE_STAGING;td.BindFlags=0;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&color_read)),125);
+    td.Format=DXGI_FORMAT_R24G8_TYPELESS;td.Usage=D3D11_USAGE_DEFAULT;
+    td.BindFlags=D3D11_BIND_DEPTH_STENCIL;td.CPUAccessFlags=0;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&depth)),126);
+    D3D11_DEPTH_STENCIL_VIEW_DESC dd={0};dd.Format=DXGI_FORMAT_D24_UNORM_S8_UINT;
+    dd.ViewDimension=D3D11_DSV_DIMENSION_TEXTURE2D;
+    CHECK(SUCCEEDED(ID3D11Device_CreateDepthStencilView(device,(ID3D11Resource*)depth,&dd,&ds)),127);
+    td.Usage=D3D11_USAGE_STAGING;td.BindFlags=0;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&depth_read)),128);
+    /* Independent truth table for input alpha 15,16,17 against reference16. */
+    static const unsigned pass[8][3]={{0,0,0},{1,0,0},{0,1,0},{1,1,0},
+        {0,0,1},{1,0,1},{0,1,1},{1,1,1}};
+    ID3D11PixelShader *invalid=NULL;ID3DBlob *invalid_blob=NULL;
+    state.draw.alpha_func=0x208;
+    CHECK(fut_native_fragment_compile(device,&state,textures,&invalid,&invalid_blob)==E_NOTIMPL &&
+        !invalid && !invalid_blob,136);
+    state.draw.alpha_func=0x204;state.draw.alpha_ref=256;
+    CHECK(fut_native_fragment_compile(device,&state,textures,&invalid,&invalid_blob)==E_NOTIMPL &&
+        !invalid && !invalid_blob,137);
+    state.draw.alpha_ref=16;
+    for(unsigned func=0;func<8;++func) {
+        state.draw.alpha_func=0x200+func;
+        ID3D11PixelShader *ps=NULL;ID3DBlob *blob=NULL;
+        CHECK(SUCCEEDED(fut_native_fragment_compile(device,&state,textures,&ps,&blob)),129);
+        CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),130);
+        ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);
+        ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&alpha_buffer);
+        ID3D11DeviceContext_PSSetShader(context,ps,NULL,0);
+        ID3D11DeviceContext_IASetInputLayout(context,NULL);
+        ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        for(unsigned input=0;input<3;++input) {
+            float values[4]={(15.0f+input)/255.0f,0,0,0};
+            ID3D11DeviceContext_UpdateSubresource(context,(ID3D11Resource*)alpha_buffer,0,NULL,values,0,0);
+            const float blue[4]={0,0,1,1};
+            ID3D11DeviceContext_ClearRenderTargetView(context,rt,blue);
+            ID3D11DeviceContext_ClearDepthStencilView(context,ds,D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,1,0x5A);
+            ID3D11DeviceContext_OMSetRenderTargets(context,1,&rt,ds);
+            ID3D11DeviceContext_Draw(context,3,0);
+            ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+            ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)color_read,(ID3D11Resource*)color);
+            ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)depth_read,(ID3D11Resource*)depth);
+            CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),131);
+            D3D11_MAPPED_SUBRESOURCE mapped;uint32_t rgba,zs;
+            CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)color_read,0,D3D11_MAP_READ,0,&mapped)),132);
+            memcpy(&rgba,mapped.pData,4);ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)color_read,0);
+            CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)depth_read,0,D3D11_MAP_READ,0,&mapped)),133);
+            memcpy(&zs,mapped.pData,4);ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)depth_read,0);
+            uint32_t expected=pass[func][input]?((15u+input)<<24)|255u:0xFFFF0000u;
+            if(rgba!=expected || (zs>>24)!=(pass[func][input]?0x3Au:0x5Au) ||
+                (pass[func][input]?((zs&0xFFFFFF)<0x7FFFFF || (zs&0xFFFFFF)>0x800001):((zs&0xFFFFFF)!=0xFFFFFF))) {
+                fprintf(stderr,"alpha func=%u input=%u rgba=%08X zs=%08X expected=%08X\n",func,input,rgba,zs,expected);
+                return 134;
+            }
+        }
+        ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    }
+    ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
+    ID3D11RenderTargetView_Release(rt);ID3D11DepthStencilView_Release(ds);
+    ID3D11Texture2D_Release(color);ID3D11Texture2D_Release(depth);
+    ID3D11Texture2D_Release(color_read);ID3D11Texture2D_Release(depth_read);
+    ID3D11Buffer_Release(alpha_buffer);ID3D11VertexShader_Release(vs);ID3D10Blob_Release(vs_blob);
+    puts("Alpha test: eight comparisons at below/equal/above reference; discarded pixels preserve color, depth and stencil on WARP");
+    return 0;
+}
 static int verify_linkage(void)
 {
     const char *old_vs="struct O{float4 pos:SV_POSITION;float4 col0:COLOR0;};"
@@ -83,8 +186,14 @@ int main(void)
     FutGraphicsFragmentState before=state;
     CHECK(fut_graphics_fragment_state(&state,0x261,0)==FUT_FRAGMENT_REJECTED &&
         fut_graphics_fragment_state(&state,0x284,0)==FUT_FRAGMENT_NOT_HANDLED && !memcmp(&before,&state,sizeof(state)),1);
+    CHECK(fut_graphics_fragment_state(&state,0x1E74,0)==FUT_FRAGMENT_APPLIED &&
+        state.dot_rgbmapping==0,11);
     char text[65536];size_t length=999;
     CHECK(fut_fragment_program_hlsl(&state,text,sizeof(text),&length) && length>0,2);
+    state.color_output[0]|=0x2000; /* AB dot output. */
+    state.dot_rgbmapping=1;
+    CHECK(!fut_fragment_program_hlsl(&state,text,sizeof(text),&length),12);
+    state=before;
     CHECK(!fut_fragment_program_hlsl(&state,text,4,&length) && !length && !text[0],3);
     state.color_input_valid=0;
     CHECK(!fut_fragment_program_hlsl(&state,text,sizeof(text),&length) && !length && !text[0],4);state=before;
@@ -101,6 +210,7 @@ int main(void)
     ID3D11Device *device=NULL;ID3D11DeviceContext *context=NULL;D3D_FEATURE_LEVEL level;
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),11);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),12);
+    CHECK(verify_alpha_test(device,context,&completion)==0,135);
     CHECK(verify_math(device,context,&completion,&state,(float[]){.25,.5,.75,.5})==0,13);
     /* Color and alpha read the PREVIOUS stage simultaneously. An in-place
      * RGB write would incorrectly change the subsequent alpha from .75 to .5. */

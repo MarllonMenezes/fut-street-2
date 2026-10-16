@@ -4,6 +4,14 @@
 #include <windows.h>
 
 #include <stdio.h>
+#include <stdlib.h>
+
+/* Satisfy the runtime's title alias without linking or executing title code. */
+void sub_0024B547(void)
+{
+    fputs("kernel_file_contract: unexpected title callback\n", stderr);
+    abort();
+}
 
 /* The file contract is a host-service test.  Keep every guest callback
  * unresolved so this executable cannot enter generated game code. */

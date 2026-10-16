@@ -5,6 +5,7 @@
 
 typedef struct {
     uint32_t address, span, pitch, width, height;
+    unsigned bytes_per_pixel; /* Exact guest storage size: A8 or A8R8G8B8. */
     unsigned dma_context; /* Texture context A=1 (method184), B=2 (method188). */
 } FutGraphicsTexturePlan;
 typedef enum {

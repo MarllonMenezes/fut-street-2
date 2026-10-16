@@ -12,6 +12,9 @@ typedef struct {
 /* Fragment programs must include this predicate before any color output.
  * PS b2 stores inclusive windows plus physical-to-logical storage factors. */
 const char *fut_native_window_hlsl(void);
+/* Alpha testing lives in the fragment shader, not a D3D11 fixed state.
+ * The caller must use a shader compiled for the current draw alpha controls
+ * by fut_native_fragment_compile before submitting geometry. */
 HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *device,
     ID3D11DeviceContext *context, const FutGraphicsKelvinState *state, const FutGraphicsSurfacePlan *surface);
 void fut_native_pipeline_destroy(FutNativePipeline *native);

@@ -186,7 +186,8 @@ int main(void)
         CHECK(fut_graphics_kelvin_state(&kelvin,commands[i][0],commands[i][1])==FUT_KELVIN_APPLIED,3);
     FutGraphicsTextureState *state=&kelvin.textures[0];
     CHECK(fut_graphics_texture_plan(state,&dma,&plan)==FUT_TEXTURE_READY && plan.address==0x80001000 &&
-        plan.width==4 && plan.height==3 && plan.pitch==20 && plan.span==56 && plan.dma_context==1,4);
+        plan.width==4 && plan.height==3 && plan.pitch==20 && plan.span==56 &&
+        plan.bytes_per_pixel==4 && plan.dma_context==1,4);
     FutGraphicsTextureState bad=*state;
     bad.offset=UINT32_MAX;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==123,5);
@@ -196,6 +197,9 @@ int main(void)
     CHECK(fut_graphics_texture_plan(&bad,&dma,&plan)==FUT_TEXTURE_READY && plan.dma_context==2,7);
     bad.format=0x10629;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED && sentinel.width==123,8);
+    bad=*state;bad.format=0x11F29;bad.control1=8u<<16;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&plan)==FUT_TEXTURE_READY && plan.bytes_per_pixel==1 &&
+        plan.pitch==8 && plan.span==20,50);
     bad=*state;bad.valid&=~128u;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INCOMPLETE,9);
     CHECK(fut_graphics_texture_plan(state,&(FutGraphicsDmaView){0x80000000,0x1030},&sentinel)==FUT_TEXTURE_INVALID_RANGE,10);
@@ -218,6 +222,11 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) && native.valid && native.view && !native.sampling_ready,16);
     CHECK(verify_upload(device,context,&completion,&native,&memory)==0 && !memcmp(memory.bytes,before.bytes,64),17);
     CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)),18);
+    state->filter=0x01052000; /* nearest_mipmap_linear reduces to nearest with one level */
+    CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)) &&
+        verify_sampling(device,context,&completion,&native,&memory,0,3)==0,58);
+    state->filter=0x01010000;
+    CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,state)),59);
     const uint32_t fragment_commands[][2]={{0x1E60,1},{0x1E70,1},{0xAC0,0x08200000},
         {0x260,0x14200000},{0x1E40,0xC00},{0xAA0,0xC00},{0x288,0xC},{0x28C,0x1C80}};
     for(unsigned i=0;i<sizeof(fragment_commands)/sizeof(fragment_commands[0]);++i)
@@ -292,6 +301,28 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) &&
         !native.zero_rgb_candidate && (native.texel_or&0xFFFFFFu)==1 &&
         fut_native_texture_zero_rgb_candidate(&native,state,1)==E_NOTIMPL,49);
+    state->format=0x11F29;state->control1=8u<<16;state->image_rect=(4u<<16)|3u;
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) memory.bytes[y*8+x]=(uint8_t)(40+y*4+x);
+    CHECK(fut_graphics_texture_plan(state,&dma,&plan)==FUT_TEXTURE_READY && plan.bytes_per_pixel==1,51);
+    FutNativeTexture alpha={0};
+    CHECK(SUCCEEDED(fut_native_texture_upload(&alpha,device,&plan,memory_read,&memory)) && alpha.valid,52);
+    D3D11_TEXTURE2D_DESC alpha_desc;ID3D11Texture2D_GetDesc(alpha.texture,&alpha_desc);
+    CHECK(alpha_desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM && alpha_desc.Width==4 && alpha_desc.Height==3,53);
+    alpha_desc.Usage=D3D11_USAGE_STAGING;alpha_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;alpha_desc.BindFlags=0;
+    ID3D11Texture2D *alpha_staging=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&alpha_desc,NULL,&alpha_staging)),54);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)alpha_staging,(ID3D11Resource*)alpha.texture);
+    CHECK(fut_native_constants_finish(&completion,NULL,2000,NULL),55);
+    D3D11_MAPPED_SUBRESOURCE alpha_map;CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,
+        (ID3D11Resource*)alpha_staging,0,D3D11_MAP_READ,0,&alpha_map)),56);
+    int alpha_ok=1;
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) {
+        uint32_t pixel;memcpy(&pixel,(uint8_t*)alpha_map.pData+y*alpha_map.RowPitch+x*4,4);
+        if(pixel!=(((uint32_t)memory.bytes[y*8+x]<<24)|0x00FFFFFFu)) alpha_ok=0;
+    }
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)alpha_staging,0);
+    ID3D11Texture2D_Release(alpha_staging);fut_native_texture_destroy(&alpha);
+    CHECK(alpha_ok,57);
     fut_native_texture_destroy(&native);fut_native_constants_destroy(&completion);
     ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
     puts("Texture upload/samplers and zero-RGB snapshot specialization verified: actual PS pixels, varied unknown alpha, padding ignored, changed last texel/state and live-alpha dependencies refused; generic convolution unsupported");

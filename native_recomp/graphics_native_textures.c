@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_textures.h"
 #include <string.h>
+#include "graphics_experiment.h"
 
 void fut_native_texture_destroy(FutNativeTexture *native)
 {
@@ -14,20 +15,36 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
 {
     if (!native || !device || !read || !plan || !plan->width || !plan->height ||
         plan->width > 8191 || plan->height > 8191 ||
+        (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4) ||
         (plan->dma_context != 1 && plan->dma_context != 2) ||
-        plan->pitch < (uint64_t)plan->width * 4 || plan->pitch > 65535 ||
+        plan->pitch < (uint64_t)plan->width * plan->bytes_per_pixel || plan->pitch > 65535 ||
         ((plan->pitch | plan->address) & 3) ||
         (plan->address & 0xFC000000u) != 0x80000000u ||
-        (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*4 != plan->span ||
+        (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*plan->bytes_per_pixel != plan->span ||
         plan->span > 0x84000000u - plan->address) return E_INVALIDARG;
     uint8_t *bytes = HeapAlloc(GetProcessHeap(), 0, plan->span);
     if (!bytes) return E_OUTOFMEMORY;
     HRESULT hr = E_FAIL;
     FutNativeTexture next = {0};
+    const uint8_t *upload=bytes;
+    uint32_t upload_pitch=plan->pitch;
+    uint8_t *expanded=NULL;
     if (!read(context, plan->address, bytes, plan->span)) goto done;
+    if(plan->bytes_per_pixel==1) {
+        uint64_t expanded_size=(uint64_t)plan->width*4*plan->height;
+        if(expanded_size>SIZE_MAX) {hr=E_OUTOFMEMORY;goto done;}
+        expanded=HeapAlloc(GetProcessHeap(),0,(SIZE_T)expanded_size);
+        if(!expanded) {hr=E_OUTOFMEMORY;goto done;}
+        upload=expanded;upload_pitch=plan->width*4;
+        for(unsigned y=0;y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
+            uint8_t alpha=bytes[(size_t)y*plan->pitch+x];
+            uint32_t argb=0x00FFFFFFu|((uint32_t)alpha<<24);
+            memcpy(expanded+(size_t)y*upload_pitch+x*4,&argb,4);
+        }
+    }
     next.texel_and=UINT32_MAX;
     for(unsigned y=0;y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
-        uint32_t word;memcpy(&word,bytes+(size_t)y*plan->pitch+x*4,4);
+        uint32_t word;memcpy(&word,upload+(size_t)y*upload_pitch+x*4,4);
         next.texel_or|=word;next.texel_and&=word;
     }
     D3D11_TEXTURE2D_DESC desc = {0};
@@ -35,7 +52,7 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     desc.MipLevels=1; desc.ArraySize=1; desc.SampleDesc.Count=1;
     desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage=D3D11_USAGE_DEFAULT;
     desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
-    D3D11_SUBRESOURCE_DATA initial = {bytes, plan->pitch, 0};
+    D3D11_SUBRESOURCE_DATA initial = {upload, upload_pitch, 0};
     hr=ID3D11Device_CreateTexture2D(device,&desc,&initial,&next.texture);
     if (SUCCEEDED(hr)) hr=ID3D11Device_CreateShaderResourceView(device,(ID3D11Resource*)next.texture,NULL,&next.view);
     if (SUCCEEDED(hr)) {
@@ -43,7 +60,8 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
         fut_native_texture_destroy(native); *native=next; memset(&next,0,sizeof(next));
     }
 done:
-    fut_native_texture_destroy(&next); HeapFree(GetProcessHeap(),0,bytes);
+    fut_native_texture_destroy(&next); if(expanded) HeapFree(GetProcessHeap(),0,expanded);
+    HeapFree(GetProcessHeap(),0,bytes);
     return hr;
 }
 HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *device,
@@ -52,15 +70,25 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     if (!native) return E_INVALIDARG;
     native->sampling_ready=0;
     native->zero_rgb_candidate=0;
+    native->quincunx_experiment=0;
     if (!device || !state || !native->valid || (state->valid & 0x2C) != 0x2C) return E_INVALIDARG;
     unsigned min=(state->filter>>16)&255, mag=(state->filter>>24)&15;
-    /* Fixed LOD zero is faithful here only for one level and matching filters.
-     * Never turn convolution MIN=7/MAG=4 into ordinary linear sampling. */
+    unsigned levels=(state->format>>16)&15;
+    /* A one-level texture cannot select between mip levels. MIN=3..6 therefore
+     * reduces exactly to the corresponding within-level nearest/linear mode.
+     * Never turn convolution MIN=7/MAG=4 into ordinary filtering. */
+    unsigned spatial_min;
+    if(min==1 || min==3 || min==5) spatial_min=1;
+    else if(min==2 || min==4 || min==6) spatial_min=2;
+    else spatial_min=0;
     if (!(state->control0 & 0x40000000u) || (state->control0 & ~0x4003FFC0u) ||
-        (state->filter & ~0x0F3F0000u) || (min != 1 && min != 2) || mag != min ||
+        /* The captured single-level A8 state sets reserved filter bit 13;
+         * the NV2A LOD-bias mask excludes it, so it has no represented effect. */
+        (state->filter & ~0x0F3F2000u) || levels!=1 || !spatial_min ||
+        (mag!=1 && mag!=2) || mag!=spatial_min ||
         (state->address & ~0x00070707u)) return E_NOTIMPL;
     D3D11_SAMPLER_DESC desc = {0};
-    desc.Filter=min==1 ? D3D11_FILTER_MIN_MAG_MIP_POINT : D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
+    desc.Filter=spatial_min==1 ? D3D11_FILTER_MIN_MAG_MIP_POINT : D3D11_FILTER_MIN_MAG_LINEAR_MIP_POINT;
     unsigned modes[3]={state->address&7,(state->address>>8)&7,(state->address>>16)&7};
     D3D11_TEXTURE_ADDRESS_MODE addresses[3];
     for (unsigned i=0;i<3;++i) {
@@ -95,10 +123,12 @@ HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
     if(!native) return E_INVALIDARG;
     native->zero_rgb_candidate=0;
     native->sampling_ready=0;
+    native->quincunx_experiment=0;
     if(!state || !native->valid || !native->texture || !native->view) return E_INVALIDARG;
     if(coordinates_verified!=1 || (native->texel_or&0xFFFFFFu) ||
         state->filter!=0x04072000u || state->address!=0x10303u || state->control0!=0x4003FFC0u ||
-        (state->valid&0xBF)!=0xBF || state->format!=(0x11228u|native->plan.dma_context) ||
+        (state->valid&0xBF)!=0xBF || native->plan.bytes_per_pixel!=4 ||
+        state->format!=(0x11228u|native->plan.dma_context) ||
         state->image_rect!=((native->plan.width<<16)|native->plan.height) ||
         state->control1!=(native->plan.pitch<<16)) return E_NOTIMPL;
     native->zero_rgb_candidate=1;native->sampling_state=*state;
@@ -106,6 +136,27 @@ HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
 }
 const char *fut_native_texture_hlsl(void)
 {
-    return "float4 fut_linear_texture(Texture2D<float4> t, SamplerState s, float4 p, float2 extent) {\n"
+    return "float4 fut_quincunx_experiment(Texture2D<float4> t,float4 p){\n"
+        "int2 q=clamp(int2(floor(p.xy/float2(2,1))),int2(0,0),int2(639,479));\n"
+        "int x=q.x*2,y=q.y,x1=min(x+2,1278),y1=min(y+1,479);\n"
+        "return t.Load(int3(x+1,y,0))*.5+"
+        "(t.Load(int3(x,y,0))+t.Load(int3(x1,y,0))+"
+        "t.Load(int3(x,y1,0))+t.Load(int3(x1,y1,0)))*.125;\n}\n"
+        "float4 fut_linear_texture(Texture2D<float4> t, SamplerState s, float4 p, float2 extent) {\n"
         "return t.SampleLevel(s, (p.xy / p.w) / extent, 0.0);\n}\n";
+}
+
+HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *n,
+    const FutGraphicsTextureState *s,int verified)
+{
+    if(!n) return E_INVALIDARG;
+    n->sampling_ready=n->zero_rgb_candidate=n->quincunx_experiment=0;
+    if(!s || !n->valid || !n->texture || !n->view) return E_INVALIDARG;
+    if(!fut_graphics_quincunx_approximation_enabled() || verified!=1 ||
+        n->plan.width!=1280 || n->plan.height!=480 || n->plan.pitch!=5120 ||
+        n->plan.bytes_per_pixel!=4 || (s->valid&0xBF)!=0xBF ||
+        s->format!=(0x11228u|n->plan.dma_context) ||
+        s->filter!=0x04072000u || s->address!=0x00030303u || s->control0!=0x4003FFC0u ||
+        s->control1!=(5120u<<16) || s->image_rect!=((1280u<<16)|480u)) return E_NOTIMPL;
+    n->quincunx_experiment=1;n->sampling_state=*s;return S_OK;
 }

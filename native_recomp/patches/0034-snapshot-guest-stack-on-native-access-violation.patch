@@ -1,0 +1,27 @@
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -1566,6 +1566,23 @@
+             (unsigned long long)context->R13,
+             (unsigned long long)context->R14,
+             (unsigned long long)context->R15);
++    fprintf(stderr,
++            "[NATIVE-AV-GUEST] eax=%08X ebx=%08X ecx=%08X edx=%08X "
++            "esi=%08X edi=%08X ebp=%08X esp=%08X\n",
++            g_eax, g_ebx, g_ecx, g_edx, g_esi, g_edi, g_ebp, g_esp);
++    for (unsigned i = 0; i < 16; ++i) {
++        uint32_t va = g_esp + i * 4u;
++        uint32_t value = 0;
++        SIZE_T bytes_read = 0;
++        if (va < g_esp) break;
++        if (ReadProcessMemory(GetCurrentProcess(),
++                (const void *)((uintptr_t)g_memory_offset + va),
++                &value, sizeof(value), &bytes_read) &&
++                bytes_read == sizeof(value))
++            fprintf(stderr, "[NATIVE-AV-STACK] va=%08X value=%08X\n", va, value);
++        else
++            fprintf(stderr, "[NATIVE-AV-STACK] va=%08X unreadable\n", va);
++    }
+     fflush(stderr);
+     return EXCEPTION_CONTINUE_SEARCH;
+ }

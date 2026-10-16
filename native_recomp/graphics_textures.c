@@ -8,14 +8,18 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
     if (!(state->control0 & 0x40000000u)) return FUT_TEXTURE_DISABLED;
     if ((state->valid & 0x9Bu) != 0x9Bu) return FUT_TEXTURE_INCOMPLETE;
     unsigned select = state->format & 3;
-    /* No guessing swizzled/compressed/cube/mip/bordered storage. The exact
-     * non-DMA fields here match the title's observed 0x00011229 description. */
-    if ((select != 1 && select != 2) || (state->format & ~3u) != 0x00011228u ||
+    /* No guessing swizzled/compressed/cube/mip/bordered storage. The two
+     * observed linear layouts are A8R8G8B8 (11228) and alpha-only A8 (11F28). */
+    uint32_t format=state->format&~3u;
+    unsigned bytes_per_pixel=format==0x00011228u?4:
+        format==0x00011F28u?1:0;
+    if ((select != 1 && select != 2) || !bytes_per_pixel ||
         (state->control1 & 0xFFFFu)) return FUT_TEXTURE_UNSUPPORTED;
     FutGraphicsTexturePlan next = {0};
     next.width = state->image_rect >> 16; next.height = state->image_rect & 0xFFFF;
     next.pitch = state->control1 >> 16; next.dma_context = select;
-    uint64_t row = (uint64_t)next.width * 4;
+    next.bytes_per_pixel=bytes_per_pixel;
+    uint64_t row = (uint64_t)next.width * bytes_per_pixel;
     if (!dma || !next.width || !next.height || next.width > 8191 || next.height > 8191 ||
         next.pitch < row || ((state->offset | next.pitch | dma->guest_address) & 3) ||
         (dma->guest_address & 0xFC000000u) != 0x80000000u || !dma->size ||

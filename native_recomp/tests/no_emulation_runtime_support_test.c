@@ -1,5 +1,6 @@
 #include "recomp_types.h"
 
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -11,6 +12,13 @@ uint8_t recomp_xbox_io_read8(uint16_t port);
 void recomp_xbox_cli(void);
 void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
+
+/* The unit target does not link the generated game code. The manual lookup
+ * contract is tested by address identity; the native bring-up validates the
+ * real translated implementation. */
+void sub_0024B547(void)
+{
+}
 
 /* The standalone runtime-support test does not link the generated dispatch
  * table or the kernel bridge. Keep every indirect lookup unresolved so this
@@ -29,6 +37,7 @@ recomp_func_t recomp_lookup_kernel(uint32_t xbox_va)
 
 uint32_t g_xbox_code_lo;
 uint32_t g_xbox_code_hi;
+ptrdiff_t g_xbox_mem_offset;
 RECOMP_TLS uint32_t g_eax;
 RECOMP_TLS uint32_t g_esp;
 
@@ -58,6 +67,12 @@ int main(int argc, char **argv)
         0x80000000u,
         0xFFFFFFFFu,
     };
+
+    if (recomp_lookup_manual(0x0023A4C3u) != sub_0024B547)
+        return 12;
+    if (recomp_lookup_manual(0x0023A4C2u) != NULL ||
+        recomp_lookup_manual(0x0023A4C4u) != NULL)
+        return 13;
 
     for (size_t i = 0; i < sizeof(guest_addresses) / sizeof(guest_addresses[0]); ++i) {
         if (recomp_lookup_manual(guest_addresses[i]) != NULL)

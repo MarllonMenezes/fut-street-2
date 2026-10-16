@@ -27,7 +27,7 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
     CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)),31);
     ID3D11Buffer *previous=surface.buffer;
     plan.samples=2;plan.width=128;
-    CHECK(fut_native_vertex_surface_prepare(&surface,device,context,&plan)==E_NOTIMPL &&
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)) &&
         surface.buffer==previous && surface.width==64,32);
     ID3D11Buffer *bound_surface=NULL;
     ID3D11DeviceContext_VSGetConstantBuffers(context,3,1,&bound_surface);
@@ -43,6 +43,14 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
         positions,2,2000,NULL)==E_INVALIDARG && !memcmp(positions,saved,sizeof(saved)),34);
     CHECK(SUCCEEDED(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
         positions,3,2000,NULL)),35);
+    plan.samples=2;plan.width=128;
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)),58);
+    FutNativePosition expanded[3];
+    CHECK(SUCCEEDED(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,
+        expanded,3,2000,NULL)),59);
+    for(unsigned i=0;i<3;++i) for(unsigned c=0;c<4;++c)
+        CHECK(fabsf(expanded[i].clip[c]-positions[i].clip[c])<0.000002f,60);
+    plan.samples=1;plan.width=64;
     for(unsigned i=0;i<3;++i) {
         /* Independent inverse viewport after signed truncation (not floor).
          * Screen W is undone then restored by D3D perspective division. */

@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tools.analysis.recomp_host_preflight_evidence_gate import (
     BRIDGE_MARKER,
@@ -69,6 +70,11 @@ class RecompHostPreflightEvidenceGateTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("--preflight", calls[0])
         self.assertNotIn("--launch", calls[0])
+
+    def test_run_preflight_rejects_rr_only_hardware_experiment(self) -> None:
+        with patch.dict("os.environ", {"RECOMP_AC97_RESET_ONLY": "1"}):
+            with self.assertRaisesRegex(ValueError, "synthetic-hardware environment"):
+                run_preflight(Path(__file__), Path(__file__))
 
 
 if __name__ == "__main__":

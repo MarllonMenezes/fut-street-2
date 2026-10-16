@@ -35,7 +35,8 @@ typedef struct {
     unsigned provoking_first, edge_flag, compress_depth;
     unsigned flip_read, flip_write, flip_modulo;
     unsigned flip_valid;
-    uint32_t shader_other_input, shadow_slope_threshold, clear_color, pattern_color;
+    uint32_t shader_other_input, shader_clip_plane_mode, shadow_slope_threshold;
+    uint32_t clear_color, pattern_color;
     uint32_t clear_depth, clear_x, clear_y;
     unsigned clear_valid;
 } FutGraphicsKelvinState;

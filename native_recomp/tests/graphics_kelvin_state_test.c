@@ -5,6 +5,10 @@
 int main(void)
 {
     FutGraphicsKelvinState state = {0};
+    if (fut_graphics_kelvin_state(&state, 0x17F8, 0) != FUT_KELVIN_APPLIED ||
+        state.shader_clip_plane_mode != 0) return 52;
+    if (fut_graphics_kelvin_state(&state, 0x17F8, 0xA5A55A5Au) != FUT_KELVIN_APPLIED ||
+        state.shader_clip_plane_mode != 0xA5A55A5Au) return 53;
     if (fut_graphics_kelvin_state(&state, 0x9FC, 1) != FUT_KELVIN_APPLIED || !state.provoking_first) return 1;
     if (fut_graphics_kelvin_state(&state, 0x9FC, 0) != FUT_KELVIN_APPLIED || state.provoking_first) return 2;
     /* The four texgen planes have gaps occupied by texture matrices; they

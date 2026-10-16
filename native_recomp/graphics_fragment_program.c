@@ -19,6 +19,7 @@ FutFragmentStatus fut_graphics_fragment_state(FutGraphicsFragmentState *s,uint32
         switch(method) {
         case 0x1E60: s->control=value;s->valid|=1;break;
         case 0x1E70: s->stage_program=value;s->valid|=2;break;
+        case 0x1E74: s->dot_rgbmapping=value;break;
         case 0x288: s->final_words[0]=value;s->valid|=4;break;
         case 0x28C: s->final_words[1]=value;s->valid|=8;break;
         default:return FUT_FRAGMENT_NOT_HANDLED;
@@ -72,6 +73,7 @@ static int portion(Writer *w,const FutGraphicsFragmentState *s,unsigned stage,in
     uint32_t icw=alpha?s->alpha_input[stage]:s->color_input[stage];
     uint32_t ocw=alpha?s->alpha_output[stage]:s->color_output[stage];
     unsigned flags=ocw>>12,mapping=flags&0x38;
+    if((flags&3) && s->dot_rgbmapping) return 0;
     if((ocw & ~0x3FFFFu) || (flags&4) || (alpha && (flags&3)) || mapping==0x28 || mapping==0x38) return 0;
     unsigned dest[3]={(ocw>>4)&15,ocw&15,(ocw>>8)&15};
     for(unsigned i=0;i<3;++i) {

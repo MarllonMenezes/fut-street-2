@@ -64,6 +64,20 @@ int main(void)
     CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,5)==FUT_IMMEDIATE_APPLIED,15);
     for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY;++i) CHECK(pair(0,0,0),16);
     CHECK(b.count==FUT_IMMEDIATE_CAPACITY && rejected(0x1880,0),17);
+    memset(&b,0,sizeof(b));
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,8)==FUT_IMMEDIATE_APPLIED,25);
+    for(unsigned vertex=0;vertex<4;++vertex) for(unsigned part=0;part<4;++part) {
+        uint32_t value=0x3F800000u+vertex*16+part;
+        CHECK(fut_graphics_immediate_method(&b,&s,0x1518+part*4,value)==FUT_IMMEDIATE_APPLIED,26);
+    }
+    uint32_t expected_bits=0x3F800030u;float expected_vertex3_x;
+    memcpy(&expected_vertex3_x,&expected_bits,sizeof(expected_vertex3_x));
+    CHECK(b.count==4 && b.defined[0]==0x201 &&
+        fut_graphics_immediate_method(&b,&s,0x17FC,0)==FUT_IMMEDIATE_READY &&
+        b.count==6 && b.primitive==5,27);
+    CHECK(b.vertices[3][0][0]==b.vertices[0][0][0] &&
+        b.vertices[4][0][0]==b.vertices[2][0][0] &&
+        b.vertices[5][0][0]==expected_vertex3_x,28);
     puts("Immediate2F: paired attributes, snapshots, raw bits, triangle bounds and pending completion verified");
     return 0;
 }

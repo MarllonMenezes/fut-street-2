@@ -1,0 +1,13 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -3618,6 +3618,9 @@
+         const uint8_t *p = (const uint8_t *)XBOX_TO_NATIVE(buffer_va);
+         uint32_t got = (uint32_t)ios.Information;
++        if (getenv("RECOMP_FILE_OPEN_DIAG"))
++            fprintf(stderr, "[READ-RANGE] caller=%08X handle=%08X buffer=%08X want=%u got=%u\n",
++                    g_xbox_kernel_caller, STACK_ARG(0), buffer_va, length, got);
+         /* The offset matters as much as the length. A title streaming a pack
+          * file reads sector-aligned chunks, so the first bytes belong to
+          * whatever precedes the file it actually wants, and a read that stops
+          * early looks identical to one that never started -- until you can

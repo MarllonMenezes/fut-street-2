@@ -25,7 +25,7 @@ Assert-ExistingPath -Path $ExecutablePath -PathType Leaf -Description 'Host exec
 Assert-ExistingPath -Path $XbePath -PathType Leaf -Description 'XBE input'
 
 $forbiddenVariables = @(
-    @('RECOMP_AC97_READY', 'RECOMP_PB_EXEC', 'RECOMP_VBLANK') |
+    @('RECOMP_AC97_READY', 'RECOMP_AC97_RESET_ONLY', 'RECOMP_PB_EXEC', 'RECOMP_VBLANK') |
         Where-Object { $null -ne [Environment]::GetEnvironmentVariable($_) }
 )
 if ($forbiddenVariables.Count -gt 0) {

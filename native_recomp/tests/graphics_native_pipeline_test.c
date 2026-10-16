@@ -4,6 +4,7 @@
 #include <d3dcompiler.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "pipeline test failed: %d\n", code); return code; } } while (0)
 
 static int read_depth_words(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion,
@@ -89,6 +90,24 @@ int main(void)
     CHECK(ds.DepthFunc==D3D11_COMPARISON_LESS && ds.FrontFace.StencilPassOp==D3D11_STENCIL_OP_REPLACE && ds.StencilReadMask==255,7);
     D3D11_RASTERIZER_DESC rs; ID3D11RasterizerState_GetDesc(pipeline.raster,&rs);
     CHECK(rs.CullMode==D3D11_CULL_NONE && rs.FrontCounterClockwise && rs.ScissorEnable,8);
+    /* The game's observed surface is AA2 (1280x480 for logical 640x480).
+     * Validate host Z/stencil state at that experimental expanded grid while
+     * keeping the unaccepted AA2+dither combination fail-fast. */
+    surface.width=16;surface.height=4;surface.logical_width=8;surface.logical_height=4;surface.samples=2;
+    state.draw.dither=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL,48);
+    state.draw.dither=0;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),49);
+    ID3D11DepthStencilState_GetDesc(pipeline.depth,&ds);
+    CHECK(ds.DepthEnable && ds.StencilEnable && ds.DepthFunc==D3D11_COMPARISON_LESS &&
+        ds.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ALL &&
+        ds.FrontFace.StencilPassOp==D3D11_STENCIL_OP_REPLACE,50);
+    D3D11_VIEWPORT aa2_viewport;UINT viewport_count=1;
+    ID3D11DeviceContext_RSGetViewports(context,&viewport_count,&aa2_viewport);
+    CHECK(viewport_count==1 && aa2_viewport.Width==16 && aa2_viewport.Height==4,51);
+    surface.width=16;surface.height=8;surface.logical_width=8;surface.logical_height=4;surface.samples=4;
+    state.draw.dither=0;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),52);
     const char *vertex="float4 main(uint i:SV_VertexID):SV_POSITION{float2 p=float2((i<<1)&2,i&2);return float4(p*float2(2,-2)+float2(-1,1),0.5,1);}";
     char pixel[4096]; int length=snprintf(pixel,sizeof(pixel),"%sfloat4 main(float4 p:SV_POSITION):SV_TARGET{if(!fut_window_visible(p.xy))discard;return float4(1,0,0,0.5);}",fut_native_window_hlsl());
     CHECK(length>0 && length<(int)sizeof(pixel),9);
@@ -140,7 +159,8 @@ int main(void)
     CHECK(!read_depth_words(device,context,&completion,depth,after_depth) &&
         !memcmp(before_depth,after_depth,sizeof(before_depth)),47);
     ID3D11BlendState *saved=pipeline.blend; state.draw.alpha_test=1;
-    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL && pipeline.blend==saved,22);
+    state.draw.alpha_func=0x208;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_INVALIDARG && pipeline.blend==saved,22);
     state.draw.alpha_test=0; state.draw.front_mode=0x1B03;
     CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_INVALIDARG && pipeline.blend==saved,23);
     state.draw.front_mode=0x1B02; surface.logical_width=0;
@@ -166,6 +186,16 @@ int main(void)
     ID3D11BlendState *bound=NULL; float blend_factor[4]; UINT sample_mask;
     ID3D11DeviceContext_OMGetBlendState(context,&bound,blend_factor,&sample_mask);
     CHECK(bound==saved,25); ID3D11BlendState_Release(bound);
+    surface.samples=2;surface.logical_width=640;surface.logical_height=480;
+    surface.width=1280;surface.height=480;state.anti_aliasing_control=0xFFFF0001;
+    state.draw.dither=1;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL,51);
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)) && state.draw.dither==1,52);
+    surface.samples=4;surface.height=960;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL,53);
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     ID3D11DeviceContext_ClearState(context);
     fut_native_pipeline_destroy(&pipeline);fut_native_constants_destroy(&completion);
     ID3D11Texture2D_Release(color);ID3D11Texture2D_Release(depth);ID3D11RenderTargetView_Release(rt);ID3D11DepthStencilView_Release(dt);

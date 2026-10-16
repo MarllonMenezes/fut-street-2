@@ -1,0 +1,79 @@
+diff --git a/src/kernel/xbox_memory_layout.c b/src/kernel/xbox_memory_layout.c
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -1512,0 +1513,71 @@
++#if defined(_WIN32)
++/* Crash triage only. Installed at the end of the VEH chain so handlers for
++ * intentional device traps can recover first. This observer never handles an
++ * exception; it records one unhandled AV when explicitly requested. */
++static PVOID g_native_av_diag_veh;
++static volatile LONG g_native_av_diag_reported;
++
++static LONG CALLBACK native_av_diag_veh(PEXCEPTION_POINTERS ep)
++{
++    EXCEPTION_RECORD *record;
++    CONTEXT *context;
++    uintptr_t image_base;
++
++    if (!ep || !ep->ExceptionRecord || !ep->ContextRecord)
++        return EXCEPTION_CONTINUE_SEARCH;
++    record = ep->ExceptionRecord;
++    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION ||
++            InterlockedCompareExchange(&g_native_av_diag_reported, 1, 0) != 0)
++        return EXCEPTION_CONTINUE_SEARCH;
++
++    context = ep->ContextRecord;
++    image_base = (uintptr_t)GetModuleHandleW(NULL);
++    fprintf(stderr,
++            "[NATIVE-AV] tid=%lu code=%08lX operation=%llu address=%p "
++            "ip=%p rva=%llX guest_esp=%08X\n",
++            (unsigned long)GetCurrentThreadId(),
++            (unsigned long)record->ExceptionCode,
++            record->NumberParameters > 0
++                ? (unsigned long long)record->ExceptionInformation[0] : 0ull,
++            record->NumberParameters > 1
++                ? (void *)(uintptr_t)record->ExceptionInformation[1] : NULL,
++            (void *)(uintptr_t)context->Rip,
++            (unsigned long long)((uintptr_t)context->Rip - image_base),
++            g_esp);
++    fprintf(stderr,
++            "[NATIVE-AV-REGS] rax=%016llX rbx=%016llX rcx=%016llX "
++            "rdx=%016llX rsi=%016llX rdi=%016llX rbp=%016llX "
++            "rsp=%016llX r8=%016llX r9=%016llX r10=%016llX "
++            "r11=%016llX r12=%016llX r13=%016llX r14=%016llX r15=%016llX\n",
++            (unsigned long long)context->Rax,
++            (unsigned long long)context->Rbx,
++            (unsigned long long)context->Rcx,
++            (unsigned long long)context->Rdx,
++            (unsigned long long)context->Rsi,
++            (unsigned long long)context->Rdi,
++            (unsigned long long)context->Rbp,
++            (unsigned long long)context->Rsp,
++            (unsigned long long)context->R8,
++            (unsigned long long)context->R9,
++            (unsigned long long)context->R10,
++            (unsigned long long)context->R11,
++            (unsigned long long)context->R12,
++            (unsigned long long)context->R13,
++            (unsigned long long)context->R14,
++            (unsigned long long)context->R15);
++    fflush(stderr);
++    return EXCEPTION_CONTINUE_SEARCH;
++}
++
++static void native_av_diag_init(void)
++{
++    if (getenv("RECOMP_NATIVE_AV_DIAG") && !g_native_av_diag_veh) {
++        g_native_av_diag_veh = AddVectoredExceptionHandler(
++            0, native_av_diag_veh);
++        fprintf(stderr, "  AV-DIAG: %s\n", g_native_av_diag_veh
++                ? "unhandled access-violation observer installed"
++                : "could not install observer");
++        fflush(stderr);
++    }
++}
++#endif
+@@ -2692,0 +2764,3 @@
++#if defined(_WIN32)
++    native_av_diag_init();
++#endif

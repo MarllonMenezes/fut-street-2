@@ -12,7 +12,7 @@ HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *dev
     ID3D11DeviceContext *context,ID3DBlob *bytecode,const FutGraphicsImmediate *b,uint16_t required)
 {
     if(!native || !device || !context || !bytecode || !b || b->active || !b->ready ||
-        b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_CAPACITY || b->count%3) return E_INVALIDARG;
+        b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_DRAW_CAPACITY || b->count%3) return E_INVALIDARG;
     if(native->submitted) return E_PENDING;
     for(unsigned i=0;i<b->count;++i) if((b->defined[i]&required)!=required) return E_NOTIMPL;
     FutNativeImmediate next={0};
@@ -42,7 +42,7 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
     DWORD timeout_ms,HANDLE stop_event)
 {
     if(!native || !native->buffer || !native->layout || !native->count ||
-        native->count>FUT_IMMEDIATE_CAPACITY || native->count%3 || !device || !context || !shader || !bytecode ||
+        native->count>FUT_IMMEDIATE_DRAW_CAPACITY || native->count%3 || !device || !context || !shader || !bytecode ||
         !completion || !completion->buffer || !completion->completion || completion->context!=context || !positions || capacity<native->count ||
         !timeout_ms || timeout_ms>2000) return E_INVALIDARG;
     if(stop_event && WaitForSingleObject(stop_event,0)!=WAIT_TIMEOUT) return E_ABORT;
@@ -63,7 +63,7 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
         ID3D10Blob_GetBufferPointer(bytecode),ID3D10Blob_GetBufferSize(bytecode),
         decl,6,&stride,1,D3D11_SO_NO_RASTERIZED_STREAM,NULL,&stream);
     ID3D11Buffer *output=NULL,*staging=NULL;
-    uint32_t sentinel[FUT_IMMEDIATE_CAPACITY*sizeof(FutNativePosition)/sizeof(uint32_t)];
+    uint32_t sentinel[FUT_IMMEDIATE_DRAW_CAPACITY*sizeof(FutNativePosition)/sizeof(uint32_t)];
     for(unsigned i=0;i<sizeof(sentinel)/sizeof(*sentinel);++i) sentinel[i]=0x7FC00000;
     D3D11_BUFFER_DESC desc={0};desc.ByteWidth=native->count*stride;
     desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_STREAM_OUTPUT;
@@ -102,7 +102,7 @@ done:
 }
 unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
 {
-    if(!positions || !count || count>FUT_IMMEDIATE_CAPACITY || count%3) return 0;
+    if(!positions || !count || count>FUT_IMMEDIATE_DRAW_CAPACITY || count%3) return 0;
     unsigned mask=15;
     for(unsigned i=0;i<count;++i) {
         const FutNativePosition *p=&positions[i];
@@ -116,4 +116,22 @@ unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *posi
         }
     }
     return mask;
+}
+
+int fut_native_immediate_quincunx_coordinates(const FutNativePosition *p,unsigned count)
+{
+    if(!p || count!=3 || !(fut_native_immediate_constant_coordinates(p,count)&1)) return 0;
+    static const float screen[3][2]={{0,0},{2560,0},{0,1920}};
+    for(unsigned i=0;i<3;++i) {
+        float x=screen[i][0],y=screen[i][1];
+        /* The translated viewport inverse yields these captured one-ULP Y
+         * values. Admit those exact values, not an arbitrary tolerance. */
+        float observed_y=i==2?-0x1.bffffep+2f:0x1.fffffep-1f;
+        if(p[i].screen[0]!=x || p[i].screen[1]!=y || p[i].screen[2]!=0 ||
+            p[i].clip[0]!=x/320-1 ||
+            (p[i].clip[1]!=1-y/240 && p[i].clip[1]!=observed_y) || p[i].clip[2]!=0 ||
+            p[i].texture[0][0]!=2*x+.5f || p[i].texture[0][1]!=y ||
+            p[i].texture[0][2]!=0) return 0;
+    }
+    return 1;
 }

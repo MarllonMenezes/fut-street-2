@@ -11,6 +11,10 @@ extern int xbox_InvokeConnectedInterrupt(uint32_t bus);
 extern uint32_t xbox_GetConnectedInterrupt(uint32_t bus);
 extern void xbox_kernel_bridge_init(void);
 extern recomp_func_t recomp_lookup_kernel(uint32_t address);
+/* This isolated kernel-bridge test does not link generated title code. */
+void sub_0024B547(void)
+{
+}
 static HANDLE started,entered,release_callback;
 static uint32_t dpc,thunks,interrupt_object;
 static LONG calls,callback_bad;

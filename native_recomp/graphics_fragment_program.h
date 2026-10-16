@@ -3,7 +3,8 @@
 #include <stddef.h>
 #include <stdint.h>
 typedef struct {
-    uint32_t control, stage_program, final_words[2], final_factor[2];
+    uint32_t control, stage_program, dot_rgbmapping;
+    uint32_t final_words[2], final_factor[2];
     uint32_t color_input[8], alpha_input[8], color_output[8], alpha_output[8], factors[2][8];
     unsigned valid, color_input_valid, alpha_input_valid, color_output_valid, alpha_output_valid;
     unsigned factor_valid[2], final_factor_valid;

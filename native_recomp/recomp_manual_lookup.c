@@ -1,10 +1,16 @@
 #include "recomp_types.h"
+#include "recomp_funcs.h"
 
-/* XboxRecomp's generated output has no manual-override registry by default.
- * Until title-specific overrides are independently justified and added, make
- * that absence explicit instead of leaving the runtime's lookup unresolved. */
+/* Keep title-specific control-flow aliases exact and evidence-backed. The
+ * instruction at 0x0023A4C3 is a five-byte JMP to 0x0024B547; it changes
+ * neither guest stack nor registers, so resolving the thunk to the translated
+ * destination preserves the original call/return behavior. */
 recomp_func_t recomp_lookup_manual(uint32_t xbox_va)
 {
-    (void)xbox_va;
-    return NULL;
+    switch (xbox_va) {
+    case 0x0023A4C3u:
+        return sub_0024B547;
+    default:
+        return NULL;
+    }
 }

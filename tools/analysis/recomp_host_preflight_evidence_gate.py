@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 
-FORBIDDEN_ENVIRONMENT = ("RECOMP_AC97_READY", "RECOMP_PB_EXEC", "RECOMP_VBLANK")
+FORBIDDEN_ENVIRONMENT = (
+    "RECOMP_AC97_READY",
+    "RECOMP_AC97_RESET_ONLY",
+    "RECOMP_PB_EXEC",
+    "RECOMP_VBLANK",
+)
 COMMON_MARKERS = (
     "Loaded 11/11 sections",
     "xbox_MemoryLayoutInit: complete",

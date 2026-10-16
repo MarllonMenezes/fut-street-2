@@ -14,4 +14,8 @@ int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
  * Implements XY truncation to1/16 and inverse D3D viewport. No MSAA proof. */
 int fut_vertex_program_hlsl_screen(const uint32_t (*words)[4],size_t count,
     char *text,size_t capacity,size_t *length);
+/* Explicit two-pass coverage variant. VS/PS b4 must hold the same sample pass.
+ * Not suitable for the unshifted vertex-only coordinate proof. */
+int fut_vertex_program_hlsl_screen_aa2(const uint32_t (*words)[4],size_t count,
+    char *text,size_t capacity,size_t *length);
 #endif

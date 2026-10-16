@@ -21,24 +21,72 @@
 #include "graphics_native_immediate.h"
 #include "graphics_native_draw.h"
 #include "graphics_native_display.h"
+#include "graphics_native_vblank.h"
 #include "graphics_scanout.h"
+#include "graphics_native_scanout_dispatch.h"
 #include "guest_interrupt_gate.h"
 #include "graphics_vertex_program.h"
+#include "graphics_replay_trace.h"
+#include "graphics_experiment.h"
 
 static HANDLE backend_stop;
 static HANDLE backend_thread;
-/* Existing kernel bridge records the connected title ISR object. Reading its
- * context is diagnostic only, not permission to invoke its callback ABI. */
+/* The software notification callback is invoked only through the scoped
+ * recompilation dispatcher below, after its exact target is validated. */
 extern uint32_t xbox_GetConnectedInterrupt(uint32_t vector);
+extern int xbox_kernel_post_host_vblank(void);
+
+static HRESULT native_vblank_start_for_device(ID3D11Device *device,
+                                               FutNativeVBlank *clock)
+{
+    IDXGIDevice *dxgi_device = NULL;
+    IDXGIAdapter *adapter = NULL;
+    HRESULT hr = ID3D11Device_QueryInterface(device, &IID_IDXGIDevice,
+                                              (void **)&dxgi_device);
+    if (FAILED(hr))
+        return hr;
+    hr = IDXGIDevice_GetAdapter(dxgi_device, &adapter);
+    IDXGIDevice_Release(dxgi_device);
+    if (FAILED(hr))
+        return hr;
+
+    HRESULT result = DXGI_ERROR_NOT_FOUND;
+    for (UINT index = 0; index < 16; ++index) {
+        IDXGIOutput *output = NULL;
+        hr = IDXGIAdapter_EnumOutputs(adapter, index, &output);
+        if (hr == DXGI_ERROR_NOT_FOUND)
+            break;
+        if (FAILED(hr)) {
+            result = hr;
+            break;
+        }
+        DXGI_OUTPUT_DESC desc;
+        hr = IDXGIOutput_GetDesc(output, &desc);
+        if (SUCCEEDED(hr) && desc.AttachedToDesktop)
+            result = fut_native_vblank_start(clock, output);
+        IDXGIOutput_Release(output);
+        if (SUCCEEDED(result))
+            break;
+    }
+    IDXGIAdapter_Release(adapter);
+    return result;
+}
 
 static int read_guest(uint32_t va, void *data, size_t size)
 {
     SIZE_T copied = 0;
     if (size > UINT32_MAX || va > UINT32_MAX - size)
         return 0;
-    return ReadProcessMemory(GetCurrentProcess(),
+    if(fut_trace_file && fut_trace_active && fut_trace_replaying)
+        return (int)fut_trace_event(FUT_TRACE_READ,va,0,0,data,(uint32_t)size);
+    int ok=ReadProcessMemory(GetCurrentProcess(),
         (const void *)((uintptr_t)xbox_GetMemoryOffset() + va), data, size, &copied)
         && copied == size;
+    if(fut_trace_file && fut_trace_active) {
+        if(!ok) memset(data,0,size);
+        fut_trace_event(FUT_TRACE_READ,va,0,ok,data,(uint32_t)size);
+    }
+    return ok;
 }
 
 static int read32(uint32_t va, uint32_t *value)
@@ -49,14 +97,28 @@ static int read32(uint32_t va, uint32_t *value)
 static int write32(uint32_t va, uint32_t value)
 {
     SIZE_T written = 0;
-    return WriteProcessMemory(GetCurrentProcess(),
+    if(fut_trace_file && fut_trace_active && fut_trace_replaying)
+        return (int)fut_trace_event(FUT_TRACE_WRITE,va,0,0,&value,4);
+    int ok=WriteProcessMemory(GetCurrentProcess(),
         (void *)((uintptr_t)xbox_GetMemoryOffset() + va), &value, sizeof(value), &written)
         && written == sizeof(value);
+    if(fut_trace_file && fut_trace_active) fut_trace_event(FUT_TRACE_WRITE,va,0,ok,&value,4);
+    return ok;
+}
+
+static uint32_t native_connected_interrupt(uint32_t vector)
+{
+    if(fut_trace_file && fut_trace_active && fut_trace_replaying)
+        return fut_trace_event(FUT_TRACE_INTERRUPT,vector,0,0,NULL,0);
+    uint32_t result=xbox_GetConnectedInterrupt(vector);
+    if(fut_trace_file && fut_trace_active)
+        fut_trace_event(FUT_TRACE_INTERRUPT,vector,0,result,NULL,0);
+    return result;
 }
 
 static int native_scanout_context(uint32_t *address,uint32_t words[119])
 {
-    uint32_t object=xbox_GetConnectedInterrupt(3),context=0;
+    uint32_t object=native_connected_interrupt(3),context=0;
     uint32_t snapshot[119];
     if(!address || !words || !object || object>UINT32_MAX-8 ||
         !read32(object+4,&context) || !context || (context&3) ||
@@ -79,7 +141,7 @@ static void native_scanout_diagnostic(uint32_t notification)
         w[0x174/4],w[0x178/4],w[0x17C/4],w[0x180/4],w[0x184/4],w[0x188/4]);
     fprintf(stderr,"[GRAPHICS] scanout interrupt snapshot: enabled=%u servicing=%u dpc_routine=%08X dpc_context=%08X flags=%08X vblank_callback=%08X\n",
         w[0xA0/4],w[0xA4/4],w[0x90/4],w[0x94/4],w[0x1B4/4],w[0x190/4]);
-    uint32_t object=xbox_GetConnectedInterrupt(3),irq[5];
+    uint32_t object=native_connected_interrupt(3),irq[5];
     if(object && read_guest(object,irq,sizeof(irq)))
         fprintf(stderr,"[GRAPHICS] registered interrupt object: address=%08X routine=%08X context=%08X bus=%u irql=%u flags=%08X\n",
             object,irq[0],irq[1],irq[2],irq[3],irq[4]);
@@ -91,8 +153,13 @@ static int object_memory_write(void *context, uint32_t address, const void *data
     (void)context;
     SIZE_T written = 0;
     if (address < 0x80000000u || address >= 0x84000000u || size > 0x84000000u - address) return 0;
-    return WriteProcessMemory(GetCurrentProcess(), (void *)((uintptr_t)xbox_GetMemoryOffset() + address),
+    if(fut_trace_file && fut_trace_active && fut_trace_replaying)
+        return (int)fut_trace_event(FUT_TRACE_WRITE,address,0,0,(void *)data,(uint32_t)size);
+    int ok=WriteProcessMemory(GetCurrentProcess(), (void *)((uintptr_t)xbox_GetMemoryOffset() + address),
         data, size, &written) && written == size;
+    if(fut_trace_file && fut_trace_active)
+        fut_trace_event(FUT_TRACE_WRITE,address,0,ok,(void *)data,(uint32_t)size);
+    return ok;
 }
 
 static void fail_backend(const char *reason)
@@ -108,6 +175,8 @@ typedef struct {
     FutNativeConstants native_constants;
     ID3D11VertexShader *vertex_shader;
     ID3DBlob *vertex_bytecode;
+    ID3D11VertexShader *aa2_vertex_shader;
+    ID3DBlob *aa2_vertex_bytecode;
     FutNativeVertexSurface vertex_surface;
     ID3D11PixelShader *pixel_shader;
     ID3DBlob *pixel_bytecode;
@@ -121,14 +190,142 @@ typedef struct {
     FutGraphicsImmediate immediate;
     FutNativeImmediate native_immediate;
     FutNativeDisplay diagnostic_preview;
+    FutNativeDisplay scanout_display;
+    FutNativeVBlank host_vblank;
+    uint64_t host_vblank_sequence;
+    FutGraphicsScanoutEnqueue scanout_plan;
+    FutNativeScanoutDispatch scanout_dispatch;
+    FutNativeDisplayReceipt scanout_receipt;
+    ULONGLONG scanout_receipt_report_at;
+    uint32_t scanout_context;
+    uint32_t scanout_before,scanout_disabled;
+    int scanout_pending,scanout_received;
+    int scanout_callback_pending;
     int diagnostic_preview_enabled;
     int diagnostic_preview_submitted;
     ULONGLONG scanout_idle_report;
     uint32_t deferred_scanout_notification;
     unsigned constant_coordinates;
+    int quincunx_coordinates;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
+
+static int native_observe_vblank(NativeGraphicsState *state)
+{
+    if(!state->host_vblank.state) return 1;
+    FutNativeVBlankReceipt receipt;
+    HRESULT hr=fut_native_vblank_wait(&state->host_vblank,state->host_vblank_sequence,
+        2,backend_stop,&receipt);
+    if(hr==S_OK) {
+        state->host_vblank_sequence=receipt.sequence;
+        return xbox_kernel_post_host_vblank();
+    }
+    return hr==HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr==E_ABORT;
+}
+
+static int native_scanout_service(NativeGraphicsState *state)
+{
+    if(!state->scanout_pending) return 1;
+    if(!state->scanout_received) {
+        HRESULT hr=fut_native_display_poll(&state->scanout_display,&state->scanout_receipt);
+        if(hr==S_FALSE) {
+            ULONGLONG now=GetTickCount64();
+            if(state->scanout_receipt_report_at && now>=state->scanout_receipt_report_at) {
+                DXGI_FRAME_STATISTICS stats={0};
+                HRESULT stats_hr=IDXGISwapChain2_GetFrameStatistics(state->scanout_display.swap,&stats);
+                fprintf(stderr,"[GRAPHICS] pending DXGI receipt diagnostic: target=%u count_valid=%d stats_hr=%08lX present=%u sync=%u qpc=%lld host_vblank_sequence=%llu; no receipt accepted\n",
+                    state->scanout_display.target_present,state->scanout_display.count_valid,stats_hr,
+                    stats.PresentCount,stats.SyncRefreshCount,(long long)stats.SyncQPCTime.QuadPart,
+                    (unsigned long long)state->host_vblank_sequence);
+                if(getenv("RECOMP_DISPLAY_DIAG")) {
+                    HWND window=state->scanout_display.window;RECT rect={0};
+                    int rect_ok=GetWindowRect(window,&rect);
+                    HRESULT test=IDXGISwapChain2_Present(state->scanout_display.swap,0,DXGI_PRESENT_TEST);
+                    fprintf(stderr,"[DISPLAY-DIAG] test=%08lX visible=%d iconic=%d rect_ok=%d rect=%ld,%ld,%ld,%ld\n",
+                        test,IsWindowVisible(window),IsIconic(window),rect_ok,
+                        rect.left,rect.top,rect.right,rect.bottom);
+                }
+                state->scanout_receipt_report_at=now+1000;
+            }
+            return 1;
+        }
+        if(hr!=S_OK) {
+            fprintf(stderr,"[GRAPHICS] scanout receipt failed: HRESULT=%08lX; no flip-read advance\n",hr);
+            return 0;
+        }
+        state->scanout_received=1;
+        state->scanout_receipt_report_at=0;
+    }
+    if(!fut_guest_interrupt_try_enter()) return 1;
+    uint32_t address,w[FUT_SCANOUT_CONTEXT_WORDS],physical,title_physical,increment,gamma_pending;
+    if(state->scanout_callback_pending) {
+        uint32_t callback_tsc_before=0,callback_tsc_after=0;
+        FutGraphicsScanoutEnqueue plan;
+        if(!native_scanout_context(&address,w) || address!=state->scanout_context ||
+            !fut_graphics_scanout_enqueue_plan(w,state->deferred_scanout_notification,&plan) ||
+            plan.physical_address!=state->scanout_plan.physical_address ||
+            plan.slot!=state->scanout_plan.slot || plan.next_enqueue!=state->scanout_plan.next_enqueue ||
+            w[0x1CC/4]!=w[0x1BC/4] ||
+            fut_native_scanout_dispatch_preflight(&state->scanout_dispatch,address,
+                state->deferred_scanout_notification,0x00191340u)!=FUT_SCANOUT_DISPATCH_OK) {
+            fut_guest_interrupt_leave();
+            fputs("[GRAPHICS] callback scanout state changed after its DXGI receipt; no callback replay\n",stderr);
+            return 0;
+        }
+        FutNativeScanoutDispatchResult call_result=fut_native_scanout_dispatch_call(&state->scanout_dispatch,address,
+            state->deferred_scanout_notification,0x00191340u,
+            &callback_tsc_before,&callback_tsc_after);
+        int snapshot_ok=native_scanout_context(&address,w) && address==state->scanout_context;
+        int handler_ok=call_result==FUT_SCANOUT_DISPATCH_OK && snapshot_ok &&
+            w[0x1CC/4]==plan.next_enqueue && w[0x1BC/4]==state->scanout_plan.next_enqueue-1u &&
+            w[0x1C4/4]==plan.next_deadline && w[0x1C8/4]==plan.deadline &&
+            w[0x18C/4]==0x00191340u && w[0x174/4+plan.slot*3u]==1 &&
+            w[0x178/4+plan.slot*3u]==plan.deadline &&
+            w[0x17C/4+plan.slot*3u]==plan.physical_address;
+        if(!handler_ok) {
+            if(snapshot_ok) fprintf(stderr,"[GRAPHICS] callback effect diagnostic: result=%d ordinal=%u/%u slot=%u/%u deadline=%u/%u next=%u/%u callback=%08X physical=%08X/%08X current=%u\n",
+                call_result,w[0x1CC/4],w[0x1BC/4],plan.slot,
+                w[0x174/4+plan.slot*3u],plan.deadline,w[0x178/4+plan.slot*3u],
+                plan.next_deadline,w[0x1C4/4],w[0x18C/4],
+                w[0x17C/4+plan.slot*3u],plan.physical_address,w[0x1C0/4]);
+            else fprintf(stderr,"[GRAPHICS] callback effect diagnostic: result=%d context snapshot unavailable\n",call_result);
+            fut_guest_interrupt_leave();
+            fputs("[GRAPHICS] original scanout handler did not produce the expected enqueue; no replay\n",stderr);
+            return 0;
+        }
+        state->scanout_plan=plan;state->scanout_callback_pending=0;
+        fprintf(stderr,"[GRAPHICS] original recompilation callback ran after DXGI receipt: TSC=%08X->%08X; original enqueue=%u, awaiting next ISR retirement\n",
+            callback_tsc_before,callback_tsc_after,plan.next_enqueue);
+    }
+    int valid=native_scanout_context(&address,w) && address==state->scanout_context &&
+        read32(0xFD600800u,&physical) && read32(0x002A1128u,&title_physical) &&
+        read32(0xFD40071Cu,&increment) &&
+        read32(address+0x7DC+state->scanout_plan.slot*4,&gamma_pending);
+    if(valid && !gamma_pending && fut_graphics_scanout_retirement_matches(w,&state->scanout_plan,
+        state->scanout_received,physical,state->scanout_before,state->scanout_disabled,title_physical,increment)) {
+        if(fut_graphics_flip_available(&state->kelvin)<0 ||
+            !write32(0xFD40071Cu,increment&~2u)) {
+            fut_guest_interrupt_leave();return 0;
+        }
+        state->kelvin.flip_read=(state->kelvin.flip_read+1u)%state->kelvin.flip_modulo;
+        fprintf(stderr,"[GRAPHICS] original queued surface presented and ISR retirement matched: physical=%08X PCRTC=%08X disabled=%u ordinal=%u DXGI_present=%u refresh=%u/%u QPC=%lld; flip read=%u write=%u modulo=%u; host timing approximation\n",
+            title_physical,physical,state->scanout_disabled,state->scanout_plan.next_enqueue,state->scanout_receipt.present_count,
+            state->scanout_receipt.present_refresh,state->scanout_receipt.sync_refresh,
+            (long long)state->scanout_receipt.sync_qpc.QuadPart,state->kelvin.flip_read,
+            state->kelvin.flip_write,state->kelvin.flip_modulo);
+        state->scanout_pending=state->scanout_received=0;
+        state->scanout_idle_report=0;
+    }
+    else if(valid && state->scanout_idle_report && GetTickCount64()>=state->scanout_idle_report) {
+        fprintf(stderr,"[GRAPHICS] scanout correlation pending: receipt=%d ordinal=%u/%u expected=%u disabled=%u/%u gamma_pending=%u PCRTC=%08X before=%08X title=%08X expected=%08X increment=%08X\n",
+            state->scanout_received,w[0x1CC/4],w[0x1BC/4],state->scanout_plan.next_enqueue,
+            w[0x1B8/4],state->scanout_disabled,gamma_pending,physical,state->scanout_before,
+            title_physical,state->scanout_plan.physical_address,increment);
+        state->scanout_idle_report=0;
+    }
+    fut_guest_interrupt_leave();return valid;
+}
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
 
@@ -141,7 +338,7 @@ static void native_preview_log_source_stats(const FutGraphicsSurfacePlan *plan)
     uint64_t nonblack = 0, nonzero_alpha = 0;
     uint32_t first = 0, center = 0, last = 0;
 
-    if (plan->width != 640 || plan->height != 480 ||
+    if ((plan->width != 640 && !(fut_graphics_aa2_approximation_enabled() && plan->width==1280 && plan->samples==2)) || plan->height != 480 ||
         plan->color_pitch < row_bytes || total_bytes > 16u * 1024u * 1024u) {
         fputs("[GRAPHICS] diagnostic preview source stats unavailable: invalid bounds\n", stderr);
         return;
@@ -301,6 +498,7 @@ static int native_prepare_textures(NativeGraphicsState *state)
         if (!(texture->control0 & 0x40000000u)) {
             state->textures[stage].sampling_ready=0;
             state->textures[stage].zero_rgb_candidate=0;
+            state->textures[stage].quincunx_experiment=0;
             ID3D11ShaderResourceView *empty_view=NULL;
             ID3D11SamplerState *empty_sampler=NULL;
             ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&empty_view);
@@ -334,6 +532,11 @@ static int native_prepare_textures(NativeGraphicsState *state)
         if(FAILED(hr) && state->immediate.ready && !state->immediate.active &&
             (state->constant_coordinates&(1u<<stage)))
             hr=fut_native_texture_zero_rgb_candidate(&state->textures[stage],texture,1);
+        if(FAILED(hr) && stage==0 && state->quincunx_coordinates &&
+            state->immediate.ready && !state->immediate.active &&
+            state->native_surfaces.plan.samples==1 &&
+            state->native_surfaces.plan.width==640 && state->native_surfaces.plan.height==480)
+            hr=fut_native_texture_quincunx_experiment(&state->textures[stage],texture,1);
         if (FAILED(hr)) {
             fprintf(stderr,"[GRAPHICS] texture sampling translation pending: stage=%u filter=%08X address=%08X control=%08X HRESULT=%08lX\n",
                 stage,texture->filter,texture->address,texture->control0,hr);
@@ -346,6 +549,8 @@ static int native_prepare_textures(NativeGraphicsState *state)
             fprintf(stderr,"[GRAPHICS] zero-RGB snapshot candidate: stage=%u finite unit-q coordinates proven; alpha/residual sample still unimplemented\n",stage);
             continue;
         }
+        if(state->textures[stage].quincunx_experiment)
+            fputs("[GRAPHICS] AUTHORIZED_QUINCUNX_APPROXIMATION: five taps center=1/2 corners=1/8, parity-preserving edge clamp, identity color space; 1280x480->640x480 only; no NV2A precision/edge validation\n",stderr);
         ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&state->textures[stage].view);
         ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&state->textures[stage].sampler);
     }
@@ -371,6 +576,7 @@ static int native_finish(NativeGraphicsState *state)
 static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t notification)
 {
     uint32_t address=0,w[FUT_SCANOUT_CONTEXT_WORDS],again[FUT_SCANOUT_CONTEXT_WORDS],checked=0;
+    uint32_t callback;
     FutGraphicsScanoutEnqueue plan;
     if(!state->native_surfaces.valid ||
         state->native_surfaces.plan.samples!=1 || !native_scanout_context(&address,w) ||
@@ -379,26 +585,104 @@ static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t not
         (plan.physical_address|0x80000000u)!=state->native_surfaces.plan.color_address) {
         native_scanout_diagnostic(notification);return 0;
     }
+    callback=w[0x18C/4];
+    if(state->host_vblank.state) {
+        uint32_t gamma_pending=0;
+        if(state->scanout_pending || w[0x1CC/4]!=w[0x1BC/4] || w[0x1B8/4]>1 ||
+            !read32(0xFD600800u,&state->scanout_before) ||
+            !read32(address+0x7DC+plan.slot*4,&gamma_pending) || gamma_pending>1) {
+            fprintf(stderr,"[GRAPHICS] scanout presentation domain refused: pending=%d enqueue=%u retire=%u disabled=%u gamma_pending=%u\n",
+                state->scanout_pending,w[0x1CC/4],w[0x1BC/4],w[0x1B8/4],gamma_pending);
+            return 0;
+        }
+        /* sub_0029613D uploads three 256-byte DAC ramps, not an overlay.
+         * Only identity is representable by the current pixel-copy display. */
+        uint8_t ramp[768];
+        if(!read_guest(address+0x1DC+plan.slot*768,ramp,sizeof(ramp))) return 0;
+        for(unsigned i=0;i<sizeof(ramp);++i) if(ramp[i]!=(uint8_t)i) {
+            fprintf(stderr,"[GRAPHICS] nonidentity scanout gamma unsupported: offset=%u value=%u\n",i,ramp[i]);
+            return 0;
+        }
+    }
     /* Gate excludes concurrent CLI-protected guest work and future host
      * interrupt delivery. Re-read also detects changes from nonparticipants;
      * it does not make unprotected guest writes safe. */
     if(!native_scanout_context(&checked,again) || checked!=address || memcmp(w,again,sizeof(w))) return 0;
-    unsigned slot_offset=0x174+plan.slot*12;
-    if(!write32(address+0x1C4,plan.next_deadline) || !write32(address+0x1C8,plan.deadline) ||
-        !write32(address+slot_offset,1) || !write32(address+slot_offset+4,plan.deadline) ||
-        !write32(address+slot_offset+8,plan.physical_address) ||
-        !write32(address+0x1CC,plan.next_enqueue)) return 0;
-    fprintf(stderr,"[GRAPHICS] deferred scanout enqueued in title context: slot=%u physical=%08X deadline=%u; no presentation/retirement/flip-read/VBlank\n",
-        plan.slot,plan.physical_address,plan.deadline);
+    if(!callback) {
+        /* Keep the already exercised callback-free black-surface path. */
+        unsigned slot_offset=0x174+plan.slot*12;
+        if(!write32(address+0x1C4,plan.next_deadline) || !write32(address+0x1C8,plan.deadline) ||
+            !write32(address+slot_offset,1) || !write32(address+slot_offset+4,plan.deadline) ||
+            !write32(address+slot_offset+8,plan.physical_address) ||
+            !write32(address+0x1CC,plan.next_enqueue)) return 0;
+        if(!native_scanout_context(&checked,again) || checked!=address ||
+            again[0x1CC/4]!=plan.next_enqueue || again[0x1BC/4]!=w[0x1BC/4] ||
+            again[0x1C4/4]!=plan.next_deadline || again[0x1C8/4]!=plan.deadline ||
+            again[0x18C/4]!=0 || again[0x174/4+plan.slot*3u]!=1 ||
+            again[0x178/4+plan.slot*3u]!=plan.deadline ||
+            again[0x17C/4+plan.slot*3u]!=plan.physical_address) {
+            fputs("[GRAPHICS] callback-free scanout enqueue diverged from its plan\n",stderr);
+            return 0;
+        }
+        fprintf(stderr,"[GRAPHICS] callback-free original scanout enqueued: slot=%u physical=%08X deadline=%u; awaiting original ISR retirement\n",
+            plan.slot,plan.physical_address,plan.deadline);
+    } else {
+        if(fut_trace_file && fut_trace_active) {
+            fputs("[GRAPHICS] original callback dispatch is unavailable during graphics trace/replay\n",stderr);
+            return 0;
+        }
+        FutNativeScanoutDispatchResult dispatched=fut_native_scanout_dispatch_preflight(
+            &state->scanout_dispatch,address,notification,0x00191340u);
+        if(dispatched!=FUT_SCANOUT_DISPATCH_OK) {
+            fprintf(stderr,"[GRAPHICS] original scanout callback dispatch refused: result=%d; queue mutation not accepted\n",dispatched);
+            return 0;
+        }
+        fprintf(stderr,"[GRAPHICS] original callback 00191340 validated; waiting for DXGI receipt before executing its enqueue/retirement handler\n");
+    }
     state->deferred_scanout_notification=notification;
     state->scanout_idle_report=GetTickCount64()+1000;
+    if(state->host_vblank.state) {
+        state->scanout_plan=plan;state->scanout_context=address;
+        state->scanout_disabled=w[0x1B8/4];
+        state->scanout_callback_pending=callback!=0;
+        state->scanout_receipt_report_at=GetTickCount64()+1000;
+        state->scanout_pending=1;state->scanout_received=0;
+    }
     return 1;
 }
 
 static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notification)
 {
     /* Never wait for GPU completion while holding the guest interrupt gate. */
+    if(!state->host_vblank.state) {
+        fputs("[GRAPHICS] callback scanout requires the observed host-output receipt path\n",stderr);
+        return 0;
+    }
     if(!native_finish(state)) return 0;
+    if(state->host_vblank.state) {
+        unsigned interval=(notification>>5)&7u;
+        if(state->scanout_pending || !interval || interval>4 ||
+            !state->native_surfaces.valid || state->native_surfaces.plan.samples!=1) {
+            fprintf(stderr,"[GRAPHICS] scanout stage domain refused: notification=%08X interval=%u pending=%d samples=%u\n",
+                notification,interval,state->scanout_pending,state->native_surfaces.plan.samples);return 0;
+        }
+        HRESULT hr=S_OK;
+        if(!state->scanout_display.swap)
+            hr=fut_native_display_open(&state->scanout_display,state->device,
+                state->native_surfaces.plan.width,state->native_surfaces.plan.height,1);
+        if(hr==S_OK) hr=fut_native_display_stage(&state->scanout_display,state->context,
+            state->native_surfaces.color,2000,backend_stop);
+        if(hr!=S_OK) {
+            fprintf(stderr,"[GRAPHICS] scanout staging failed: HRESULT=%08lX\n",hr);return 0;
+        }
+    }
+    uint32_t observed_context,observed_words[FUT_SCANOUT_CONTEXT_WORDS];
+    if(native_scanout_context(&observed_context,observed_words) &&
+        observed_words[0x18C/4]==0x00191340u &&
+        !fut_native_scanout_dispatch_init(&state->scanout_dispatch)) {
+        fputs("[GRAPHICS] original scanout guest context unavailable (private stack/TIB)\n",stderr);
+        return 0;
+    }
     ULONGLONG deadline=GetTickCount64()+2000;
     for(;;) {
         if(backend_stop && WaitForSingleObject(backend_stop,0)!=WAIT_TIMEOUT) return 0;
@@ -410,7 +694,19 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
         Sleep(1);
     }
     int result=native_scanout_enqueue_locked(state,notification);
-    fut_guest_interrupt_leave();return result;
+    fut_guest_interrupt_leave();
+    if(result && state->host_vblank.state) {
+        HRESULT hr=fut_native_display_submit(&state->scanout_display,(notification>>5)&7u);
+        if(hr!=S_OK) {
+            fprintf(stderr,"[GRAPHICS] scanout submit failed: HRESULT=%08lX; no flip-read advance\n",hr);
+            return 0;
+        }
+        if(state->scanout_callback_pending)
+            fputs("[GRAPHICS] resolved surface submitted to DXGI; original callback/enqueue waits for its matching receipt\n",stderr);
+        else
+            fputs("[GRAPHICS] original queued surface submitted to DXGI; matching receipt and original ISR retirement still required\n",stderr);
+    }
+    return result;
 }
 
 static int native_prepare_fragment(NativeGraphicsState *state)
@@ -436,34 +732,69 @@ static int object_memory_read(void *context, uint32_t address, void *data, size_
     return read_guest(address, data, size);
 }
 
+static int native_prepare_aa2_programs(NativeGraphicsState *state)
+{
+    if(!state->constant_coordinates) return 0;
+    unsigned first=state->kelvin.program_start,count=0;
+    while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
+        ++count;if(state->kelvin.program[first+count-1][3]&1u) break;
+    }
+    ID3D11VertexShader *vs=NULL;ID3DBlob *vblob=NULL;
+    ID3D11PixelShader *ps=NULL;ID3DBlob *pblob=NULL;
+    HRESULT hr=fut_native_vertex_compile_screen_aa2(state->device,state->kelvin.program+first,count,&vs,&vblob);
+    if(SUCCEEDED(hr)) hr=fut_native_fragment_compile_aa2_affine(state->device,&state->kelvin,state->textures,1,&ps,&pblob);
+    if(SUCCEEDED(hr)) hr=fut_native_fragment_linkage(vblob,pblob);
+    if(FAILED(hr)) {
+        if(vs) ID3D11VertexShader_Release(vs);if(vblob) ID3D10Blob_Release(vblob);
+        if(ps) ID3D11PixelShader_Release(ps);if(pblob) ID3D10Blob_Release(pblob);
+        fprintf(stderr,"[GRAPHICS] AA2 shader preparation failed: HRESULT=%08lX\n",hr);return 0;
+    }
+    if(state->aa2_vertex_shader) ID3D11VertexShader_Release(state->aa2_vertex_shader);
+    if(state->aa2_vertex_bytecode) ID3D10Blob_Release(state->aa2_vertex_bytecode);
+    if(state->pixel_shader) ID3D11PixelShader_Release(state->pixel_shader);
+    if(state->pixel_bytecode) ID3D10Blob_Release(state->pixel_bytecode);
+    state->aa2_vertex_shader=vs;state->aa2_vertex_bytecode=vblob;
+    state->pixel_shader=ps;state->pixel_bytecode=pblob;
+    state->kelvin.fragment.dirty=0;
+    return 1;
+}
+
 static int native_prepare_draw(NativeGraphicsState *state)
 {
     if (!native_prepare_surfaces(state) || !native_prepare_textures(state)) return 0;
+    int aa2=state->native_surfaces.plan.samples==2;
     unsigned candidates=0;
     for(unsigned stage=0;stage<4;++stage) if(state->textures[stage].zero_rgb_candidate) candidates|=1u<<stage;
     if(candidates) {
         if(!native_prepare_fragment(state)) return 0;
         fprintf(stderr,"[GRAPHICS] zero-RGB specialization compiled: stages=%X; no candidate texture/alpha resources remain; generic quincunx unsupported\n",candidates);
     }
-    if (!fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan)) {
-        fprintf(stderr,"[GRAPHICS] original draw blocked: DXT1-noise/RDI/Zcull state outside translated domain; noise_valid=%u dxt1_noise=%08X RDI=%08X:%08X,%08X:%08X registers_valid=%X reg400094=%08X reg400B80=%08X\n",
+    if (!(aa2?fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
+        fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan))) {
+        fprintf(stderr,"[GRAPHICS] original draw blocked: software graphics controls outside restricted translated domain; noise_valid=%u dxt1_noise=%08X RDI=%08X:%08X,%08X:%08X pgraph_registers_valid=%X reg400094=%08X reg400B80=%08X\n",
             state->software.noise_valid,state->software.dxt1_noise,state->software.rdi_index[0],state->software.rdi_value[0],
             state->software.rdi_index[1],state->software.rdi_value[1],state->software.register_valid,
             state->software.register_words[0],state->software.register_words[1]);
-        fprintf(stderr,"[GRAPHICS] blocked draw domain: depth=%u stencil=%u depth_write=%u compress_depth=%u samples=%u format=%08X control0=%08X dither=%u\n",
+        fprintf(stderr,"[GRAPHICS] blocked draw domain: depth=%u stencil=%u depth_write=%u compress_depth=%u samples=%u format=%08X control0=%08X dither=%u anti_alias_control=%08X\n",
             state->kelvin.depth_test,state->kelvin.stencil_test,state->kelvin.draw.depth_write,
             state->kelvin.compress_depth,state->native_surfaces.plan.samples,state->surfaces.format,
-            state->kelvin.control0,state->kelvin.draw.dither);
+            state->kelvin.control0,state->kelvin.draw.dither,state->kelvin.anti_aliasing_control);
+        FutGraphicsRopControls rop;
+        if(fut_graphics_software_rop_controls(&state->software,&rop))
+            fprintf(stderr,"[GRAPHICS] decoded XDK ROP controls: compare_always_read=%u depth_read=%u dont_cull_uncompressed=%u baseline=%08X/%08X; other baseline effects unmodeled\n",
+                rop.compare_always_read,rop.depth_read,rop.dont_cull_uncompressed,rop.baseline[0],rop.baseline[1]);
         return 0;
     }
-    if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,
-        "[GRAPHICS] known DXT1-noise/Zcull controls admitted for linearARGB8/no-depth/no-stencil/single-sample draw only\n");
+    if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
+        "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
+        "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");
     if ((state->kelvin.program_mode & 3u)!=2u) {
         fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
         return 0;
     }
-    if (!native_prepare_vertex(state) || (!candidates && !native_prepare_fragment(state))) return 0;
-    HRESULT linkage=fut_native_fragment_linkage(state->vertex_bytecode,state->pixel_bytecode);
+    if (!native_prepare_vertex(state) || (aa2?!native_prepare_aa2_programs(state):
+        (!candidates && !native_prepare_fragment(state)))) return 0;
+    HRESULT linkage=fut_native_fragment_linkage(aa2?state->aa2_vertex_bytecode:state->vertex_bytecode,state->pixel_bytecode);
     if(FAILED(linkage)) {
         fprintf(stderr,"[GRAPHICS] VS/PS compiled signature mismatch: HRESULT=%08lX; no rasterized draw\n",linkage);
         return 0;
@@ -485,7 +816,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
         return 0;
     }
     state->kelvin.draw.dirty=0;
-    if(state->kelvin.draw.dither) fprintf(stderr,
+    if(state->kelvin.draw.dither) fprintf(stderr,aa2?
+        "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: ARGB8 dither uses host UNORM conversion without added noise; no NV2A hardware validation\n":
         "[GRAPHICS] ACCEPTED_APPROXIMATION: ARGB8 single-sample dither uses host UNORM conversion without added noise; no NV2A hardware validation\n");
     return 1;
 }
@@ -493,6 +825,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
 static int native_prepare_immediate(NativeGraphicsState *state)
 {
     state->constant_coordinates=0;
+    state->quincunx_coordinates=0;
     if(!native_prepare_surfaces(state)) return 0;
     HRESULT hr=fut_native_vertex_surface_prepare(&state->vertex_surface,state->device,state->context,
         &state->native_surfaces.plan);
@@ -520,19 +853,26 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     if(!fut_native_constants_finish(&state->native_constants,
         state->kelvin.constants_dirty?state->kelvin.constants:NULL,2000,backend_stop)) return 0;
     state->kelvin.constants_dirty=0;
-    FutNativePosition positions[FUT_IMMEDIATE_CAPACITY];
+    FutNativePosition positions[FUT_IMMEDIATE_DRAW_CAPACITY];
     hr=fut_native_immediate_probe_positions(&state->native_immediate,state->device,state->context,
-        state->vertex_shader,state->vertex_bytecode,&state->native_constants,positions,FUT_IMMEDIATE_CAPACITY,2000,backend_stop);
+        state->vertex_shader,state->vertex_bytecode,&state->native_constants,positions,FUT_IMMEDIATE_DRAW_CAPACITY,2000,backend_stop);
     if(FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] vertex-only execution/readback failed: HRESULT=%08lX\n",hr);return 0;
     }
     state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
+    state->quincunx_coordinates=fut_native_immediate_quincunx_coordinates(positions,state->native_immediate.count);
     fprintf(stderr,"[GRAPHICS] original vertex program executed with no rasterized stream: vertices=%u; no pixels/submission completion\n",
         state->native_immediate.count);
     for(unsigned i=0;i<state->native_immediate.count && i<3;++i) fprintf(stderr,
         "[GRAPHICS] vertex%u screen=(%g,%g,%g,%g) clip=(%g,%g,%g,%g)\n",i,
         positions[i].screen[0],positions[i].screen[1],positions[i].screen[2],positions[i].screen[3],
         positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3]);
+    if(state->kelvin.textures[0].filter==0x04072000u)
+        for(unsigned i=0;i<state->native_immediate.count && i<3;++i)
+            fprintf(stderr,"[GRAPHICS] convolution coordinate probe vertex%u t0=(%g,%g,%g,%g) certificate=%d clip_exact=(%a,%a,%a,%a)\n",i,
+                positions[i].texture[0][0],positions[i].texture[0][1],
+                positions[i].texture[0][2],positions[i].texture[0][3],state->quincunx_coordinates,
+                positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3]);
     return 1;
 }
 
@@ -543,7 +883,9 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
     /* Only the observed attribute form is supported inside a primitive.
      * Reject before setters/binding mutation; no stale-state draw snapshots. */
     if (state->immediate.ready || (state->immediate.active &&
-        (subchannel!=0 || (method!=0x17FCu && (method<0x1880u || method>=0x1900u))))) {
+        (subchannel!=0 || (method!=0x17FCu && (method<0x1518u || method>0x1524u) &&
+            (method<0x1880u || method>=0x1900u) &&
+            (method<0x1940u || method>=0x1980u))))) {
         fprintf(stderr,"[GRAPHICS] command refused inside/pending immediate primitive: sub=%u method=%04X\n",subchannel,method);
         return 0;
     }
@@ -587,12 +929,19 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
-        if (subchannel==0 && (method==0x17FCu || (method>=0x1880u && method<0x1900u))) {
+        if (subchannel==0 && (method==0x17FCu ||
+            (method>=0x1518u && method<=0x1524u) ||
+            (method>=0x1880u && method<0x1900u))) {
             FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);
             if(status==FUT_IMMEDIATE_APPLIED) return 1;
             if(status!=FUT_IMMEDIATE_READY || !native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
             unsigned count=state->immediate.count;
-            HRESULT hr=fut_native_draw_immediate(&state->native_immediate,&state->immediate,
+            HRESULT hr;
+            if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
+                &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
+                &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,state->constant_coordinates!=0);
+            else hr=fut_native_draw_immediate(&state->native_immediate,&state->immediate,
                 &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
                 state->device,state->context,state->vertex_shader,state->pixel_shader,
                 &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop);
@@ -604,6 +953,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
                 count,(unsigned long long)state->native_immediate.ia_vertices,
                 (unsigned long long)state->native_immediate.ps_invocations);
+            if(state->native_surfaces.plan.samples==2 && fut_graphics_aa2_approximation_enabled())
+                native_preview_log_source_stats(&state->native_surfaces.plan);
+            if(state->textures[0].quincunx_experiment) {
+                fputs("[GRAPHICS] experimental original resolve completed; inspecting 640x480 output, not a presentation receipt\n",stderr);
+                native_preview_log_source_stats(&state->native_surfaces.plan);
+            }
             if (!native_preview_original_draw(state)) return 0;
             return 1;
         }
@@ -645,6 +1000,18 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         }
         if(method==0x130u) {
             int available=fut_graphics_flip_available(&state->kelvin);
+            if(!value && available==0 && state->scanout_pending) {
+                ULONGLONG deadline=GetTickCount64()+2000;
+                if(!native_finish(state)) return 0;
+                do {
+                    if((backend_stop && WaitForSingleObject(backend_stop,0)!=WAIT_TIMEOUT) ||
+                        !native_observe_vblank(state) || !native_scanout_service(state)) return 0;
+                    available=fut_graphics_flip_available(&state->kelvin);
+                    if(available!=0) break;
+                    Sleep(1);
+                } while(GetTickCount64()<deadline);
+                if(!available) native_scanout_diagnostic(state->deferred_scanout_notification);
+            }
             if(value || available!=1) {
                 fprintf(stderr,"[GRAPHICS] flip stall requires valid free slot/real presentation: read=%u write=%u modulo=%u valid=%u\n",
                     state->kelvin.flip_read,state->kelvin.flip_write,state->kelvin.flip_modulo,state->kelvin.flip_valid);
@@ -685,6 +1052,32 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
     return 0;
 }
 
+static int native_traced_method(void *context,unsigned subchannel,uint32_t method,
+                                uint32_t value,size_t offset)
+{
+    if(!fut_trace_file) return native_method(context,subchannel,method,value,offset);
+    fut_trace_event(FUT_TRACE_METHOD,subchannel,method,value,NULL,0);
+    fut_trace_event(FUT_TRACE_RESULT,0,0,(uint32_t)offset,NULL,0);
+    fut_trace_active=1;
+    int result=native_method(context,subchannel,method,value,offset);
+    fut_trace_active=0;
+    fut_trace_event(FUT_TRACE_RESULT,1,0,result,NULL,0);
+    if(fflush(fut_trace_file)) fut_trace_error();
+    return result;
+}
+
+static int native_traced_finish(NativeGraphicsState *state)
+{
+    if(!fut_trace_file) return native_finish(state);
+    fut_trace_event(FUT_TRACE_FINISH,0,0,0,NULL,0);
+    fut_trace_active=1;
+    int result=native_finish(state);
+    fut_trace_active=0;
+    fut_trace_event(FUT_TRACE_RESULT,1,0,result,NULL,0);
+    if(fflush(fut_trace_file)) fut_trace_error();
+    return result;
+}
+
 static DWORD WINAPI native_worker(void *unused)
 {
     (void)unused;
@@ -707,11 +1100,25 @@ static DWORD WINAPI native_worker(void *unused)
     state.context = context;
     state.diagnostic_preview_enabled = getenv("RECOMP_NATIVE_PREVIEW") != NULL;
     state.bindings.read = object_memory_read;
+    if(getenv("RECOMP_GRAPHICS_TRACE")) fut_trace_open("graphics-replay.bin",0);
     if (FAILED(fut_native_constants_init(&state.native_constants, device, context)))
         fail_backend("cannot create native shader constants/completion query");
 
+    if (getenv("RECOMP_HOST_OUTPUT_VBLANK")) {
+        hr = native_vblank_start_for_device(device, &state.host_vblank);
+        if (FAILED(hr)) {
+            fprintf(stderr, "[VBLANK] host output source unavailable: HRESULT=%08lX\n",
+                    (unsigned long)hr);
+            fail_backend("requested host-output VBlank approximation is unavailable");
+        }
+        fputs("[VBLANK] observing attached desktop output via IDXGIOutput_WaitForVBlank; "
+              "host-timing approximation only, not NV2A validation\n", stderr);
+    }
+
     uint32_t ring_start = 0, ring_end = 0, channel = 0, cursor = 0;
     while (WaitForSingleObject(backend_stop, 5) == WAIT_TIMEOUT) {
+        if(!native_observe_vblank(&state) || !native_scanout_service(&state))
+            fail_backend("host VBlank or original scanout receipt service failed");
         uint32_t title_device = 0, start = 0, end = 0, write_ptr = 0;
         uint32_t title_channel = 0, put = 0;
         if (!read32(0x0029E968u, &title_device) || !title_device ||
@@ -754,7 +1161,7 @@ static DWORD WINAPI native_worker(void *unused)
             fail_backend("submission capture exceeds native decoder bounds");
         FutGraphicsDecodeResult decoded;
         FutGraphicsDecodeStatus status = fut_graphics_decode(bytes, size,
-            native_method, &state, &decoded);
+            native_traced_method, &state, &decoded);
         if (status != FUT_GRAPHICS_DECODED) {
             FILE *capture = fopen("graphics-rejected.bin", "wb");
             if (capture) { fwrite(bytes, 1, size, capture); fclose(capture); }
@@ -763,14 +1170,22 @@ static DWORD WINAPI native_worker(void *unused)
                     cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size);
             fail_backend("implement the reported native graphics method before continuing");
         }
-        if (!native_finish(&state) || !write32(channel + 0x44u, put))
+        if (!native_traced_finish(&state) || !write32(channel + 0x44u, put))
             fail_backend("native completion or submission cursor update failed");
         fprintf(stderr, "[GRAPHICS] submission completed: start=%08X end=%08X methods=%zu\n",
                 cursor, submitted, decoded.methods);
         cursor = submitted;
     }
+    if (state.host_vblank.state) {
+        hr = fut_native_vblank_close(&state.host_vblank, 2000);
+        if (FAILED(hr))
+            fprintf(stderr, "[VBLANK] observer remains alive after bounded close: HRESULT=%08lX\n",
+                    (unsigned long)hr);
+    }
     fut_native_constants_destroy(&state.native_constants);
     fut_native_display_close(&state.diagnostic_preview);
+    fut_native_display_close(&state.scanout_display);
+    fut_native_scanout_dispatch_destroy(&state.scanout_dispatch);
     fut_native_surfaces_destroy(&state.native_surfaces);
     for (unsigned stage=0;stage<4;++stage) fut_native_texture_destroy(&state.textures[stage]);
     fut_native_pipeline_destroy(&state.pipeline);
@@ -778,10 +1193,13 @@ static DWORD WINAPI native_worker(void *unused)
     fut_native_vertex_surface_destroy(&state.vertex_surface);
     if (state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
+    if (state.aa2_vertex_shader) ID3D11VertexShader_Release(state.aa2_vertex_shader);
+    if (state.aa2_vertex_bytecode) ID3D10Blob_Release(state.aa2_vertex_bytecode);
     if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
     if (state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     ID3D11DeviceContext_Release(context);
     ID3D11Device_Release(device);
+    if(fut_trace_file) { fclose(fut_trace_file);fut_trace_file=NULL; }
     return 0;
 }
 

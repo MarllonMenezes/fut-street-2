@@ -2,12 +2,31 @@
  * binary, guest CPU, submission thread or generated code execution. */
 #include "../graphics_native_backend.c"
 
+/* This fixture never dispatches original guest code; the dedicated dispatcher
+ * test supplies synthetic translated routines for that separate contract. */
+int fut_native_scanout_dispatch_init(FutNativeScanoutDispatch *dispatch)
+{ (void)dispatch;return 0; }
+void fut_native_scanout_dispatch_destroy(FutNativeScanoutDispatch *dispatch)
+{ (void)dispatch; }
+FutNativeScanoutDispatchResult fut_native_scanout_dispatch_preflight(
+    FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification,
+    uint32_t callback)
+{ (void)dispatch;(void)context;(void)notification;(void)callback;return FUT_SCANOUT_DISPATCH_NO_CONTEXT; }
+FutNativeScanoutDispatchResult fut_native_scanout_dispatch_call(
+    FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification,
+    uint32_t callback,uint32_t *before,uint32_t *after)
+{ (void)dispatch;(void)context;(void)notification;(void)callback;(void)before;(void)after;return FUT_SCANOUT_DISPATCH_NO_CONTEXT; }
+
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "backend lifecycle test failed: %d\n", code); return code; } } while (0)
 static uint8_t guest_memory[0x10000];
 static uint32_t connected_interrupt;
 uint32_t xbox_GetConnectedInterrupt(uint32_t vector)
 {
     return vector==3?connected_interrupt:0;
+}
+int xbox_kernel_post_host_vblank(void)
+{
+    return 1;
 }
 ptrdiff_t xbox_GetMemoryOffset(void)
 {
@@ -76,21 +95,53 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)) &&
         fut_guest_interrupt_enabled(),79);
     CloseHandle(backend_stop);backend_stop=NULL;
-    CHECK(native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
-        guest_word(0x61C4)==2 && guest_word(0x61C8)==1 && guest_word(0x61CC)==1 &&
-        guest_word(0x6174)==1 && guest_word(0x6178)==1 && guest_word(0x617C)==0x3000,73);
-    CHECK(fut_guest_interrupt_enabled(),80);
-    uint8_t first_queued[FUT_SCANOUT_CONTEXT_WORDS*4];memcpy(first_queued,guest_memory+0x6000,sizeof(first_queued));
-    CHECK(!native_method(state,0,0x100,(0x4001u<<5)|1,0) &&
-        !memcmp(first_queued,guest_memory+0x6000,sizeof(first_queued)),77);
-    CHECK(native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
-        guest_word(0x61CC)==2 && guest_word(0x6180)==1 && guest_word(0x6184)==2,74);
-    uint8_t queued[FUT_SCANOUT_CONTEXT_WORDS*4];memcpy(queued,guest_memory+0x6000,sizeof(queued));
     CHECK(!native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
-        !memcmp(queued,guest_memory+0x6000,sizeof(queued)),75);
+        !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)),73);
+    CHECK(fut_guest_interrupt_enabled(),80);
+    CHECK(!native_method(state,0,0x100,(0x4001u<<5)|1,0) &&
+        !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)),77);
+    CHECK(!native_method(state,0,0x100,(0x3001u<<5)|1,0) &&
+        !memcmp(before_mask,guest_memory+0x6000,sizeof(before_mask)),74);
     CHECK(state->kelvin.flip_read==0 && state->kelvin.flip_write==0 &&
         !memcmp(depth_before,guest_memory+0x4000,sizeof(depth_before)),76);
     connected_interrupt=0;
+    /* A second original-format submission exercises the real AA2 shader
+     * selection, original VS position probe and two-pass draw routing. */
+    CHECK(native_method(state,0,0x208,0x1128,0) &&
+        native_method(state,0,0x20C,0x00200020,0) &&
+        native_method(state,0,0x1D7C,0xFFFF0001,0),81);
+    memset(guest_memory+0x3000,0xCD,96);
+    memset(guest_memory+0x4000,0xAB,96);
+    uint8_t aa_depth_before[96];memcpy(aa_depth_before,guest_memory+0x4000,96);
+    CHECK(native_method(state,0,0x17FC,5,0),82);
+    const float aa_points[3][2]={{0,0},{4,0},{0,3}};
+    for(unsigned i=0;i<3;++i) {
+        uint32_t x,y;memcpy(&x,&aa_points[i][0],4);memcpy(&y,&aa_points[i][1],4);
+        CHECK(native_method(state,0,0x1880,x,0) && native_method(state,0,0x1884,y,0),83);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->immediate.ready && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==6 &&
+        state->aa2_vertex_shader && state->aa2_vertex_bytecode,84);
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<8;++x) {
+        double sx=x/2+((x&1)?.5:0),sy=y+((x&1)?.5:0);
+        CHECK(guest_word(0x3000+y*32+x*4)==(3*sx+4*sy<12?0xFF000000:0xCDCDCDCD),85);
+    }
+    CHECK(!memcmp(aa_depth_before,guest_memory+0x4000,96),86);
+    /* Switching back must retain the unshifted original VS, not reuse the
+     * AA2 raster variant from the previous batch's coverage passes. */
+    CHECK(native_method(state,0,0x208,0x128,0) &&
+        native_method(state,0,0x20C,0x00100010,0) &&
+        native_method(state,0,0x1D7C,0xFFFF0000,0),87);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,5,0),88);
+    for(unsigned i=0;i<3;++i) {
+        uint32_t x,y;memcpy(&x,&points[i][0],4);memcpy(&y,&points[i][1],4);
+        CHECK(native_method(state,0,0x1880,x,0) && native_method(state,0,0x1884,y,0),89);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        state->native_immediate.ia_vertices==3,90);
+    for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,91);
     return 0;
 }
 int main(void)
@@ -263,6 +314,8 @@ int main(void)
     if(state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     if(state.vertex_shader) ID3D11VertexShader_Release(state.vertex_shader);
     if(state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
+    if(state.aa2_vertex_shader) ID3D11VertexShader_Release(state.aa2_vertex_shader);
+    if(state.aa2_vertex_bytecode) ID3D10Blob_Release(state.aa2_vertex_bytecode);
     ID3D11DeviceContext_Release(state.context); ID3D11Device_Release(state.device);
     puts("Real backend: deferred description validation, WAIT old-plan writeback and independent draw gate OK");
     return 0;

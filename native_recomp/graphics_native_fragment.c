@@ -2,6 +2,8 @@
 #include "graphics_native_fragment.h"
 #include "graphics_native_pipeline.h"
 #include "graphics_shader_interface.h"
+#include "graphics_sample_pattern.h"
+#include "graphics_experiment.h"
 #include <d3d11shader.h>
 #include <stdio.h>
 #include <string.h>
@@ -62,20 +64,36 @@ static HRESULT no_candidate_resource(ID3DBlob *bytecode,unsigned candidates)
     return hr;
 }
 
-HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvinState *state,
-    const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode)
+static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinState *state,
+    const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode,int aa2)
 {
     if(!shader || !bytecode) return E_INVALIDARG;
     *shader=NULL;*bytecode=NULL;
     if(!device || !state || !textures) return E_INVALIDARG;
+    if(state->draw.alpha_test>1 || (state->draw.alpha_test &&
+        (state->draw.alpha_func<0x200 || state->draw.alpha_func>0x207 ||
+         state->draw.alpha_ref>255))) return E_NOTIMPL;
     char math[65536],source[73728];size_t length;
     if(!fut_fragment_program_hlsl(&state->fragment,math,sizeof(math),&length)) return E_NOTIMPL;
-    int n=snprintf(source,sizeof(source),"%s%s%s"
+    int n=snprintf(source,sizeof(source),"%s%s%s%s"
         FUT_GRAPHICS_VARYINGS_HLSL("PSIn")
-        "float4 main(PSIn input):SV_TARGET{if(!fut_window_visible(input.pos.xy))discard;\n",
+        "float4 main(PSIn input):SV_TARGET{\n",
+        aa2?FUT_AA2_COVERAGE_HLSL FUT_AA2_AFFINE_HLSL:"",
         fut_native_window_hlsl(),fut_native_texture_hlsl(),math);
     if(n<0 || (size_t)n>=sizeof(source)) return E_OUTOFMEMORY;
     size_t used=n;unsigned candidates=0;
+    if(aa2) {
+        n=snprintf(source+used,sizeof(source)-used,
+            "input.col0=fut_sample_center(input.col0);input.col1=fut_sample_center(input.col1);"
+            "input.t0=fut_sample_center(input.t0);input.t1=fut_sample_center(input.t1);"
+            "input.t2=fut_sample_center(input.t2);input.t3=fut_sample_center(input.t3);"
+            "if(!fut_sample_column(input.pos.x))discard;\n");
+        if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+        used+=n;
+    }
+    n=snprintf(source+used,sizeof(source)-used,"if(!fut_window_visible(input.pos.xy))discard;\n");
+    if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+    used+=n;
     for(unsigned stage=0;stage<4;++stage) {
         unsigned mode=(state->fragment.stage_program>>(stage*5))&31;
         /* Texture/sampler declarations must precede entry point: insert them
@@ -92,6 +110,12 @@ HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvin
                  * prove the whole resource absent from optimized bytecode. */
                 n=snprintf(source+used,sizeof(source)-used,
                     "float4 T%u=float4(0,0,0,tex%u.Load(int3(0,0,0)).a);\n",stage,stage);
+            } else if(native->quincunx_experiment) {
+                if(aa2 || stage!=0 || !fut_graphics_quincunx_approximation_enabled() ||
+                    native->sampling_ready || native->plan.width!=1280 || native->plan.height!=480)
+                    return E_NOTIMPL;
+                n=snprintf(source+used,sizeof(source)-used,
+                    "float4 T%u=fut_quincunx_experiment(tex%u,input.t%u);\n",stage,stage,stage);
             } else {
                 if(!native->sampling_ready || !native->sampler) return E_NOTIMPL;
                 n=snprintf(source+used,sizeof(source)-used,
@@ -104,7 +128,24 @@ HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvin
         if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
         used+=n;
     }
-    n=snprintf(source+used,sizeof(source)-used,"return fut_fragment_math(input.col0,input.col1,T0,T1,T2,T3);}\n");
+    n=snprintf(source+used,sizeof(source)-used,"float4 result=fut_fragment_math(input.col0,input.col1,T0,T1,T2,T3);\n");
+    if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+    used+=n;
+    if(state->draw.alpha_test) {
+        /* Integer alpha comparison after the final combiner, before any
+         * color/depth/stencil writes. The 8-bit rounding model agrees with
+         * xemu's pgraph/glsl/psh.c; NV2A half-step precision is unmeasured.
+         * This implementation is independently expressed in HLSL. */
+        static const char *comparison[]={"false","a < ref","a == ref","a <= ref",
+            "a > ref","a != ref","a >= ref","true"};
+        n=snprintf(source+used,sizeof(source)-used,
+            "int a=int(round(saturate(result.a)*255.0));int ref=%u;"
+            "if(!(%s))discard;\n",state->draw.alpha_ref,
+            comparison[state->draw.alpha_func-0x200]);
+        if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+        used+=n;
+    }
+    n=snprintf(source+used,sizeof(source)-used,"return result;}\n");
     if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
     used+=n;
     const char *prefix="Texture2D<float4> tex0:register(t0);SamplerState samp0:register(s0);\n"
@@ -125,4 +166,17 @@ HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvin
     if(SUCCEEDED(hr)) hr=ID3D11Device_CreatePixelShader(device,ID3D10Blob_GetBufferPointer(*bytecode),ID3D10Blob_GetBufferSize(*bytecode),NULL,shader);
     if(FAILED(hr) && *bytecode) {ID3D10Blob_Release(*bytecode);*bytecode=NULL;}
     return hr;
+}
+HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvinState *state,
+    const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode)
+{
+    return compile_fragment(device,state,textures,shader,bytecode,0);
+}
+HRESULT fut_native_fragment_compile_aa2_affine(ID3D11Device *device,const FutGraphicsKelvinState *state,
+    const FutNativeTexture textures[4],int unit_w_verified,ID3D11PixelShader **shader,ID3DBlob **bytecode)
+{
+    if(!shader || !bytecode) return E_INVALIDARG;
+    *shader=NULL;*bytecode=NULL;
+    if(unit_w_verified!=1) return E_NOTIMPL;
+    return compile_fragment(device,state,textures,shader,bytecode,1);
 }

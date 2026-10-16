@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "graphics_native_pipeline.h"
+#include "graphics_experiment.h"
 #include <string.h>
 #include <math.h>
 
@@ -76,6 +77,8 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
     const FutGraphicsDrawState *s = &state->draw;
     if (s->window_exclusive > 1 || state->depth_test > 1 || state->stencil_test > 1 ||
         s->blend_enable > 1 || s->cull_enable > 1 || s->depth_write > 1 || s->dither > 1 ||
+        s->alpha_test > 1 || (s->alpha_test &&
+            (s->alpha_func<0x200 || s->alpha_func>0x207 || s->alpha_ref>255)) ||
         s->front_mode < 0x1B00 || s->front_mode > 0x1B02 || s->back_mode < 0x1B00 || s->back_mode > 0x1B02 ||
         (s->front_face != 0x900 && s->front_face != 0x901) ||
         (s->cull_face != 0x404 && s->cull_face != 0x405 && s->cull_face != 0x408) ||
@@ -84,12 +87,17 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
     /* User-accepted approximation (2026-10-14), NOT measured NV2A fidelity:
      * ARGB8 single-sample uses normal host UNORM conversion, with no spatial
      * dither added. Surface plans currently admit only ARGB8 color. Retain
-     * the original enable bit; never generalize this to lower-bit or AA RTs. */
-    if(s->dither && surface->samples!=1) return E_NOTIMPL;
+     * the original enable bit. A separate user authorization on2026-10-15
+     * permits ONLY the explicitly opted-in observed640x480 AA2 experiment;
+     * never generalize to lower-bit or other AA render targets. */
+    if(s->dither && surface->samples!=1 &&
+        !(fut_graphics_aa2_approximation_enabled() && surface->samples==2 &&
+          surface->logical_width==640 && surface->logical_height==480 &&
+          state->anti_aliasing_control==0xFFFF0001)) return E_NOTIMPL;
     if (state->point_params_enable || state->point_smooth || state->fog_enable || state->lighting_enable ||
         state->specular_enable || state->light_enable_mask || state->texture_matrix_enable[0] ||
         state->texture_matrix_enable[1] || state->texture_matrix_enable[2] || state->texture_matrix_enable[3] ||
-        s->alpha_test || s->logic_op || s->stipple || s->line_smooth || s->polygon_smooth ||
+        s->logic_op || s->stipple || s->line_smooth || s->polygon_smooth ||
         s->front_mode != s->back_mode || s->front_mode == 0x1B00 ||
         (s->cull_enable && s->cull_face == 0x408) ||
         ((s->offset_enable[0] || s->offset_enable[1] || s->offset_enable[2]) &&

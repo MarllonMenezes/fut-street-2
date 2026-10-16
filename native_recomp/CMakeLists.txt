@@ -15,8 +15,17 @@ set(RECOMP_HOST_LIBRARIES "" CACHE STRING
     "Semicolon-separated native compatibility archives and system libraries")
 set(RECOMP_XBOXRECOMP_SOURCE_DIR "" CACHE PATH
     "Pinned XboxRecomp source root used to compile the local host bootstrap")
+set(RECOMP_DSP56300_INCLUDE_DIR "" CACHE PATH
+    "Directory containing the pinned dsp56300 C FFI header")
+set(RECOMP_DSP56300_LIBRARY "" CACHE FILEPATH
+    "Pinned Windows static library built from dsp56300-emu-ffi")
+set(RECOMP_DSP56300_LINK_LIBRARIES "" CACHE STRING
+    "Additional platform libraries required by the dsp56300 static library")
 option(FUT_STREET2_BUILD_HOST_APP
     "Build the statically recompiled host executable when runtime inputs are supplied"
+    OFF)
+option(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER
+    "Build the isolated MCPX DSP56300 adapter (does not enable AC97/APU boot)"
     OFF)
 
 if(RECOMP_ARCHIVER)
@@ -67,12 +76,64 @@ add_library(fut_street_2_no_emulation_runtime_support STATIC
     guest_interrupt_gate.c
     graphics_crtc_ack.c
     no_emulation_optional_hooks.c
+    mcpx_aci.c
     recomp_manual_lookup.c
     recomp_runtime_diagnostics.c)
 target_include_directories(fut_street_2_no_emulation_runtime_support PUBLIC
     "${RECOMP_GENERATED_DIR}")
 
+if(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER)
+    if(NOT RECOMP_DSP56300_INCLUDE_DIR OR
+       NOT EXISTS "${RECOMP_DSP56300_INCLUDE_DIR}/dsp56300.h")
+        message(FATAL_ERROR
+            "Set RECOMP_DSP56300_INCLUDE_DIR to the pinned dsp56300 C FFI include directory")
+    endif()
+    if(NOT RECOMP_DSP56300_LIBRARY OR
+       NOT EXISTS "${RECOMP_DSP56300_LIBRARY}")
+        message(FATAL_ERROR
+            "Set RECOMP_DSP56300_LIBRARY to the built dsp56300-emu-ffi static library")
+    endif()
+
+    add_library(fut_street_2_mcpx_dsp STATIC mcpx_dsp_adapter.c)
+    target_include_directories(fut_street_2_mcpx_dsp PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}"
+        "${RECOMP_DSP56300_INCLUDE_DIR}")
+    target_link_libraries(fut_street_2_mcpx_dsp PUBLIC
+        "${RECOMP_DSP56300_LIBRARY}"
+        ${RECOMP_DSP56300_LINK_LIBRARIES})
+
+    if(BUILD_TESTING)
+        add_executable(mcpx_dsp_adapter_test tests/mcpx_dsp_adapter_test.c)
+        # Assertions perform the isolated device operations as well as checks.
+        # Release builds must not compile away the test itself.
+        if(MSVC)
+            target_compile_options(mcpx_dsp_adapter_test PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(mcpx_dsp_adapter_test PRIVATE -UNDEBUG)
+        endif()
+        target_link_libraries(mcpx_dsp_adapter_test PRIVATE fut_street_2_mcpx_dsp)
+        add_test(NAME mcpx_dsp_adapter COMMAND mcpx_dsp_adapter_test)
+        set_tests_properties(mcpx_dsp_adapter PROPERTIES TIMEOUT 15)
+    endif()
+endif()
+
 if(BUILD_TESTING)
+    add_executable(mcpx_aci_model_test tests/mcpx_aci_model_test.c
+        mcpx_aci.c)
+    target_include_directories(mcpx_aci_model_test PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}")
+    add_test(NAME mcpx_aci_model COMMAND mcpx_aci_model_test)
+    set_tests_properties(mcpx_aci_model PROPERTIES TIMEOUT 10)
+
+    if(WIN32)
+        add_executable(mcpx_aci_host_test tests/mcpx_aci_host_test.c
+            mcpx_aci_host.c mcpx_aci.c)
+        target_include_directories(mcpx_aci_host_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME mcpx_aci_host_trap COMMAND mcpx_aci_host_test)
+        set_tests_properties(mcpx_aci_host_trap PROPERTIES TIMEOUT 10)
+    endif()
+
     add_executable(graphics_crtc_ack_test tests/graphics_crtc_ack_test.c)
     target_include_directories(graphics_crtc_ack_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
     target_link_libraries(graphics_crtc_ack_test PRIVATE fut_street_2_no_emulation_runtime_support)
@@ -183,7 +244,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c graphics_native_backend.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c mcpx_aci_host.c graphics_native_backend.c graphics_native_scanout_dispatch.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -195,6 +256,12 @@ if(FUT_STREET2_BUILD_HOST_APP)
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel
         ${RECOMP_HOST_LIBRARIES} dxguid dxgi user32)
+    # DSP experimentation remains isolated; never link it into the game host.
+
+    add_executable(graphics_replay graphics_replay.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c)
+    target_include_directories(graphics_replay PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+    target_compile_definitions(graphics_replay PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(graphics_replay PRIVATE fut_street_2_no_emulation_runtime_support ${RECOMP_HOST_LIBRARIES} dxguid dxgi user32)
 
     add_executable(no_emulation_kernel_file_contract_test
         tests/no_emulation_kernel_file_contract_test.c)
@@ -222,7 +289,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_link_libraries(graphics_native_immediate_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
         add_test(NAME graphics_native_immediate COMMAND graphics_native_immediate_test)
         set_tests_properties(graphics_native_immediate PROPERTIES TIMEOUT 15)
-        add_executable(graphics_native_backend_test tests/graphics_native_backend_test.c graphics_native_surfaces.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_constants.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c)
+        add_executable(graphics_native_backend_test tests/graphics_native_backend_test.c graphics_native_surfaces.c graphics_native_vertex.c graphics_native_pipeline.c graphics_native_constants.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c)
         target_include_directories(graphics_native_backend_test PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
             "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
@@ -230,11 +297,21 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_link_libraries(graphics_native_backend_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid dxgi user32)
         add_test(NAME graphics_native_backend COMMAND graphics_native_backend_test)
         set_tests_properties(graphics_native_backend PROPERTIES TIMEOUT 15)
+        add_executable(graphics_native_scanout_dispatch_test
+            tests/graphics_native_scanout_dispatch_test.c graphics_native_scanout_dispatch.c)
+        target_include_directories(graphics_native_scanout_dispatch_test PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src"
+            "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
+        target_link_libraries(graphics_native_scanout_dispatch_test PRIVATE
+            fut_street_2_no_emulation_runtime_support)
+        add_test(NAME graphics_native_scanout_dispatch COMMAND graphics_native_scanout_dispatch_test)
+        set_tests_properties(graphics_native_scanout_dispatch PROPERTIES TIMEOUT 10)
         add_executable(graphics_native_display_test tests/graphics_native_display_test.c graphics_native_display.c graphics_native_constants.c graphics_native_vblank.c)
         target_include_directories(graphics_native_display_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_display_test PRIVATE d3d11 dxgi dxguid user32)
         add_test(NAME graphics_native_display COMMAND graphics_native_display_test)
-        set_tests_properties(graphics_native_display PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77)
+        set_tests_properties(graphics_native_display PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
+            ENVIRONMENT "RECOMP_NATIVE_DISPLAY_ORIGIN=1")
         add_executable(graphics_native_vblank_test tests/graphics_native_vblank_test.c graphics_native_vblank.c)
         target_include_directories(graphics_native_vblank_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_vblank_test PRIVATE dxgi dxguid user32)
@@ -251,11 +328,24 @@ if(FUT_STREET2_BUILD_HOST_APP)
         add_test(NAME graphics_native_fragment COMMAND graphics_native_fragment_test)
         set_tests_properties(graphics_native_fragment PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_textures_test tests/graphics_native_textures_test.c graphics_native_textures.c graphics_native_constants.c graphics_native_fragment.c graphics_native_pipeline.c)
+        add_executable(graphics_native_quincunx_test tests/graphics_native_quincunx_test.c graphics_native_textures.c graphics_native_constants.c graphics_native_immediate.c)
+        target_include_directories(graphics_native_quincunx_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_quincunx_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
+        add_test(NAME graphics_native_quincunx COMMAND graphics_native_quincunx_test)
+        set_tests_properties(graphics_native_quincunx PROPERTIES TIMEOUT 15)
         target_include_directories(graphics_native_textures_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_textures_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
         add_test(NAME graphics_native_textures COMMAND graphics_native_textures_test)
         set_tests_properties(graphics_native_textures PROPERTIES TIMEOUT 15)
         add_executable(graphics_native_pipeline_test tests/graphics_native_pipeline_test.c graphics_native_pipeline.c graphics_native_constants.c)
+        add_executable(graphics_native_aa_test tests/graphics_native_aa_test.c graphics_native_constants.c)
+        add_executable(graphics_native_aa_interpolation_test tests/graphics_native_aa_interpolation_test.c graphics_native_vertex.c graphics_native_fragment.c graphics_native_textures.c graphics_native_pipeline.c graphics_native_immediate.c graphics_native_constants.c)
+        target_include_directories(graphics_native_aa_interpolation_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_aa_interpolation_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler dxguid)
+        add_test(NAME graphics_native_aa_interpolation COMMAND graphics_native_aa_interpolation_test)
+        set_tests_properties(graphics_native_aa_interpolation PROPERTIES TIMEOUT 15)
+        target_include_directories(graphics_native_aa_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(graphics_native_aa_test PRIVATE d3d11 d3dcompiler)
         target_include_directories(graphics_native_pipeline_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_pipeline_test PRIVATE fut_street_2_no_emulation_runtime_support d3d11 d3dcompiler)
         add_test(NAME graphics_native_pipeline COMMAND graphics_native_pipeline_test)

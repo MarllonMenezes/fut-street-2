@@ -60,6 +60,23 @@ int main(void)
     if(unavailable_environment(hr)) {fprintf(stderr,"Display unavailable HRESULT=%08lX; no presentation validation\n",hr);
         fut_native_constants_destroy(&completion);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);return 77;}
     CHECK(hr==S_OK,35);
+    /* First presentation on a fresh immediate context must work without a
+     * diagnostic Map/GetData forcing submission of the backbuffer copy. */
+    uint32_t first_pixels[128*64];
+    for(unsigned i=0;i<128*64;++i) first_pixels[i]=0xFF000000u;
+    D3D11_TEXTURE2D_DESC first_desc={0};
+    first_desc.Width=128;first_desc.Height=64;
+    first_desc.MipLevels=first_desc.ArraySize=first_desc.SampleDesc.Count=1;
+    first_desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    first_desc.Usage=D3D11_USAGE_IMMUTABLE;first_desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    D3D11_SUBRESOURCE_DATA first_data={first_pixels,128*4,0};
+    ID3D11Texture2D *first_texture=NULL;
+    CHECK(ID3D11Device_CreateTexture2D(device,&first_desc,&first_data,&first_texture)==S_OK,52);
+    CHECK(fut_native_display_stage(&d,context,first_texture,2000,NULL)==S_OK,53);
+    FutNativeDisplayReceipt first_receipt={0};
+    CHECK(submit_and_receive(&d,&first_receipt)==S_OK && first_receipt.present_count==1 &&
+        first_receipt.sync_qpc.QuadPart>0 && !d.pending,54);
+    ID3D11Texture2D_Release(first_texture);
     IDXGIOutput *timing_output=NULL;FutNativeVBlank clock={0};FutNativeVBlankReceipt edge;
     CHECK(IDXGISwapChain2_GetContainingOutput(d.swap,&timing_output)==S_OK,49);
     CHECK(fut_native_vblank_start(&clock,timing_output)==S_OK &&

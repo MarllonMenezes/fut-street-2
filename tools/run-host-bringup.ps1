@@ -5,7 +5,13 @@ param(
     [Parameter(Mandatory = $true)][string]$GameDataDirectory,
     [string]$OutputRoot = 'D:\projeto zeta\artifacts\bringup',
     [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
-    [switch]$GraphicsSnapshot
+    [switch]$GraphicsSnapshot,
+    [switch]$HostOutputVblank,
+    [switch]$NativeDisplayOrigin,
+    [switch]$GraphicsTrace,
+    [switch]$Aa2Approximation,
+    [switch]$QuincunxApproximation,
+    [switch]$Ac97ResetApproximation
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,7 +27,7 @@ foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory, $OutputRoot))
         throw "Bring-up paths must be absolute paths on D: without quote characters: $path"
     }
 }
-foreach ($name in @('RECOMP_AC97_READY', 'RECOMP_PB_EXEC', 'RECOMP_VBLANK')) {
+foreach ($name in @('RECOMP_AC97_READY', 'RECOMP_AC97_RESET_ONLY', 'RECOMP_PB_EXEC', 'RECOMP_VBLANK')) {
     if ($null -ne [Environment]::GetEnvironmentVariable($name)) {
         throw "Unsupported hardware opt-in is set: $name"
     }
@@ -36,8 +42,17 @@ $variables = @{
     TEMP = $tempDirectory; TMP = $tempDirectory; TMPDIR = $tempDirectory
     RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
     RECOMP_TRACE_BUDGET = '20000'
+    RECOMP_AA2_APPROXIMATION = '0'
+    RECOMP_QUINCUNX_APPROXIMATION = '0'
+    RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
 }
 if ($GraphicsSnapshot) { $variables.RECOMP_GRAPHICS_SNAPSHOT = '1' }
+if ($HostOutputVblank) { $variables.RECOMP_HOST_OUTPUT_VBLANK = '1' }
+if ($NativeDisplayOrigin) { $variables.RECOMP_NATIVE_DISPLAY_ORIGIN = '1' }
+if ($GraphicsTrace) { $variables.RECOMP_GRAPHICS_TRACE = '1' }
+if ($Aa2Approximation) { $variables.RECOMP_AA2_APPROXIMATION = '1' }
+if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
+if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
 $previous = @{}
 $process = $null
 $stdoutFile = $null
@@ -80,6 +95,11 @@ try {
         timeout_seconds = $TimeoutSeconds; timed_out = $timedOut
         exit_code = $process.ExitCode; diagnostic_trap = $true
         graphics_snapshot = [bool]$GraphicsSnapshot
+        native_display_origin = [bool]$NativeDisplayOrigin
+        graphics_trace = [bool]$GraphicsTrace
+        aa2_approximation = [bool]$Aa2Approximation
+        quincunx_approximation = [bool]$QuincunxApproximation
+        ac97_reset_approximation = [bool]$Ac97ResetApproximation
         stdout = $stdout; stderr = $stderr
     }
     $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'run.json') -Encoding UTF8

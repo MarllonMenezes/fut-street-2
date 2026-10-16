@@ -1,0 +1,57 @@
+diff --git a/src/kernel/kernel_bridge.c b/src/kernel/kernel_bridge.c
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -3205,5 +3205,53 @@
+     g_eax = (uint32_t)bridge_create_file_impl(
+         handle_va, access, obj_attrs, iostatus,
+         file_attrs, share, disposition, options);
++
++    /* Opt-in, path-filtered bring-up diagnostic. Failed path opens alone do
++     * not say whether the title is probing an optional file or requiring an
++     * asset. Capture the original operation contract and guest caller without
++     * changing the host call or its returned status. */
++    if (getenv("RECOMP_FILE_OPEN_DIAG")) {
++        const wchar_t *path = xbox_LastHostPath();
++        if (path && (wcsstr(path, L"\\data\\xdb") ||
++                     wcsstr(path, L"\\data\\initstay.big") ||
++                     wcsstr(path, L"\\data\\datafile.txt") ||
++                     wcsstr(path, L"\\data\\advdefp-Eng.loc") ||
++                     wcsstr(path, L"\\data\\advoffp-Eng.loc") ||
++                     wcsstr(path, L"\\data\\controlp-Eng.loc") ||
++                     wcsstr(path, L"\\data\\FEENG.loc") ||
++                     wcsstr(path, L"\\data\\gbp-Eng.loc") ||
++                     wcsstr(path, L"\\data\\jugglep-Eng.loc") ||
++                     wcsstr(path, L"\\data\\MCENG.loc") ||
++                     wcsstr(path, L"\\data\\tunavars.txt") ||
++                     wcsstr(path, L"\\data\\twc14_en.xfn") ||
++                     wcsstr(path, L"contentmeta.xbx"))) {
++            extern uint32_t xbox_LastFileError(void);
++            extern RECOMP_TLS uint32_t g_ebp;
++            uint32_t guest_return_site = 0;
++            uint32_t guest_parent_site = 0;
++            uint32_t guest_root_site = 0;
++            uint32_t guest_frame = g_ebp;
++            if (guest_frame && bridge_va_mapped(guest_frame, 8u)) {
++                guest_return_site = BRIDGE_MEM32(guest_frame + 4u);
++                guest_frame = BRIDGE_MEM32(guest_frame);
++                if (guest_frame && bridge_va_mapped(guest_frame, 8u)) {
++                    guest_parent_site = BRIDGE_MEM32(guest_frame + 4u);
++                    guest_frame = BRIDGE_MEM32(guest_frame);
++                    if (guest_frame && bridge_va_mapped(guest_frame, 8u))
++                        guest_root_site = BRIDGE_MEM32(guest_frame + 4u);
++                }
++            }
++            uint32_t host_error = g_eax ? xbox_LastFileError() : 0u;
++            fprintf(stderr,
++                "[FILE-DIAG] caller=%08X return_site=%08X parent_site=%08X "
++                "root_site=%08X access=%08X share=%08X "
++                "disposition=%u options=%08X status=%08X win32=%u path=%S\n",
++                g_xbox_kernel_caller, guest_return_site, guest_parent_site,
++                guest_root_site, access, share, disposition, options, g_eax,
++                host_error, path);
++            fflush(stderr);
++        }
++    }
++
+     /* FILE_SYNCHRONOUS_IO_ALERT | FILE_SYNCHRONOUS_IO_NONALERT. Neither set
+      * means the caller wants asynchronous completion on this handle. */

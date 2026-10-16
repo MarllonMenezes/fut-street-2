@@ -9,7 +9,7 @@ typedef struct {
     FutGraphicsTexturePlan plan;
     FutGraphicsTextureState sampling_state;
     uint32_t texel_or,texel_and; /* All uploaded texels, excluding pitch padding. */
-    int valid, sampling_ready,zero_rgb_candidate;
+    int valid, sampling_ready,zero_rgb_candidate,quincunx_experiment;
 } FutNativeTexture;
 /* Refresh from guest including CPU writes. Caller must first write back any
  * overlapping GPU render targets. Failure preserves the existing resources. */
@@ -27,6 +27,11 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
  * texture resource disappears before creating an executable PS. */
 HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
     const FutGraphicsTextureState *state,int coordinates_verified);
+/* Explicit experiment opt-in plus exact fullscreen-resolve scope required.
+ * Five taps, identity color space, parity-preserving edge clamp; precision,
+ * phase and edge behavior are a model, not hardware measurements. */
+HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *native,
+    const FutGraphicsTextureState *state,int resolve_verified);
 void fut_native_texture_destroy(FutNativeTexture *native);
 /* Projected texel-space coordinates for this LINEAR 2D storage, level zero.
  * Only valid with an approved sampler; not an original fragment program. */

@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "graphics_native_constants.h"
+#include <stdio.h>
 #include <string.h>
 
 HRESULT fut_native_constants_init(FutNativeConstants *native,
@@ -23,10 +24,16 @@ HRESULT fut_native_constants_init(FutNativeConstants *native,
 int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*constants)[4],
     DWORD timeout_ms, HANDLE stop_event)
 {
-    if (!native || !native->buffer || !native->completion || !timeout_ms)
+    if (!native || !native->buffer || !native->completion || !timeout_ms) {
+        fprintf(stderr, "[GRAPHICS] constants completion unavailable: native=%p buffer=%p completion=%p timeout_ms=%lu\n",
+            (void *)native, native ? (void *)native->buffer : NULL,
+            native ? (void *)native->completion : NULL, (unsigned long)timeout_ms);
         return 0;
-    if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT)
+    }
+    if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) {
+        fputs("[GRAPHICS] constants completion interrupted before query by stop event\n", stderr);
         return 0;
+    }
     if (constants) {
         ID3D11DeviceContext_UpdateSubresource(native->context,
             (ID3D11Resource *)native->buffer, 0, NULL, constants, 0, 0);
@@ -35,24 +42,37 @@ int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*con
     ID3D11DeviceContext_End(native->context, (ID3D11Asynchronous *)native->completion);
     ID3D11DeviceContext_Flush(native->context);
     const ULONGLONG deadline = GetTickCount64() + timeout_ms;
+    HRESULT last_hr = S_FALSE;
+    BOOL last_complete = FALSE;
     do {
-        if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT)
+        if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) {
+            fprintf(stderr, "[GRAPHICS] constants completion interrupted by stop event: last_hr=%08lX complete=%u\n",
+                (unsigned long)last_hr, (unsigned)last_complete);
             return 0;
-        BOOL complete = FALSE;
-        HRESULT hr = ID3D11DeviceContext_GetData(native->context,
-            (ID3D11Asynchronous *)native->completion, &complete, sizeof(complete),
+        }
+        last_complete = FALSE;
+        last_hr = ID3D11DeviceContext_GetData(native->context,
+            (ID3D11Asynchronous *)native->completion, &last_complete, sizeof(last_complete),
             D3D11_ASYNC_GETDATA_DONOTFLUSH);
-        if (hr == S_OK && complete)
+        if (last_hr == S_OK && last_complete)
             return 1;
-        if (FAILED(hr))
+        if (FAILED(last_hr)) {
+            fprintf(stderr, "[GRAPHICS] constants completion query failed: HRESULT=%08lX\n",
+                (unsigned long)last_hr);
             return 0;
+        }
         if (stop_event) {
-            if (WaitForSingleObject(stop_event, 1) != WAIT_TIMEOUT)
+            if (WaitForSingleObject(stop_event, 1) != WAIT_TIMEOUT) {
+                fprintf(stderr, "[GRAPHICS] constants completion interrupted during wait: last_hr=%08lX complete=%u\n",
+                    (unsigned long)last_hr, (unsigned)last_complete);
                 return 0;
+            }
         } else {
             Sleep(1);
         }
     } while (GetTickCount64() < deadline);
+    fprintf(stderr, "[GRAPHICS] constants completion query timed out: timeout_ms=%lu last_hr=%08lX complete=%u\n",
+        (unsigned long)timeout_ms, (unsigned long)last_hr, (unsigned)last_complete);
     return 0;
 }
 

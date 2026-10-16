@@ -11,7 +11,7 @@ static HRESULT compile(ID3D11Device *device, const uint32_t (*words)[4],
     *shader = NULL; *bytecode = NULL;
     if(!device) return E_INVALIDARG;
     char hlsl[65536]; size_t length;
-    if (!(screen ? fut_vertex_program_hlsl_screen(words,count,hlsl,sizeof(hlsl),&length) :
+    if (!(screen==2 ? fut_vertex_program_hlsl_screen_aa2(words,count,hlsl,sizeof(hlsl),&length) : screen ? fut_vertex_program_hlsl_screen(words,count,hlsl,sizeof(hlsl),&length) :
         fut_vertex_program_hlsl(words, count, hlsl, sizeof(hlsl), &length)))
         return E_NOTIMPL;
     ID3DBlob *errors = NULL;
@@ -38,6 +38,11 @@ HRESULT fut_native_vertex_compile_screen(ID3D11Device *device,const uint32_t (*w
 {
     return compile(device,words,count,shader,bytecode,1);
 }
+HRESULT fut_native_vertex_compile_screen_aa2(ID3D11Device *device,const uint32_t (*words)[4],
+    unsigned count,ID3D11VertexShader **shader,ID3DBlob **bytecode)
+{
+    return compile(device,words,count,shader,bytecode,2);
+}
 void fut_native_vertex_surface_destroy(FutNativeVertexSurface *native)
 {
     if(native->buffer) ID3D11Buffer_Release(native->buffer);
@@ -49,17 +54,24 @@ HRESULT fut_native_vertex_surface_prepare(FutNativeVertexSurface *native,
     if(!native || !device || !context || !surface || !surface->logical_width ||
         !surface->logical_height || surface->logical_width>16384 || surface->logical_height>16384)
         return E_INVALIDARG;
-    if(surface->samples!=1 || surface->width!=surface->logical_width || surface->height!=surface->logical_height)
+    /* Surface AA storage expands the raster target. Screen-space guest
+     * coordinates remain in logical pixels; the expanded host viewport maps
+     * each logical X pixel across two stored columns for CENTER_CORNER_2.
+     * This is an experimental expanded-grid translation, not a claim that
+     * D3D11's sample locations match NV2A hardware. 4x remains unsupported. */
+    if((surface->samples!=1 && surface->samples!=2) ||
+        surface->width!=surface->logical_width*(surface->samples==2?2u:1u) ||
+        surface->height!=surface->logical_height)
         return E_NOTIMPL;
-    if(!native->buffer || native->width!=surface->width || native->height!=surface->height) {
-        const float values[4]={(float)surface->width,(float)surface->height,16777215.0f,0};
+    if(!native->buffer || native->width!=surface->logical_width || native->height!=surface->logical_height) {
+        const float values[4]={(float)surface->logical_width,(float)surface->logical_height,16777215.0f,0};
         D3D11_BUFFER_DESC desc={0};desc.ByteWidth=sizeof(values);
         desc.Usage=D3D11_USAGE_IMMUTABLE;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
         D3D11_SUBRESOURCE_DATA data={values,0,0};ID3D11Buffer *buffer=NULL;
         HRESULT hr=ID3D11Device_CreateBuffer(device,&desc,&data,&buffer);
         if(FAILED(hr)) return hr;
         fut_native_vertex_surface_destroy(native);native->buffer=buffer;
-        native->width=surface->width;native->height=surface->height;
+        native->width=surface->logical_width;native->height=surface->logical_height;
     }
     ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&native->buffer);
     return S_OK;

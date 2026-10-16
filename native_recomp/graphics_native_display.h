@@ -16,7 +16,9 @@ typedef struct {
      * timestamp and not a guest clock. Keep the refresh counters alongside it. */
     LARGE_INTEGER sync_qpc;
 } FutNativeDisplayReceipt;
-/* Single owning thread; windowed flip-sequential BGRA8 only. Failure does
+/* RECOMP_NATIVE_DISPLAY_ORIGIN=1 opts visible windows into position (0,0)
+ * for controlled bring-up; otherwise Windows chooses the initial placement.
+ * Single owning thread; windowed flip-sequential BGRA8 only. Failure does
  * not replace an existing instance. No guest queue/flip/interrupt mutations. */
 HRESULT fut_native_display_open(FutNativeDisplay *display,ID3D11Device *device,
     unsigned width,unsigned height,int visible);

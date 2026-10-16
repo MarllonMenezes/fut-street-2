@@ -178,6 +178,10 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         state->compress_depth = value; break;
     case 0x1E78:
         state->shader_other_input = value & 0x0FFFF000u; break;
+    case 0x17F8:
+        /* Retain the exact NV097 mode. Fragment-program mode 5 remains
+         * rejected by the native shader compiler until clipping is modeled. */
+        state->shader_clip_plane_mode = value; break;
     case 0x1E68:
         /* Finite slope filtering needs a native shader implementation. */
         if (value != 0x7F800000u) return FUT_KELVIN_REJECTED;

@@ -1,4 +1,5 @@
 #include "graphics_vertex_program.h"
+#include "graphics_sample_pattern.h"
 #include "graphics_shader_interface.h"
 #include <stdio.h>
 #include <stdarg.h>
@@ -56,6 +57,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
     text[0] = 0;
     Writer out = {text, capacity, 0, 0};
     if(screen) emit(&out,"cbuffer VertexSurface:register(b3){float4 vertexSurface;};\n");
+    if(screen==2) emit(&out,FUT_AA2_COVERAGE_HLSL);
     emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\nstruct In{\n");
     for (unsigned i = 0; i < 16; ++i) emit(&out, "float4 v%u:ATTR%u;\n", i, i);
     emit(&out, "};" FUT_GRAPHICS_VARYINGS_HLSL("Out")
@@ -121,6 +123,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
             "float2 ndc=(2.0f*pixel-vertexSurface.xy)/vertexSurface.xy;"
             "result.pos=float4(ndc.x,-ndc.y,o[0].z/vertexSurface.z,1)*o[0].w;\n");
     }
+    if(screen==2) emit(&out,"result.pos=fut_sample_position(result.pos);\n");
     emit(&out,"return result;}\n");
     if (out.failed) return 0;
     *length = out.used;
@@ -136,6 +139,11 @@ int fut_vertex_program_hlsl_screen(const uint32_t (*words)[4],size_t count,
     char *text,size_t capacity,size_t *length)
 {
     return generate(words,count,text,capacity,length,1);
+}
+int fut_vertex_program_hlsl_screen_aa2(const uint32_t (*words)[4],size_t count,
+    char *text,size_t capacity,size_t *length)
+{
+    return generate(words,count,text,capacity,length,2);
 }
 
 int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16_t *mask)

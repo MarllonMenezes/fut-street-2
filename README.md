@@ -14,79 +14,44 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — release 2.81
+## Estado verificável — código atual
 
-**A terceira submissão gráfica original concluiu**, processando `323`
-métodos e confirmando os semáforos `9` e `11` após a conclusão nativa
-correspondente. O primeiro draw continua medindo `3` vértices de entrada e
-`307.200` invocações do pixel shader traduzido, com readback das superfícies
-para a memória guest antes do consumo da primitiva.
+A execução nativa já conecta apresentações DXGI à fila original de scanout,
+com confirmação pela ISR e execução do callback recompilado no caminho
+observado. Isso ainda não comprova menu, controles ou uma partida jogável.
+A temporização da saída do PC é uma aproximação, não uma medição NV2A.
 
-O seletor software `1` foi identificado como agendamento de flip. O backend
-agora implementa seu ramo de **enfileiramento adiado**, atualizando os slots
-e contadores no contexto de scanout registrado pelo próprio título.
-Uma solicitação enfileirada não é uma imagem exibida: não há retirada da
-fila, avanço do índice de leitura de flip ou geração de VBlank.
-Callbacks, extrapolação temporal, fila cheia e scanout imediatamente devido
-permanecem recusados. O endereço e o pitch devem corresponder à superfície
-validada; o snapshot é relido antes das escritas para recusar alterações
-detectadas entre as leituras.
-Não há implementação genérica da notificação.
+O writeback gráfico agora preserva a memória de attachments não escritos
+pelo draw. A regressão cobre alterações da CPU após o snapshot da superfície,
+evitando restaurar dados antigos de depth quando depth/stencil estão inativos.
+Há também uma opção explícita para posicionar a janela em `(0,0)` após sua
+abertura (`-NativeDisplayOrigin`); o recibo real de apresentação continua
+obrigatório, inclusive no teste do primeiro frame de um contexto novo.
 
-O reconhecimento de interrupções PCRTC agora é traduzido para um serviço
-host **write-one-to-clear (W1C)**: limpa somente os bits escritos e recompõe
-a fonte PCRTC no status PMC, preservando as outras fontes. Três funções
-afetadas foram regeneradas após comparação exata com a geração anterior.
-O boot confirmou a chamada traduzida na inicialização original; os handlers
-regenerados ainda não foram exercitados por uma interrupção entregue.
+Build Release e CTest passaram **34/34**, sem testes pulados. Também passaram
+os **6 testes de preflight**, o controle negativo de dispatch e o teste do
+adaptador DSP isolado. Uma execução nativa limitada a 30 segundos confirmou
+duas apresentações com recibo DXGI e retirada pela ISR original, sem a falha
+de acesso anteriormente investigada. O encerramento por timeout não aprova
+boot completo nem fidelidade.
 
-A thread legada deixa de apagar automaticamente PMC/PCRTC quando o backend
-nativo possui a conclusão gráfica. Um gate compartilhado com `CLI/STI`
-serializa a notificação e os acessos W1C; isso não implementa preempção geral
-nem protege escritores que não participem do gate. Nenhum produtor de VBlank
-ou retirada da fila foi habilitado.
+As aproximações AA2 e quincunx exigem opções separadas e permanecem limitadas
+aos casos autorizados. O quincunx experimental cobre somente o resolve
+observado de 1280×480 para 640×480; não é um filtro genérico validado na NV2A.
+A aceitação de dithering ARGB8 single-sample também não equivale a medição
+de hardware nem autoriza outros formatos ou modos.
 
-Uma nova camada Win32/DXGI flip-sequential apresenta superfícies BGRA8
-single-sample em uma janela nativa. O teste confirmou duas imagens
-**sintéticas**, com readback exato dos pixels do backbuffer e recibos de
-apresentação correspondentes às contagens DXGI. `Present` enfileirado não é
-tratado como recibo; há somente uma imagem em voo, com espera limitada,
-cancelamento e recusa de dispositivos/contextos incompatíveis.
-Essa camada está compilada no host, mas **ainda não está conectada à fila
-original do jogo** e não gera interrupções guest.
-
-Build Release e CTest passaram `27/27`, sem testes pulados, além dos três
-testes focais do tradutor W1C. A validação cobre W1C com memória sintética,
-preservação de IF e das demais fontes PMC, exclusão entre threads e os testes
-existentes de apresentação DXGI, fila, shaders e writeback. Esses testes não
-comprovam a entrega da ISR/DPC original.
-
-Na execução do jogo recompilado, a solicitação ficou pendente no slot `0`,
-aguardando o primeiro intervalo de VBlank. A observação posterior confirmou
-que ela não foi retirada nem tratada como apresentada. O programa foi
-encerrado pelo limite de cinco segundos; **o timeout não é aprovação de
-boot completo ou fidelidade**. Nenhum frame do jogo foi apresentado e não há gameplay.
-
-Permanece a **aproximação de dithering ARGB8 single-sample aceita pelo
-usuário**, marcada `ACCEPTED_APPROXIMATION`: conversão UNORM do host sem
-ruído espacial adicional. Não foi medida na NV2A, não se estende a formatos
-menores/MSAA e não transforma testes host em prova de equivalência.
-A especialização da textura RGB zero também não implementa quincunx genérico.
-ISO intacta; novas saídas controláveis no D:.
-
-Próximo experimento: entregar os eventos nativos à ISR/DPC original com
-stack/TIB guest, IRQL e participação de todo o consumidor no gate, ligando a
-temporização à saída correta e ao modo entrelaçado solicitado pelo título.
-Um recibo DXGI não equivale, sozinho, a um VBlank NV2A. Não injetar um VBlank
-artificial de frequência fixa.
-Precisão gráfica, filtro genérico, gameplay e áudio seguem pendentes.
-`NOT_READY` permanece.
+O bloqueio atual está na inicialização dos efeitos de áudio, aguardando uma
+resposta do dispositivo. O adaptador DSP é **somente um experimento isolado**:
+não participa do boot, não fornece áudio e não injeta READY/ACK artificiais.
+Menu, controles, cenário, partida curta e áudio funcional continuam pendentes.
+O estado permanece **`NOT_READY`**. Planos, logs e artefatos do jogo ficam locais.
 
 ## Abordagem
 
 - Usar o [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) como base para análise e tradução estática do código Xbox x86 para C, com uma pilha de patches versionada em [`native_recomp/patches`](native_recomp/patches).
 - Compilar o código traduzido para o host e implementar apenas compatibilidade sustentada por evidências do executável e dos call sites. Stubs, hipóteses e instruções ainda não traduzidas não contam como funcionalidades implementadas.
-- Manter fora do caminho de execução qualquer emulação de CPU, GPU ou APU. Não incorporar código ou assets proprietários do jogo.
+- A lógica x86 do jogo segue recompilada estaticamente, com tradução gráfica para o host. O experimento opcional de DSP é separado do executável do jogo e não constitui aprovação de áudio/APU. Não incorporar código ou assets proprietários do jogo.
 
 ## Conteúdo
 
@@ -99,6 +64,10 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 ## Build e validação
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
+
+O gate da geração atual exige exatamente 15.602 entradas de dispatch,
+incluindo os dois pontos de entrada indiretos recuperados; uma geração antiga
+com 15.600 entradas não satisfaz esse contrato.
 
 ```powershell
 cmake -S native_recomp -B artifacts/fut-street2-native/build -G Ninja `

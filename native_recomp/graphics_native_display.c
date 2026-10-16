@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_display.h"
 #include <string.h>
+#include <stdlib.h>
 
 static LRESULT CALLBACK display_proc(HWND window,UINT message,WPARAM w,LPARAM l)
 {
@@ -39,6 +40,7 @@ HRESULT fut_native_display_open(FutNativeDisplay *d,ID3D11Device *device,
     DWORD style=WS_OVERLAPPED|WS_CAPTION|WS_SYSMENU|WS_MINIMIZEBOX;
     RECT rect={0,0,(LONG)width,(LONG)height};
     if(!AdjustWindowRect(&rect,style,FALSE)) return HRESULT_FROM_WIN32(GetLastError());
+    const char *origin=getenv("RECOMP_NATIVE_DISPLAY_ORIGIN");
     next.window=CreateWindowExA(0,wc.lpszClassName,"Fut Street 2 - native display",
         style,CW_USEDEFAULT,CW_USEDEFAULT,rect.right-rect.left,rect.bottom-rect.top,
         NULL,NULL,instance,NULL);
@@ -67,7 +69,15 @@ HRESULT fut_native_display_open(FutNativeDisplay *d,ID3D11Device *device,
     if(dxgi) IDXGIDevice_Release(dxgi);
     if(FAILED(hr)) {fut_native_display_close(&next);return hr;}
     next.width=width;next.height=height;*d=next;
-    if(visible) ShowWindow(d->window,SW_SHOWNOACTIVATE);
+    if(visible) {
+        ShowWindow(d->window,SW_SHOWNOACTIVATE);
+        if(origin && origin[0]=='1' && !SetWindowPos(d->window,HWND_TOP,0,0,0,0,
+                SWP_NOACTIVATE|SWP_NOSIZE|SWP_SHOWWINDOW)) {
+            DWORD error=GetLastError();
+            fut_native_display_close(d);
+            return error?HRESULT_FROM_WIN32(error):E_FAIL;
+        }
+    }
     return S_OK;
 }
 HRESULT fut_native_display_stage(FutNativeDisplay *d,ID3D11DeviceContext *context,

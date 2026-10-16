@@ -2,6 +2,7 @@
 #include "xbox_memory_layout.h"
 #include "graphics_command_stream.h"
 #include "graphics_native_backend.h"
+#include "mcpx_aci_host.h"
 
 #include <stdio.h>
 #include <stdint.h>
@@ -23,6 +24,7 @@ void xbox_kernel_shutdown(void);
 void xbox_kernel_bridge_init(void);
 void xbox_path_init(const char *game_dir, const char *save_dir);
 uint32_t xbox_GetConnectedInterrupt(uint32_t bus);
+void xbox_PeekSample(const char *label);
 
 static int read_xbe(const char *path, void **out_data, size_t *out_size)
 {
@@ -160,13 +162,32 @@ static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
         uint32_t blank = 0, completed = 0, scheduled = 0, retired = 0;
         uint32_t pcrtc_pending = 0, pcrtc_enable = 0, pmc_pending = 0, pmc_enable = 0;
         uint32_t crtc_start = 0;
+        uint32_t icall_2a90c0 = 0, icall_2a9200 = 0;
+        uint32_t icall_2a9204 = 0, icall_2a9208 = 0;
+        uint32_t wait_object = 0, wait_header = 0, wait_signal = 0;
         if (WaitForSingleObject((HANDLE)stop_event, 1000) != WAIT_TIMEOUT)
             break;
+        /* Optional read-only samples, including device handshakes while a
+         * translated thread spins without making another kernel call. */
+        xbox_PeekSample("GRAPHICS-PEEK");
         if (!snapshot_read32(0x0029E968u, &device) || !device ||
             device > UINT32_MAX - 0x1C28u) {
             fprintf(stderr, "[GRAPHICS-SNAPSHOT] device not initialized\n");
             continue;
         }
+        snapshot_read32(0x002A90C0u, &icall_2a90c0);
+        snapshot_read32(0x002A9200u, &icall_2a9200);
+        snapshot_read32(0x002A9204u, &icall_2a9204);
+        snapshot_read32(0x002A9208u, &icall_2a9208);
+        wait_object = device + 0x1DBCu;
+        snapshot_read32(wait_object, &wait_header);
+        snapshot_read32(wait_object + 4u, &wait_signal);
+        fprintf(stderr,
+            "[GRAPHICS-CALLBACKS] sample=%u slot_2A90C0=%08X "
+            "slot_2A9200=%08X slot_2A9204=%08X slot_2A9208=%08X "
+            "wait_object=%08X header=%08X signal=%08X (read-only)\n",
+            sample, icall_2a90c0, icall_2a9200, icall_2a9204, icall_2a9208,
+            wait_object, wait_header, wait_signal);
         snapshot_read32(device, &write_ptr);
         snapshot_read32(device + 0x24u, &start);
         snapshot_read32(device + 0x28u, &end);
@@ -255,6 +276,8 @@ int main(int argc, char **argv)
     int result = 1;
     HANDLE snapshot_stop = NULL;
     HANDLE snapshot_thread = NULL;
+    McpxAciHost aci_host;
+    int aci_host_ready = 0;
 
     if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         puts("Fut Street 2 static recompilation host");
@@ -275,6 +298,7 @@ int main(int argc, char **argv)
         const int runtime_preflight = argc == 5;
 
         if (environment_variable_is_set("RECOMP_AC97_READY") ||
+            environment_variable_is_set("RECOMP_AC97_RESET_ONLY") ||
             environment_variable_is_set("RECOMP_PB_EXEC") ||
             environment_variable_is_set("RECOMP_VBLANK")) {
             fprintf(stderr,
@@ -335,6 +359,7 @@ int main(int argc, char **argv)
         return 2;
     }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
+        environment_variable_is_set("RECOMP_AC97_RESET_ONLY") ||
         environment_variable_is_set("RECOMP_PB_EXEC") ||
         environment_variable_is_set("RECOMP_VBLANK")) {
         fprintf(stderr,
@@ -356,6 +381,16 @@ int main(int argc, char **argv)
         goto cleanup;
     }
     memory_ready = 1;
+
+    {
+        volatile uint8_t *aci_bar = (volatile uint8_t *)(uintptr_t)(
+            (uintptr_t)0xFEC00000u + (uintptr_t)xbox_GetMemoryOffset());
+        if (!mcpx_aci_host_start(&aci_host, aci_bar)) {
+            fprintf(stderr, "Cannot initialise modeled MCPX ACI service.\n");
+            goto cleanup;
+        }
+        aci_host_ready = 1;
+    }
 
     if (!validate_preflight_dynamic_guards())
         goto cleanup;
@@ -400,6 +435,8 @@ int main(int argc, char **argv)
     result = 0;
 
 cleanup:
+    if (aci_host_ready)
+        mcpx_aci_host_stop(&aci_host);
     fut_graphics_native_stop();
     if (snapshot_thread) {
         SetEvent(snapshot_stop);

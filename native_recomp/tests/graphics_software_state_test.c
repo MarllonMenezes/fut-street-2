@@ -1,8 +1,10 @@
 #include "graphics_software_state.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 int main(void)
 {
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     FutGraphicsSoftwareState state = {0};
     if (!fut_graphics_software_draw_ready(&state)) return 1;
     if (!fut_graphics_software_state(&state, 0x28, 0, 0, 0) || state.dxt1_noise != 1 ||
@@ -10,6 +12,28 @@ int main(void)
         state.rdi_value[0] != 1 || state.rdi_value[1] != 1 || fut_graphics_software_draw_ready(&state)) return 2;
     if (!fut_graphics_software_state(&state, 9, 0x400094, 4, 3) || state.register_words[0] != 4 || state.register_valid != 1) return 3;
     if (!fut_graphics_software_state(&state, 9, 0x400B80, 0x45EAD10E, 3) || state.register_words[1] != 0x45EAD10E || state.register_valid != 3) return 4;
+    FutGraphicsSoftwareState baseline=state;
+    for(unsigned low=0;low<2;++low) for(unsigned bits=0;bits<8;++bits) {
+        /* Independently enumerate the original setter's boolean truth table.
+         * Decoding must not grant draw readiness or mutate retained writes. */
+        state=baseline;state.register_words[0]=4|((bits&4)?8:0);
+        state.register_words[1]=(low?0x45EAD10F:0x45EAD10E)|
+            ((bits&1)?0x100000:0)|((bits&2)?0x8000000:0);
+        FutGraphicsSoftwareState retained=state;FutGraphicsRopControls rop;
+        if(!fut_graphics_software_rop_controls(&state,&rop) ||
+            rop.compare_always_read!=!!(bits&1) || rop.depth_read!=!!(bits&2) ||
+            rop.dont_cull_uncompressed!=!!(bits&4) || rop.baseline[0]!=4 ||
+            rop.baseline[1]!=(low?0x45EAD10F:0x45EAD10E) ||
+            memcmp(&retained,&state,sizeof(state)) || fut_graphics_software_draw_ready(&state)) return 27;
+    }
+    state=baseline;
+    FutGraphicsRopControls untouched;memset(&untouched,0xA5,sizeof(untouched));
+    FutGraphicsRopControls decoded=untouched;
+    state.register_valid=1;
+    if(fut_graphics_software_rop_controls(&state,&decoded) || memcmp(&decoded,&untouched,sizeof(decoded))) return 28;
+    state=baseline;state.register_words[1]^=0x100;
+    if(fut_graphics_software_rop_controls(&state,&decoded) || memcmp(&decoded,&untouched,sizeof(decoded))) return 29;
+    state=baseline;
     FutGraphicsSoftwareState before = state;
     if (fut_graphics_software_state(&state, 9, 0x400094, 0, 2) ||
         fut_graphics_software_state(&state, 9, 0x400100, 0, 3) ||
@@ -19,18 +43,39 @@ int main(void)
     FutGraphicsSurfacePlan surface={.width=640,.height=480,.logical_width=640,.logical_height=480,.samples=1};
     kelvin.draw.depth_write=1;kelvin.compress_depth=1;
     kelvin.textures[0].control0=0x4003FFC0;kelvin.textures[0].format=0x11229;
+    FutGraphicsSoftwareState empty={0};
+    if(!fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 20;
+    kelvin.anti_aliasing_control=0xFFFF0000;
+    if(!fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 24;
+    kelvin.anti_aliasing_control=0xFFFF0001;
+    if(fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 25;
+    kelvin.anti_aliasing_control=1;
+    if(fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 26;
+    kelvin.anti_aliasing_control=0;
+    surface.samples=2;surface.width=1280;
+    if(fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 21;
+    surface.samples=1;surface.width=640;kelvin.depth_test=1;
+    if(fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 22;
+    kelvin.depth_test=0;kelvin.stencil_test=1;
+    if(fut_graphics_software_linear_draw_ready(&empty,&kelvin,&surface)) return 23;
+    kelvin.stencil_test=0;
     before=state;
     if(!fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface) || memcmp(&state,&before,sizeof(state))) return 7;
     for(unsigned noise=0;noise<2;++noise) {
         if(!fut_graphics_software_state(&state,(noise<<5)|8,0,0,0) ||
             !fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 8;
     }
+    kelvin.textures[0].format=0x11F29; /* Observed A8, texture context A. */
+    if(!fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 18;
+    kelvin.textures[0].format=0x11F2A; /* Same linear A8 layout, context B. */
+    if(!fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 19;
     kelvin.depth_test=1;
     if(fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 9;
     kelvin.depth_test=0;kelvin.stencil_test=1;
     if(fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 10;
-    kelvin.stencil_test=0;surface.samples=2;
+    kelvin.stencil_test=0;surface.samples=2;surface.width=1280;
     if(fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 11;
+    surface.samples=1;surface.width=640;
     surface.samples=1;kelvin.textures[0].format=0x1060D; /* DXT1/BC1, not linearARGB8. */
     if(fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 12;
     kelvin.textures[0].format=0x11229;before=state;
@@ -45,6 +90,21 @@ int main(void)
     state=before;
     if(!fut_graphics_software_state(&state,0x48,0,0,0) ||
         fut_graphics_software_linear_draw_ready(&state,&kelvin,&surface)) return 17;
-    puts("Selectors8/9: DXT1-noise identification and no-depth linearARGB8 domain; BC1, active depth/stencil and unknown RDI/register values refused");
+    state=baseline;kelvin.anti_aliasing_control=0xFFFF0001;
+    surface.samples=2;surface.width=1280;kelvin.textures[0].format=0x11F29;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 30;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 31;
+    state.register_words[1]^=1;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 32;
+    state=baseline;kelvin.textures[0].format=0x1060D;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 33;
+    kelvin.textures[0].format=0x11F29;surface.logical_width=320;surface.width=640;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 34;
+    surface.logical_width=640;surface.width=1280;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 35;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    puts("Selectors retained; AA2 approximation requires explicit opt-in and exact observed baseline/dimensions/linear formats; unknown values remain refused");
     return 0;
 }

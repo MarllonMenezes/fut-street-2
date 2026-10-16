@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_draw.h"
 #include "graphics_native_vertex.h"
+#include "graphics_sample_pattern.h"
 #include <stdio.h>
 #include <string.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"native draw test failed: %d\n",n);return n;}}while(0)
@@ -78,6 +79,10 @@ int main(void)
     memset(m.color,0xCD,sizeof(m.color));memset(m.depth,0xAB,sizeof(m.depth));
     uint8_t depth_before[96];memcpy(depth_before,m.depth,sizeof(depth_before));
     CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)),11);
+    /* CPU writes after upload must survive a draw that cannot touch Z/S.
+     * A dummy depth address can alias live guest heap metadata. */
+    memset(m.depth,0xA5,sizeof(m.depth));
+    memcpy(depth_before,m.depth,sizeof(depth_before));
 #define DRAW() fut_native_draw_immediate(&native,&batch,&surfaces,&pipeline,&state,&software,device,context,vertex,pixel,&completion,read_memory,write_memory,&m,stop)
     HANDLE stop=CreateEventA(NULL,TRUE,TRUE,NULL);CHECK(stop,12);
     CHECK(DRAW()==E_ABORT && batch.ready && !native.submitted && !surfaces.gpu_dirty && !m.writes,13);
@@ -86,29 +91,90 @@ int main(void)
     CHECK(DRAW()==E_INVALIDARG && batch.ready && !native.submitted && !surfaces.gpu_dirty && !m.writes,14);
     state.draw.dither=1; /* Accepted host approximation, not an Xbox oracle. */
     surfaces.plan.samples=2;
+    surfaces.plan.width=8;
     CHECK(DRAW()==E_NOTIMPL && batch.ready && !native.submitted && !m.writes,15);
     surfaces.plan.samples=1;
+    surfaces.plan.width=4;
     CHECK(SUCCEEDED(DRAW()) && !batch.ready && !batch.count && !native.submitted &&
-        !native.count && !surfaces.gpu_dirty && m.writes==2 && !m.bad_order && state.draw.dither==1 &&
+        !native.count && !surfaces.gpu_dirty && m.writes==1 && !m.bad_order && state.draw.dither==1 &&
         native.ia_vertices==3 && native.ps_invocations>0,16);
     CHECK(!memcmp(m.depth,depth_before,sizeof(depth_before)),17);
     for(unsigned y=0;y<3;++y) for(unsigned x=0;x<4;++x) {
         uint32_t word;memcpy(&word,m.color+y*24+x*4,4);CHECK(word==0xFFFF0000,18);
     }
     for(unsigned i=0;i<96;++i) if(i>=64 || i%24>=16) CHECK(m.color[i]==0xCD,19);
-    CHECK(DRAW()==E_INVALIDARG && m.writes==2,20);
+    CHECK(DRAW()==E_INVALIDARG && m.writes==1,20);
+    /* Explicit AA2 path: corner/center coverage with real Z/S writeback.
+     * This synthetic fixture has no RDI/raw controls and dithering is off. */
+    batch=original;
+    const float aa_points[3][4]={{0,0,8388607.5f,1},{4,0,8388607.5f,1},{0,3,8388607.5f,1}};
+    for(unsigned i=0;i<3;++i) memcpy(batch.vertices[i][0],aa_points[i],16);
+    state.draw.dither=0;
+    FutGraphicsSurfacePlan aa_plan=plan;
+    aa_plan.width=8;aa_plan.samples=2;aa_plan.color_pitch=32;aa_plan.depth_pitch=32;
+    aa_plan.color_span=96;aa_plan.depth_span=96;
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&viewport,device,context,&aa_plan)),27);
+    ID3D11VertexShader *aa_vertex=NULL;ID3DBlob *aa_vs=NULL,*aa_ps=NULL;
+    ID3D11PixelShader *aa_pixel=NULL;
+    CHECK(SUCCEEDED(fut_native_vertex_compile_screen_aa2(device,program,1,&aa_vertex,&aa_vs)),28);
+    length=snprintf(source,sizeof(source),"%s%sfloat4 main(float4 p:SV_POSITION):SV_TARGET{"
+        "if(!fut_sample_column(p.x)||!fut_window_visible(p.xy))discard;return float4(1,0,0,1);}",
+        FUT_AA2_COVERAGE_HLSL,fut_native_window_hlsl());
+    CHECK(length>0 && length<(int)sizeof(source) && SUCCEEDED(D3DCompile(source,length,
+        "aa2_draw_ps",NULL,NULL,"main","ps_5_0",0,0,&aa_ps,NULL)),33);
+    CHECK(SUCCEEDED(ID3D11Device_CreatePixelShader(device,ID3D10Blob_GetBufferPointer(aa_ps),
+        ID3D10Blob_GetBufferSize(aa_ps),NULL,&aa_pixel)),34);
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)),35);
+    for(unsigned i=0;i<24;++i) {
+        const uint32_t blue=0xFF0000FF,clear_z=0xFFFFFF00;
+        memcpy(m.color+i*4,&blue,4);memcpy(m.depth+i*4,&clear_z,4);
+    }
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&aa_plan,read_memory,&m)),29);
+    state.anti_aliasing_control=0xFFFF0001;state.depth_test=state.stencil_test=1;
+    state.draw.stencil_op[2]=0x1E01;state.draw.stencil_ref=0x37;
+#define AA_DRAW(proof) fut_native_draw_immediate_aa2(&native,&batch,&surfaces,&pipeline,&state,&software,device,context,aa_vertex,aa_pixel,&completion,read_memory,write_memory,&m,stop,proof)
+    CHECK(AA_DRAW(0)==E_NOTIMPL && batch.ready && !native.submitted && !surfaces.gpu_dirty && m.writes==1,36);
+    state.draw.dither=1;
+    CHECK(AA_DRAW(1)==E_NOTIMPL && batch.ready && !native.submitted && !surfaces.gpu_dirty && m.writes==1,37);
+    state.draw.dither=0;software.register_valid=3;
+    software.register_words[0]=4;software.register_words[1]=0x45EAD10E;
+    CHECK(AA_DRAW(1)==E_NOTIMPL && batch.ready && !native.submitted && !surfaces.gpu_dirty && m.writes==1,38);
+    software=(FutGraphicsSoftwareState){0};
+    CHECK(DRAW()==E_NOTIMPL && batch.ready && !native.submitted && m.writes==1,39);
+    CHECK(SUCCEEDED(AA_DRAW(1)) && !batch.ready && !native.submitted &&
+        !surfaces.gpu_dirty && m.writes==3 && native.ia_vertices==6 && native.ps_invocations>0 && !m.bad_order,30);
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<8;++x) {
+        uint32_t word,zs;memcpy(&word,m.color+y*32+x*4,4);memcpy(&zs,m.depth+y*32+x*4,4);
+        double sx=x/2+((x&1)?.5:0),sy=y+((x&1)?.5:0);
+        int covered=3*sx+4*sy<12;
+        CHECK(word==(covered?0xFFFF0000:0xFF0000FF),31);
+        if(covered) CHECK((zs&255)==0x37 && (zs>>8)>=0x7FFFFF && (zs>>8)<=0x800001,40);
+        else CHECK(zs==0xFFFFFF00,41);
+    }
+    ID3D11Buffer *pass_bound=NULL;ID3D11DeviceContext_PSGetConstantBuffers(context,4,1,&pass_bound);
+    CHECK(!pass_bound,42);
+    state.anti_aliasing_control=0;state.depth_test=state.stencil_test=0;
+    state.draw.stencil_op[2]=0x1E00;state.draw.stencil_ref=0;
+    state.draw.dither=1;
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)),32);
     /* A failure writing the second attachment must not acknowledge the batch
      * or permit replay of a partially published draw (e.g. alpha blending). */
     batch=original;
-    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,vs,&batch,1)),21);
-    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)),22);
-    m.fail_address=plan.depth_address;
-    CHECK(FAILED(DRAW()) && batch.ready && batch.count==3 && native.submitted &&
-        surfaces.gpu_dirty==2 && m.writes==4 && !m.bad_order,23);
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)),21);
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&aa_plan,read_memory,&m)),22);
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&viewport,device,context,&aa_plan)),43);
+    m.fail_address=aa_plan.depth_address;
+    /* The supported AA2 path exercises real depth publication. The linear
+     * path intentionally admits only draws with Z/S disabled. */
+    state.depth_test=1;state.draw.dither=0;state.anti_aliasing_control=0xFFFF0001;
+    CHECK(FAILED(AA_DRAW(1)) && batch.ready && batch.count==3 && native.submitted &&
+        surfaces.gpu_dirty==2 && m.writes==5 && !m.bad_order,23);
     m.fail_address=0;
-    CHECK(DRAW()==E_PENDING && m.writes==4 && batch.ready,24);
+    CHECK(AA_DRAW(1)==E_PENDING && m.writes==5 && batch.ready,24);
     CHECK(fut_native_immediate_upload(&native,device,context,vs,&batch,1)==E_PENDING,25);
     CHECK(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)==E_PENDING,26);
+    ID3D11VertexShader_Release(aa_vertex);ID3D10Blob_Release(aa_vs);
+    ID3D11PixelShader_Release(aa_pixel);ID3D10Blob_Release(aa_ps);
     CloseHandle(stop);ID3D11DeviceContext_ClearState(context);
     fut_native_immediate_destroy(&native);fut_native_surfaces_destroy(&surfaces);
     fut_native_pipeline_destroy(&pipeline);fut_native_vertex_surface_destroy(&viewport);
