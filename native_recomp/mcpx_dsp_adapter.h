@@ -53,6 +53,16 @@ bool mcpx_dsp_write_run(McpxDsp *dsp, Dsp56300MemSpace space,
 bool mcpx_dsp_load_bootstrap(McpxDsp *dsp, const uint32_t *words,
                              size_t word_count);
 
+/* Isolated scratch bootstrap: read 0x800 little-endian 32-bit words from
+ * two 4 KiB pages described by 8-byte SG entries (LE32 physical base first).
+ * max_sge is an inclusive index, not an entry count. RAM and its table must
+ * remain stable during the call. Invalid input leaves P memory unchanged.
+ * This does not start the DSP, model DMA registers or acknowledge a command.
+ * Layout reference: xemu 36334d95, gp_ep.c and dsp_jit.c; no hardware claim. */
+bool mcpx_dsp_load_bootstrap_sg(McpxDsp *dsp, const uint8_t *physical_ram,
+                               size_t ram_size, uint32_t table_address,
+                               uint32_t max_sge);
+
 #ifdef __cplusplus
 }
 #endif

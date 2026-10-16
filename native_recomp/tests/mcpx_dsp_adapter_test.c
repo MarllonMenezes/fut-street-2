@@ -168,6 +168,68 @@ static void test_bulk_argument_validation(void)
     mcpx_dsp_destroy(dsp);
 }
 
+static void put_le32(uint8_t *bytes, uint32_t value)
+{
+    for (unsigned i = 0; i < 4; ++i)
+        bytes[i] = (uint8_t)(value >> (i * 8));
+}
+
+static void test_scattered_bootstrap(void)
+{
+    PeripheralProbe probe = {0};
+    McpxDsp *dsp = create_test_dsp(&probe);
+    uint8_t ram[0x5000] = {0};
+    uint32_t before[MCPX_DSP_BOOTSTRAP_WORDS], after[MCPX_DSP_BOOTSTRAP_WORDS];
+    Dsp56300State state = {0};
+    /* Deliberately reversed, noncontiguous pages; first ends at RAM's end. */
+    put_le32(ram + 0x100, 0x4000);
+    put_le32(ram + 0x108, 0x2000);
+    for (size_t i = 0; i < MCPX_DSP_BOOTSTRAP_WORDS; ++i) {
+        size_t offset = (i < 1024 ? 0x4000 : 0x2000) + (i % 1024) * 4;
+        put_le32(ram + offset, 0xAB000000u | (uint32_t)(i * 257));
+    }
+    assert(mcpx_dsp_write(dsp, DSP56300_MEM_SPACE_P,
+                          MCPX_DSP_BOOTSTRAP_WORDS, 0xFEDCBA));
+    assert(mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 1));
+    assert(mcpx_dsp_read_run(dsp, DSP56300_MEM_SPACE_P, 0, before,
+                             MCPX_DSP_BOOTSTRAP_WORDS));
+    for (size_t i = 0; i < MCPX_DSP_BOOTSTRAP_WORDS; ++i)
+        assert(before[i] == i * 257);
+
+    /* A bad second page must not partially replace the first half of P. */
+    put_le32(ram + 0x4000, 0x654321);
+    put_le32(ram + 0x108, 0x4001);
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 1));
+    put_le32(ram + 0x108, 0xFFFFF001u);
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 1));
+    put_le32(ram + 0x108, 0x2000);
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 0));
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x4FF1, 1));
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), UINT32_MAX, 1));
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, NULL, sizeof(ram), 0x100, 1));
+    assert(!mcpx_dsp_load_bootstrap_sg(dsp, ram, 0, 0x100, 1));
+    assert(mcpx_dsp_read_run(dsp, DSP56300_MEM_SPACE_P, 0, after,
+                             MCPX_DSP_BOOTSTRAP_WORDS));
+    assert(memcmp(before, after, sizeof(before)) == 0);
+
+    put_le32(ram + 0x4000, 0xAB0C0000u); /* synthetic jmp $0 */
+    assert(mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 1));
+    assert(mcpx_dsp_run(dsp, 16));
+    assert(mcpx_dsp_get_state(dsp, &state));
+    assert(state.pc == 0);
+    /* Replacing that compiled branch must invalidate the cached program. */
+    memset(ram + 0x4000, 0, 4096);
+    memset(ram + 0x2000, 0, 4096);
+    assert(mcpx_dsp_load_bootstrap_sg(dsp, ram, sizeof(ram), 0x100, 1));
+    assert(mcpx_dsp_run(dsp, 8));
+    assert(mcpx_dsp_get_state(dsp, &state));
+    assert(state.pc != 0);
+    assert(mcpx_dsp_read(dsp, DSP56300_MEM_SPACE_P,
+                         MCPX_DSP_BOOTSTRAP_WORDS) == 0xFEDCBA);
+    assert(probe.read_count == 0 && probe.write_count == 0);
+    mcpx_dsp_destroy(dsp);
+}
+
 int main(void)
 {
     stage("create callback validation begin");
@@ -185,6 +247,9 @@ int main(void)
     stage("bulk argument validation begin");
     test_bulk_argument_validation();
     stage("bulk argument validation end");
+    stage("scattered bootstrap begin");
+    test_scattered_bootstrap();
+    stage("scattered bootstrap end");
     puts("mcpx DSP adapter tests passed");
     return 0;
 }

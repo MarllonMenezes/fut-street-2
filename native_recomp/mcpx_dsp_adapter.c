@@ -239,3 +239,38 @@ bool mcpx_dsp_load_bootstrap(McpxDsp *dsp, const uint32_t *words,
     dsp56300_invalidate_cache(dsp->jit);
     return true;
 }
+
+static uint32_t read_le32(const uint8_t *bytes)
+{
+    return (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+           ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
+}
+
+/* Original implementation of the narrow scratch layout contract. All input
+ * checks precede the existing bootstrap commit and cache invalidation. */
+bool mcpx_dsp_load_bootstrap_sg(McpxDsp *dsp, const uint8_t *physical_ram,
+                               size_t ram_size, uint32_t table_address,
+                               uint32_t max_sge)
+{
+    uint32_t words[MCPX_DSP_BOOTSTRAP_WORDS];
+    uint32_t pages[2];
+    if (dsp == NULL || physical_ram == NULL || max_sge < 1u ||
+        table_address > UINT32_MAX - 15u ||
+        (size_t)table_address > ram_size ||
+        ram_size - (size_t)table_address < 16u)
+        return false;
+
+    for (size_t page = 0; page < 2; ++page) {
+        pages[page] = read_le32(physical_ram + table_address + page * 8u);
+        if (pages[page] > UINT32_MAX - 4095u ||
+            (size_t)pages[page] > ram_size ||
+            ram_size - (size_t)pages[page] < 4096u)
+            return false;
+    }
+    for (size_t i = 0; i < MCPX_DSP_BOOTSTRAP_WORDS; ++i) {
+        const size_t byte_offset = i * 4u;
+        words[i] = read_le32(physical_ram + pages[byte_offset / 4096u] +
+                            byte_offset % 4096u);
+    }
+    return mcpx_dsp_load_bootstrap(dsp, words, MCPX_DSP_BOOTSTRAP_WORDS);
+}

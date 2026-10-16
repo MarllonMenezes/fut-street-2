@@ -44,6 +44,10 @@ de hardware nem autoriza outros formatos ou modos.
 O bloqueio atual está na inicialização dos efeitos de áudio, aguardando uma
 resposta do dispositivo. O adaptador DSP é **somente um experimento isolado**:
 não participa do boot, não fornece áudio e não injeta READY/ACK artificiais.
+O teste isolado já carrega o programa inicial por duas páginas scratch não
+contíguas, verifica a conversão para palavras de 24 bits e executa um programa
+sintético. Entradas inválidas são recusadas antes de alterar a memória do DSP;
+o processamento DMA dos efeitos ainda não está implementado nesse adaptador.
 Menu, controles, cenário, partida curta e áudio funcional continuam pendentes.
 O estado permanece **`NOT_READY`**. Planos, logs e artefatos do jogo ficam locais.
 
