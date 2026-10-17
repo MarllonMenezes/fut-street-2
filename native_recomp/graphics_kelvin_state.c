@@ -9,6 +9,17 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
 {
     if (!state || (method & 3u))
         return FUT_KELVIN_REJECTED;
+    if (method >= 0x1760u && method < 0x17A0u) {
+        /* NV20 VTXBUF_FMT: type[3:0], size[7:4], stride[15:8].
+         * Only the title's observed zero-stride inline layouts are retained.
+         * Fetch, conversion and draw execution remain separately gated. */
+        if (value != 0x2u && value != 0x22u && value != 0x32u && value != 0x40u)
+            return FUT_KELVIN_REJECTED;
+        unsigned slot = (method - 0x1760u) / 4u;
+        state->vertex_array_format[slot] = value;
+        state->vertex_array_format_valid |= (uint16_t)(1u << slot);
+        return FUT_KELVIN_APPLIED;
+    }
     FutFragmentStatus fragment=fut_graphics_fragment_state(&state->fragment,method,value);
     if(fragment==FUT_FRAGMENT_APPLIED) {
         if(method>=0xA60 && method<0xAA0) fut_graphics_draw_state(&state->draw,method,value);

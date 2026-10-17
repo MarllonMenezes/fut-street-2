@@ -168,6 +168,11 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_constants_init(&state.native_constants,state.device,state.context)),2);
     state.bindings.bound_mask=1;
     state.bindings.objects[0].words[0]=0x97;
+    CHECK(native_method(&state,0,0x1760,0x32,0) &&
+        state.kelvin.vertex_array_format[0]==0x32 &&
+        state.kelvin.vertex_array_format_valid==1,76);
+    CHECK(!native_method(&state,0,0x1760,0x132,0) &&
+        state.kelvin.vertex_array_format[0]==0x32,77);
     CHECK(native_method(&state,0,0x1710,0,0) &&
         !native_method(&state,0,0x1710,1,0),73);
     /* Validation must not accidentally authorize unimplemented array draws. */
@@ -275,6 +280,9 @@ int main(void)
     CHECK(native_method(&state,0,0x1B0C,0x4003FFC0,0) &&
         native_method(&state,0,0x1B14,0x04072000,0),42);
     CHECK(native_method(&state,0,0x17FC,5,0) && state.immediate.active,43);
+    uint32_t saved_format=state.kelvin.vertex_array_format[0];
+    CHECK(!native_method(&state,0,0x1760,0x22,0) &&
+        state.kelvin.vertex_array_format[0]==saved_format,78);
     CHECK(!native_method(&state,0,0x1710,0,0) && state.immediate.active &&
         !state.immediate.count,75);
     uint32_t previous=state.kelvin.textures[0].filter;

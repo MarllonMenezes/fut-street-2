@@ -5,6 +5,17 @@
 int main(void)
 {
     FutGraphicsKelvinState state = {0};
+    for (unsigned i=0;i<16;++i) {
+        uint32_t format=i==0?0x32u:i==3?0x40u:i==9?0x22u:2u;
+        if(fut_graphics_kelvin_state(&state,0x1760+i*4,format)!=FUT_KELVIN_APPLIED ||
+            state.vertex_array_format[i]!=format ||
+            state.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 62;
+    }
+    FutGraphicsKelvinState format_before=state;
+    const uint32_t bad_formats[]={0,0x12,0x42,0x132,0x10032,0xFFFFFFFFu};
+    for(unsigned i=0;i<sizeof(bad_formats)/sizeof(bad_formats[0]);++i)
+        if(fut_graphics_kelvin_state(&state,0x1760,bad_formats[i])!=FUT_KELVIN_REJECTED ||
+            memcmp(&format_before,&state,sizeof(state))) return 63;
     if (fut_graphics_kelvin_state(&state, 0x17F8, 0) != FUT_KELVIN_APPLIED ||
         state.shader_clip_plane_mode != 0) return 52;
     if (fut_graphics_kelvin_state(&state, 0x17F8, 0xA5A55A5Au) != FUT_KELVIN_APPLIED ||
