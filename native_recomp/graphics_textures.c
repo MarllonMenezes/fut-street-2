@@ -6,9 +6,23 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
     if (!state || !plan) return FUT_TEXTURE_INVALID_RANGE;
     if (!(state->valid & 8)) return FUT_TEXTURE_INCOMPLETE;
     if (!(state->control0 & 0x40000000u)) return FUT_TEXTURE_DISABLED;
-    if ((state->valid & 0x9Bu) != 0x9Bu) return FUT_TEXTURE_INCOMPLETE;
+    if ((state->valid & 0xBu) != 0xBu) return FUT_TEXTURE_INCOMPLETE;
     unsigned select = state->format & 3;
-    /* No guessing swizzled/compressed/cube/mip/bordered storage. The two
+    if ((state->format & ~0x0FF00003u) == 0x00010C28u) {
+        unsigned u=(state->format>>20)&15u,v=(state->format>>24)&15u;
+        if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12)
+            return FUT_TEXTURE_UNSUPPORTED;
+        FutGraphicsTexturePlan next={0};
+        next.width=1u<<u;next.height=1u<<v;next.pitch=(next.width/4)*8;
+        next.span=next.pitch*(next.height/4);next.storage=1;next.dma_context=select;
+        if(!dma || (state->offset&7u) || (dma->guest_address&0xFC000000u)!=0x80000000u ||
+            !dma->size || dma->size>0x04000000u-(dma->guest_address&0x03FFFFFFu) ||
+            state->offset>dma->size || next.span>dma->size-state->offset)
+            return FUT_TEXTURE_INVALID_RANGE;
+        next.address=dma->guest_address+state->offset;*plan=next;return FUT_TEXTURE_READY;
+    }
+    if ((state->valid & 0x9Bu) != 0x9Bu) return FUT_TEXTURE_INCOMPLETE;
+    /* No guessing swizzled/cube/mip/bordered storage. The two
      * observed linear layouts are A8R8G8B8 (11228) and alpha-only A8 (11F28). */
     uint32_t format=state->format&~3u;
     unsigned bytes_per_pixel=format==0x00011228u?4:

@@ -13,14 +13,19 @@ void fut_native_texture_destroy(FutNativeTexture *native)
 HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context)
 {
+    int bc1=plan && plan->storage==1;
     if (!native || !device || !read || !plan || !plan->width || !plan->height ||
         plan->width > 8191 || plan->height > 8191 ||
-        (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4) ||
+        plan->storage>1 || (bc1 ? (plan->bytes_per_pixel || (plan->address&7u) ||
+            plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
+            (plan->width&(plan->width-1)) || (plan->height&(plan->height-1)) ||
+            plan->pitch!=plan->width/4*8) : (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
         (plan->dma_context != 1 && plan->dma_context != 2) ||
         plan->pitch < (uint64_t)plan->width * plan->bytes_per_pixel || plan->pitch > 65535 ||
         ((plan->pitch | plan->address) & 3) ||
         (plan->address & 0xFC000000u) != 0x80000000u ||
-        (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*plan->bytes_per_pixel != plan->span ||
+        (bc1 ? (uint64_t)(plan->height/4)*plan->pitch :
+            (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*plan->bytes_per_pixel) != plan->span ||
         plan->span > 0x84000000u - plan->address) return E_INVALIDARG;
     uint8_t *bytes = HeapAlloc(GetProcessHeap(), 0, plan->span);
     if (!bytes) return E_OUTOFMEMORY;
@@ -42,15 +47,16 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
             memcpy(expanded+(size_t)y*upload_pitch+x*4,&argb,4);
         }
     }
-    next.texel_and=UINT32_MAX;
-    for(unsigned y=0;y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
+    /* Compressed bytes are not ARGB texels: never certify zero-RGB shortcuts. */
+    next.texel_and=bc1?0:UINT32_MAX;next.texel_or=bc1?UINT32_MAX:0;
+    for(unsigned y=0;!bc1 && y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
         uint32_t word;memcpy(&word,upload+(size_t)y*upload_pitch+x*4,4);
         next.texel_or|=word;next.texel_and&=word;
     }
     D3D11_TEXTURE2D_DESC desc = {0};
     desc.Width=plan->width; desc.Height=plan->height;
     desc.MipLevels=1; desc.ArraySize=1; desc.SampleDesc.Count=1;
-    desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage=D3D11_USAGE_DEFAULT;
+    desc.Format=bc1?DXGI_FORMAT_BC1_UNORM:DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage=D3D11_USAGE_DEFAULT;
     desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
     D3D11_SUBRESOURCE_DATA initial = {upload, upload_pitch, 0};
     hr=ID3D11Device_CreateTexture2D(device,&desc,&initial,&next.texture);

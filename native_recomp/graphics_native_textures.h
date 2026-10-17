@@ -8,7 +8,7 @@ typedef struct {
     ID3D11SamplerState *sampler;
     FutGraphicsTexturePlan plan;
     FutGraphicsTextureState sampling_state;
-    uint32_t texel_or,texel_and; /* All uploaded texels, excluding pitch padding. */
+    uint32_t texel_or,texel_and; /* Linear texels; conservative FFFFFFFF/0 for BC1. */
     int valid, sampling_ready,zero_rgb_candidate,quincunx_experiment;
 } FutNativeTexture;
 /* Refresh from guest including CPU writes. Caller must first write back any
@@ -33,7 +33,8 @@ HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
 HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *native,
     const FutGraphicsTextureState *state,int resolve_verified);
 void fut_native_texture_destroy(FutNativeTexture *native);
-/* Projected texel-space coordinates for this LINEAR 2D storage, level zero.
+/* Projected coordinates, level zero. Extent is dimensions for linear storage,
+ * or (1,1) for BC1 normalized coordinates.
  * Only valid with an approved sampler; not an original fragment program. */
 const char *fut_native_texture_hlsl(void);
 #endif
