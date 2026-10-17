@@ -42,8 +42,28 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
         next.address=dma->guest_address+state->offset;*plan=next;return FUT_TEXTURE_READY;
     }
     if ((state->valid & 0x9Bu) != 0x9Bu) return FUT_TEXTURE_INCOMPLETE;
-    /* No guessing swizzled/cube/mip/bordered storage. The two
-     * observed linear layouts are A8R8G8B8 (11228) and alpha-only A8 (11F28). */
+    if ((state->format & ~0x0FF00003u) == 0x00010E28u) {
+        if ((select!=1 && select!=2) || (state->control1&0xFFFFu))
+            return FUT_TEXTURE_UNSUPPORTED;
+        FutGraphicsTexturePlan next={0};
+        next.width=state->image_rect>>16;next.height=state->image_rect&0xFFFFu;
+        next.pitch=state->control1>>16;next.storage=3;next.dma_context=select;
+        uint64_t row=(uint64_t)(next.width/4u)*16u;
+        uint64_t rows=next.height/4u;
+        if(!dma || !next.width || !next.height || next.width>8191 || next.height>8191 ||
+            (next.width&3u) || (next.height&3u) || next.pitch<row || (next.pitch&15u) ||
+            (state->offset&15u) || (dma->guest_address&3u) ||
+            (dma->guest_address&0xFC000000u)!=0x80000000u || !dma->size ||
+            dma->size>0x04000000u-(dma->guest_address&0x03FFFFFFu))
+            return FUT_TEXTURE_INVALID_RANGE;
+        uint64_t bytes=(rows-1u)*next.pitch+row;
+        if(state->offset>dma->size || bytes>dma->size-state->offset)
+            return FUT_TEXTURE_INVALID_RANGE;
+        next.span=(uint32_t)bytes;next.address=dma->guest_address+state->offset;
+        *plan=next;return FUT_TEXTURE_READY;
+    }
+    /* No guessing swizzled/cube/mip/bordered storage. Linear formats admitted
+     * here are A8R8G8B8 (11228) and alpha-only A8 (11F28); DXT23 is handled above. */
     uint32_t format=state->format&~3u;
     unsigned bytes_per_pixel=format==0x00011228u?4:
         format==0x00011F28u?1:0;

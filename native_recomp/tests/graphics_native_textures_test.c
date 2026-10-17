@@ -230,6 +230,53 @@ static int verify_bc1(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);fut_native_texture_destroy(&native);
     CHECK(good,132);return 0;
 }
+static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
+{
+    FutGraphicsTextureState state={.valid=0x9B,.control0=0x4003FFC0,.format=0x06610E29,
+        .offset=0x00D1F980,.image_rect=0x050001E0,.control1=0x14000000};
+    FutGraphicsDmaView dma={0x80000000u,0x04000000u};
+    FutGraphicsTexturePlan plan={0},sentinel={.width=99};
+    CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY && plan.storage==3 &&
+        plan.width==1280 && plan.height==480 && plan.pitch==5120 && plan.span==0x96000 &&
+        plan.address==0x80D1F980u,160);
+    FutGraphicsDmaView short_dma={0x80000000u,0x00DB597Fu};
+    CHECK(fut_graphics_texture_plan(&state,&short_dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,161);
+    FutGraphicsTextureState bad=state;bad.control1=0x13F00000u;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,162);
+    bad=state;bad.control1=0x14010000u;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,163);
+    bad=state;bad.offset++;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,164);
+    bad=state;bad.image_rect=0x050100E0u;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,165);
+    bad=state;bad.format=0x06610F29u;
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED,166);
+
+    FutGraphicsTextureState small={.valid=0x9B,.control0=0x4003FFC0,.format=0x06610E29,
+        .offset=0x1000,.image_rect=0x00040004,.control1=0x00100000};
+    FutGraphicsDmaView small_dma={0x80000000u,0x1020u};
+    CHECK(fut_graphics_texture_plan(&small,&small_dma,&plan)==FUT_TEXTURE_READY &&
+        plan.storage==3 && plan.pitch==16 && plan.span==16 && plan.address==0x80001000u,167);
+    Memory memory={0};
+    memset(memory.bytes,0xFF,8); /* Alpha nibbles = 15 for all sixteen texels. */
+    uint16_t red=0xF800;memcpy(memory.bytes+8,&red,2);memcpy(memory.bytes+10,&red,2);
+    FutNativeTexture native={0};
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) &&
+        memory.reads==1 && native.valid && native.view && native.texel_and==0 && native.texel_or==UINT32_MAX,168);
+    D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(native.texture,&desc);
+    CHECK(desc.Width==4 && desc.Height==4 && desc.Format==DXGI_FORMAT_BC2_UNORM,169);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),170);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),171);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped)),172);
+    int exact=!memcmp(mapped.pData,memory.bytes,16);
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
+    ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
+    CHECK(exact,173);return 0;
+}
 typedef struct {uint8_t indices[32];uint32_t palette[256];unsigned reads;int fail_palette;} P8Memory;
 static int p8_read(void *opaque,uint32_t address,void *data,size_t size)
 {
@@ -328,6 +375,7 @@ int main(void)
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),13);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),14);
     CHECK(verify_bc1(device,context,&completion)==0,133);
+    CHECK(verify_bc2(device,context,&completion)==0,174);
     CHECK(verify_p8(device,context,&completion)==0,151);
     FutNativeTexture native={0};
     FutGraphicsTexturePlan invalid=plan;invalid.span++;

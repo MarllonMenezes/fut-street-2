@@ -799,6 +799,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x05510B29u &&
         fut_graphics_p8_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_P8_AA2_APPROXIMATION: lossless palette expansion, existing AA2 baseline approximation; exact 32x32/640x480 scope; NOT_READY\n",stderr);
+    if(aa2 && state->kelvin.textures[0].format==0x05710B29u &&
+        fut_graphics_p8_128x32_aa2_approximation_enabled())
+        fputs("[GRAPHICS] AUTHORIZED_P8_128X32_AA2_APPROXIMATION: lossless palette expansion, existing AA2 and depth-write mappings; exact 128x32/640x480 captured state; compressed-depth and NV2A AA2 fidelity unverified; NOT_READY\n",stderr);
     if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
         "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");

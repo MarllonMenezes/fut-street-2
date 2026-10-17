@@ -26,4 +26,11 @@ static inline int fut_graphics_p8_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_P8_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Separately authorized 2026-10-17 for only the captured P8 128x32 AA2 draw
+ * with depth test/write enabled. All draw-state fields remain checked. */
+static inline int fut_graphics_p8_128x32_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_P8_128X32_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif

@@ -15,22 +15,26 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
 {
     int bc1=plan && plan->storage==1;
     int p8=plan && plan->storage==2;
+    int bc2=plan && plan->storage==3;
     if (!native || !device || !read || !plan || !plan->width || !plan->height ||
         plan->width > 8191 || plan->height > 8191 ||
-        plan->storage>2 || (p8 && (plan->bytes_per_pixel!=1 || plan->palette_span!=1024 ||
+        plan->storage>3 || (p8 && (plan->bytes_per_pixel!=1 || plan->palette_span!=1024 ||
             (plan->palette_address&0xFC00003Fu)!=0x80000000u ||
             plan->palette_span>0x84000000u-plan->palette_address || plan->pitch!=plan->width ||
             plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
             (plan->width&(plan->width-1)) || (plan->height&(plan->height-1)))) ||
-        (bc1 ? (plan->bytes_per_pixel || (plan->address&7u) ||
+        ((bc1 || bc2) ? (plan->bytes_per_pixel ||
+            (bc1 && (plan->address&7u)) || (bc2 && ((plan->address&15u) ||
+                (plan->width&3u) || (plan->height&3u) || plan->pitch<plan->width/4*16 || (plan->pitch&15u))) ||
             plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
-            (plan->width&(plan->width-1)) || (plan->height&(plan->height-1)) ||
-            plan->pitch!=plan->width/4*8) : (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
+            (bc1 && ((plan->width&(plan->width-1)) || (plan->height&(plan->height-1)) ||
+                plan->pitch!=plan->width/4*8))) : (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
         (plan->dma_context != 1 && plan->dma_context != 2) ||
         plan->pitch < (uint64_t)plan->width * plan->bytes_per_pixel || plan->pitch > 65535 ||
         ((plan->pitch | plan->address) & 3) ||
         (plan->address & 0xFC000000u) != 0x80000000u ||
-        (bc1 ? (uint64_t)(plan->height/4)*plan->pitch :
+        (bc1 ? (uint64_t)(plan->height/4)*plan->pitch : bc2 ?
+            (uint64_t)(plan->height/4-1)*plan->pitch+(uint64_t)(plan->width/4)*16 :
             (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*plan->bytes_per_pixel) != plan->span ||
         plan->span > 0x84000000u - plan->address) return E_INVALIDARG;
     uint8_t *bytes = HeapAlloc(GetProcessHeap(), 0, plan->span);
@@ -68,15 +72,15 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
         }
     }
     /* Compressed bytes are not ARGB texels: never certify zero-RGB shortcuts. */
-    next.texel_and=bc1?0:UINT32_MAX;next.texel_or=bc1?UINT32_MAX:0;
-    for(unsigned y=0;!bc1 && y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
+    next.texel_and=(bc1||bc2)?0:UINT32_MAX;next.texel_or=(bc1||bc2)?UINT32_MAX:0;
+    for(unsigned y=0;!bc1 && !bc2 && y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
         uint32_t word;memcpy(&word,upload+(size_t)y*upload_pitch+x*4,4);
         next.texel_or|=word;next.texel_and&=word;
     }
     D3D11_TEXTURE2D_DESC desc = {0};
     desc.Width=plan->width; desc.Height=plan->height;
     desc.MipLevels=1; desc.ArraySize=1; desc.SampleDesc.Count=1;
-    desc.Format=bc1?DXGI_FORMAT_BC1_UNORM:DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage=D3D11_USAGE_DEFAULT;
+    desc.Format=bc1?DXGI_FORMAT_BC1_UNORM:bc2?DXGI_FORMAT_BC2_UNORM:DXGI_FORMAT_B8G8R8A8_UNORM; desc.Usage=D3D11_USAGE_DEFAULT;
     desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
     D3D11_SUBRESOURCE_DATA initial = {upload, upload_pitch, 0};
     hr=ID3D11Device_CreateTexture2D(device,&desc,&initial,&next.texture);

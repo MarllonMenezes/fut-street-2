@@ -17,16 +17,16 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 ## Estado verificável — 17 de outubro de 2026
 
 **`NOT_READY` — ainda não jogável.** A build Release contém 15.610 entradas
-de dispatch. O launch limitado alcançou o triangle strip de vertex arrays,
-validou quatro índices e executou o shader recompilado para seis vértices. A
-tentativa mais recente preparou uma textura 128×32, mas o desenho parou nos
-controles de depth/compressão/AA ainda fora do domínio traduzido.
+de dispatch. O launch limitado confirmou fetch e execução de shaders, além de
+desenhos anteriores com pixels escritos no guest. A execução mais recente
+terminou ao aguardar disponibilidade de um slot de flip (`read=0`, `write=0`,
+`modulo=3`, `valid=7`); nenhuma apresentação real foi comprovada.
 
 | Etapa | Evidência atual |
 | --- | --- |
 | Tradução e compilação | Build nativo Release com 15.610 entradas exatas. As entradas observadas `0x00240AFB` e `0x001D1EAD` foram recuperadas do XBE, regeneradas e incluídas no executável testado. |
 | Boot | Execução parcial da lógica recompilada confirmada em launches limitados; boot completo e menu ainda não comprovados. |
-| Rendering | Recibos DXGI com aposentadoria pela ISR original e recompilação de shader observados. No alvo atual, o host validou o DMA NVM de 64 MiB, buscou quatro índices e executou o shader original para seis vértices. A conversão S32K usa o modelo local S16-para-float, sem validação no NV2A. Em uma execução, a preparação do raster parou na textura `0x06610E29` (`control1=0x14000000`). Em outra, uma textura 128×32 foi preparada, mas o desenho parou nos controles de depth/compressão/AA; não há pixels/writeback comprovados para esse strip. Desenhos anteriores escreveram superfícies no guest, sem aprovar este desenho nem a fidelidade NV2A. |
+| Rendering | Recibos DXGI com aposentadoria pela ISR original, recompilação de shader e desenhos anteriores com writeback de pixels no guest foram observados. O fetch atual validou quatro índices e executou o shader original para seis vértices; a conversão S32K permanece um modelo S16-para-float sem medição NV2A. Foi implementado e testado o plano/upload de armazenamento linear DXT23 como BC2, mas o último launch não reproduziu esse formato. Também não reproduziu o desenho P8 128×32 autorizado. O bloqueio atual é a espera pelo método de flip `0x130`, sem slot livre/apresentação observada; completion da submissão permaneceu inalterada. Pixels desse strip e apresentação não estão comprovados. |
 | Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
 | Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
 
@@ -40,19 +40,24 @@ com alvo NVM e span declarada `0x07FFB000` (aproximadamente 128 MiB), limitada
 pelo host à região suportada de 64 MiB. O offset `0x00166574` passou pelas verificações de
 intervalo; os seis vértices convertidos pelo modelo S16-para-float chegaram ao
 shader recompilado. Isso comprova fetch e invocação do shader neste caso, não
-a semântica NV2A da conversão nem a rasterização do strip. Uma execução mais
-recente saiu com `exit 3` antes do timeout de 60 segundos após informar
-`depth=1`, `depth_write=1`, `compress_depth=1`, `samples=2`, `dither=1` e
-`anti_alias_control=0xFFFF0001`; o desenho foi recusado e a fila não foi
-concluída. Essa execução preparou uma textura 128×32. Ela não reproduziu a
-recusa de `0x06610E29`, que continua sem dimensão/span ativos confirmados. O
-XBE permaneceu inalterado. Logs, saves e código gerado ficam locais em D:.
+a semântica NV2A da conversão nem a rasterização desse strip. A implementação
+BC2 calcula para o snapshot anterior da textura `0x06610E29` 1280×480, pitch
+5120 e span `0x96000`; testes sintéticos comprovaram formato e preservação dos
+bytes comprimidos, mas o launch integrado não repetiu o snapshot. O launch
+mais recente saiu com `exit 3` antes do limite de 60 segundos. Na fila
+rejeitada, o método `0x130` recebeu valor zero e não havia slot de flip livre
+(`read=0`, `write=0`, `modulo=3`, `valid=7`); a completion ficou inalterada e
+não houve apresentação. O opt-in P8 128×32 também não apareceu nesta execução.
+O XBE permaneceu inalterado. Logs, saves e código gerado ficam locais em D:.
 
 As aproximações gráficas são opt-in e restritas aos casos observados:
 AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
 1280×480 para 640×480; BC1 padrão sem o ruído DXT1 desconhecido somente na
 textura 512×512 e desenho AA2 autorizado; P8 32×32 convertido sem perdas
-para ARGB8 e rasterizado sob opção AA2 própria. Esses experimentos não
+para ARGB8 e rasterizado sob opção AA2 própria; e o caso P8 128×32 autorizado
+com depth-write dentro da opção independente. O armazenamento DXT23→BC2 usa
+blocos padrão de 16 bytes por 4×4 pixels; o launch ainda não confirmou seu uso
+nem o comportamento de amostragem NV2A. As aproximações gráficas não
 comprovam equivalência NV2A nem autorizam outros formatos ou modos.
 
 O bypass de áudio também exige opção explícita e fica desligado no build
@@ -64,27 +69,24 @@ nenhum START original foi observado. O DSP experimental não participa do boot.
 
 ### Próximos passos
 
-1. **Desbloquear os controles do desenho:** mapear as dependências originais
-   para depth, depth compression e anti-aliasing que produziram o domínio
-   recusado. Validar cada estado com fonte/call site e testes focais; não
-   ampliar aproximações de AA nem declarar equivalência sem evidência.
-2. **Retomar a textura `0x06610E29`:** capturar o snapshot de registradores
-   efetivamente ativo se ela reaparecer. Confirmar endereço, dimensões e span
-   antes de admitir leitura; a execução mais recente não reproduziu essa
-   recusa, e os setters enfileirados após o END não provam seu estado ativo.
-3. **Validar rendering do strip:** repetir o launch limitado e exigir desenho
-   nativo concluído com pixels e writeback da superfície no guest. A execução
-   do shader e a fila aceita não bastam.
-4. **Repetir o launch limitado:** localizar o próximo bloqueio sem concluir a
-   fila artificialmente.
-5. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
+1. **Resolver a espera de flip:** rastrear estaticamente a origem do método
+   `0x130` e o ciclo de vida dos índices/slots até uma apresentação real.
+   Validar com testes de estado e launch limitado; não avançar índices nem
+   sinalizar completion sem evento de apresentação comprovado.
+2. **Validar o strip após o flip:** comprovar submissão concluída, pixels e
+   writeback de cor/depth para o desenho alvo. Separar isso da prova de
+   apresentação e da fidelidade NV2A.
+3. **Retomar DXT23 e P8 128×32:** repetir capturas limitadas até os estados
+   autorizados reaparecerem; confirmar upload/amostragem efetivos e pixels.
+   Hoje BC2 só passou testes de planner/uploader e P8 128×32 só passou o gate.
+4. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
    em cada execução, seja tradução, serviço de host, carregamento ou desenho.
    Não substituir funções ausentes por sucesso fictício.
-6. **Validar controles e cenário:** comprovar entrada chegando à lógica
+5. **Validar controles e cenário:** comprovar entrada chegando à lógica
    original, navegação do menu e carregamento de uma partida.
-7. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
+6. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
    executados pela lógica original, com estabilidade e resultado verificável.
-8. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
+7. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
    retirar a dependência do bypass e validar os efeitos das aproximações
    gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
 

@@ -40,6 +40,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * Other texture stages must be disabled in that additional experiment. */
 /* RECOMP_P8_AA2_APPROXIMATION separately admits only the captured 32x32 P8
  * state after exact palette expansion, with the same AA2 baseline limits. */
+/* RECOMP_P8_128X32_AA2_APPROXIMATION is a separately authorized experiment
+ * for only the captured 128x32 P8 state with depth test/write enabled. */
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *state,
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 #endif
