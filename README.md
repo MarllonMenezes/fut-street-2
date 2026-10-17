@@ -14,53 +14,65 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — código atual
+## Estado verificável — 17 de outubro de 2026
 
-A execução nativa já conecta apresentações DXGI à fila original de scanout,
-com confirmação pela ISR e execução do callback recompilado no caminho
-observado. Isso ainda não comprova menu, controles ou uma partida jogável.
-A temporização da saída do PC é uma aproximação, não uma medição NV2A.
+**`NOT_READY` — ainda não jogável.** O código validado deste estágio está no
+commit [`cd3cce0`](https://github.com/MarllonMenezes/fut-street-2/commit/cd3cce017bd4d7e65185542379a98bf54a233771).
 
-O writeback gráfico agora preserva a memória de attachments não escritos
-pelo draw. A regressão cobre alterações da CPU após o snapshot da superfície,
-evitando restaurar dados antigos de depth quando depth/stencil estão inativos.
-Há também uma opção explícita para posicionar a janela em `(0,0)` após sua
-abertura (`-NativeDisplayOrigin`); o recibo real de apresentação continua
-obrigatório, inclusive no teste do primeiro frame de um contexto novo.
+| Etapa | Evidência atual |
+| --- | --- |
+| Tradução e compilação | Build nativo Release com 15.605 entradas exatas de dispatch. As funções originais recuperadas foram regeneradas e incluídas no executável testado. |
+| Boot | Execução parcial da lógica original no PC, em testes limitados. A inicialização completa ainda não foi comprovada. |
+| Rendering | Fundo de carregamento capturado da memória guest; apresentações DXGI com callback e retirada pela ISR original observados. Isso não comprova menu utilizável nem fidelidade NV2A. |
+| Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
+| Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
 
-Build Release e CTest passaram **34/34**, sem testes pulados. Também passaram
-os **6 testes de preflight**, o controle negativo de dispatch e os testes do
-DSP isolado. Uma execução nativa limitada a 30 segundos confirmou
-duas apresentações com recibo DXGI e retirada pela ISR original, sem a falha
-de acesso anteriormente investigada. O encerramento por timeout não aprova
-boot completo nem fidelidade.
+A última função recuperada, `0x0021421A`, passou em **690 casos semânticos**
+com a rotina auxiliar original recompilada. O launch do jogo confirmou
+**96 entradas e 96 retornos** dessa função. A integração passou em **36/36
+testes nativos**, sem skips, e nos preflights estático e de runtime; preflight
+não executa o código guest e não aprova boot.
 
-As aproximações AA2 e quincunx exigem opções separadas e permanecem limitadas
-aos casos autorizados. O quincunx experimental cobre somente o resolve
-observado de 1280×480 para 640×480; não é um filtro genérico validado na NV2A.
-A aceitação de dithering ARGB8 single-sample também não equivale a medição
-de hardware nem autoriza outros formatos ou modos.
+O teste mais recente usou timeout de **20 segundos**, logs e saves isolados
+no D:, e terminou por diagnóstico antes do limite: chamada indireta para
+**`0x001D864E`**, ainda ausente da geração. Esse é o próximo bloqueio concreto.
+O runner permite ajustar `-TraceBudget` entre 1 e 400.000 mensagens, mantendo
+20.000 como padrão e registrando o limite no resultado.
 
-O bloqueio atual está na inicialização dos efeitos de áudio, aguardando uma
-resposta do dispositivo. O adaptador DSP é **somente um experimento isolado**:
-não participa do boot, não fornece áudio e não injeta READY/ACK artificiais.
-O teste isolado já carrega o programa inicial por duas páginas scratch não
-contíguas, verifica a conversão para palavras de 24 bits e executa um programa
-sintético. Entradas inválidas são recusadas antes de alterar a memória do DSP;
-o executor DMA isolado transfere um descritor por chamada entre scratch e
-X/Y/P, cobrindo formatos de 16 bits e 24 bits LSB. Os testes verificam limites,
-cruzamento de páginas, sobreposição da tabela e invalidação do programa em P.
-Ainda faltam os registradores e a integração com o processamento dos efeitos;
-os descritores emitidos pelo DSP original não foram validados nesse executor.
-A ferramenta opcional `mcpx_dsp_probe` observa um bootstrap fornecido localmente
-e para no primeiro START DMA ou acesso desconhecido. O diagnóstico isolado do
-programa original identificou um nó preparado para buffer circular, mas parou
-em um periférico sem semântica confirmada antes do START. A memória restante
-e o estado inicial dessa fixture são sintéticos; isso não comprova boot ou áudio.
-Use `tools/run-dsp-probe.ps1` para impor timeout de até 15 segundos e gravar
-logs no D:. Não publique o bootstrap extraído nem seus logs.
-Menu, controles, cenário, partida curta e áudio funcional continuam pendentes.
-O estado permanece **`NOT_READY`**. Planos, logs e artefatos do jogo ficam locais.
+As aproximações gráficas são opt-in e restritas aos casos observados:
+AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
+1280×480 para 640×480; BC1 padrão sem o ruído DXT1 desconhecido somente na
+textura 512×512 e desenho AA2 autorizado; P8 32×32 convertido sem perdas
+para ARGB8 e rasterizado sob opção AA2 própria. Esses experimentos não
+comprovam equivalência NV2A nem autorizam outros formatos ou modos.
+
+O bypass de áudio também exige opção explícita e fica desligado no build
+padrão. Sua conclusão artificial serve para investigar os bloqueios seguintes;
+não representa execução do DSP ou áudio correto. O caminho sem bypass ainda
+aguarda os efeitos de áudio. No experimento DSP isolado, o contrato do
+periférico `FFFFB2` e o campo de passo do DMA circular permanecem desconhecidos;
+nenhum START original foi observado. O DSP experimental não participa do boot.
+
+### Próximos passos
+
+1. **Recuperar `0x001D864E`:** confirmar os limites e o fluxo no XBE local,
+   gerar a função original, validar ABI e comportamento, recompilar o
+   executável e repetir o launch limitado.
+2. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
+   em cada execução, seja tradução, serviço de host, carregamento ou desenho.
+   Não substituir funções ausentes por sucesso fictício.
+3. **Validar controles e cenário:** comprovar entrada chegando à lógica
+   original, navegação do menu e carregamento de uma partida.
+4. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
+   executados pela lógica original, com estabilidade e resultado verificável.
+5. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
+   retirar a dependência do bypass e validar os efeitos das aproximações
+   gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
+
+Build, boot, rendering, áudio e gameplay são critérios separados. O estado
+permanece `NOT_READY` até a comprovação dos requisitos funcionais. Insumos,
+código gerado proprietário, capturas, logs e relatórios locais não são
+publicados neste repositório.
 
 ## Abordagem
 
@@ -80,9 +92,10 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
 
-O gate da geração atual exige exatamente 15.602 entradas de dispatch,
-incluindo os dois pontos de entrada indiretos recuperados; uma geração antiga
-com 15.600 entradas não satisfaz esse contrato.
+O gate da geração atual exige exatamente 15.605 entradas de dispatch,
+incluindo os cinco pontos de entrada indiretos recuperados. Uma geração
+anterior não satisfaz esse contrato; confirme a regeneração e o executável
+realmente utilizado nos testes.
 
 ```powershell
 cmake -S native_recomp -B artifacts/fut-street2-native/build -G Ninja `
@@ -250,7 +263,7 @@ ordinais de thunk usados pelo subgrafo têm cases explícitos no resolver do
 host. Isso mede cobertura de ponteiro do resolver; não aprova ABI, efeitos
 colaterais ou semântica Xbox dos serviços.
 
-Somente aliases lineares demonstrados e inicializadores constantes de slots BSS são classificados; os 7 alvos dinâmicos continuam explicitamente não resolvidos, embora o relatório preserve a forma de proveniência de cada família e os aliases de endereço usados pelos writers candidatos. A auditoria de stack shape dos callbacks é somente contagem de pushes observados e não constitui prova de tipos, ABI, execução ou fidelidade dos serviços Xbox.
+Nessa auditoria estática específica, somente aliases lineares demonstrados e inicializadores constantes de slots BSS são classificados; seus sete alvos dinâmicos não recebem aprovação de runtime pelo relatório. Isso não é uma contagem dos bloqueios atuais do executável. O relatório preserva a proveniência de cada família e os aliases de endereço usados pelos writers candidatos. A auditoria de stack shape dos callbacks é somente contagem de pushes observados e não constitui prova de tipos, ABI, execução ou fidelidade dos serviços Xbox.
 
 Esses comandos validam compilação e testes do código-fonte, não os gates do jogo original. Não execute nem distribua o XBE ou assets proprietários.
 
