@@ -475,6 +475,11 @@ static int native_prepare_vertex(NativeGraphicsState *state)
         if (FAILED(hr)) {
             fprintf(stderr, "[GRAPHICS] vertex program recompilation failed: start=%u count=%u hr=%08lX\n",
                     first, count, hr);
+            for (unsigned i = 0; i < count; ++i) {
+                const uint32_t *w = state->kelvin.program[first + i];
+                fprintf(stderr, "[VERTEX-PROGRAM] slot=%u words=%08X/%08X/%08X/%08X mac=%u ilu=%u\n",
+                    first+i,w[0],w[1],w[2],w[3],(w[1]>>21)&15u,(w[1]>>25)&7u);
+            }
             return 0;
         }
         if (state->vertex_shader) ID3D11VertexShader_Release(state->vertex_shader);

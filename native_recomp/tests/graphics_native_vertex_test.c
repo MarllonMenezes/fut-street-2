@@ -6,14 +6,14 @@
 #include <string.h>
 #include <math.h>
 
-int main(void)
+static int run_fixture(int dp4)
 {
     /* Synthetic original-format program with independent expected results:
      * R1=v0; paired MOV oD0=v1 / RCP R1.w=1/old(R1.w);
      * R2=R1*c0; oPos=R2+c1. The paired MAC's R1 write is suppressed.
      * It exercises word-1 opcodes, output versus temp masks, source snapshots
      * and the paired ILU R1 destination, rather than just compilation. */
-    uint32_t program[4][4] = {
+    uint32_t program[5][4] = {
         {0, (1u<<21)|0x1Bu, 2u<<26, (15u<<24)|(1u<<20)},
         {0, (1u<<21)|(2u<<25)|(1u<<9)|0x1Bu, (2u<<26)|0x3FCu,
             (1u<<30)|(1u<<28)|(15u<<24)|(1u<<20)|(1u<<16)|(15u<<12)|0x800u|(3u<<3)},
@@ -22,9 +22,23 @@ int main(void)
         {0, (3u<<21)|(1u<<13)|0x1Bu, (2u<<28)|(1u<<26)|0x6Cu,
             (3u<<28)|(15u<<12)|0x800u|1u}
     };
+    unsigned count = dp4 ? 5 : 4;
+    if (dp4) {
+        program[3][3] &= ~1u;
+        /* Independent dot: (5,14,27,7).(1,2,3,4)=142; write x/z only. */
+        program[4][1]=(7u<<21)|(1u<<13)|0x1Bu;
+        program[4][2]=(12u<<28)|(1u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17);
+        program[4][3]=(10u<<12)|0x800u|1u;
+    }
     char text[16384]; size_t length;
-    if (!fut_vertex_program_hlsl(program, 4, text, sizeof(text), &length) || !length) return 1;
-    uint32_t invalid[4][4]; memcpy(invalid, program, sizeof(invalid));
+    if (!fut_vertex_program_hlsl(program, count, text, sizeof(text), &length) || !length) return 1;
+    if (dp4) {
+        uint32_t only_b[1][4]={{0,(7u<<21)|(3u<<9)|0x1Bu,
+            (1u<<26)|(2u<<11)|(1u<<21)|(2u<<19)|(3u<<17),0xF801u}};
+        uint16_t mask=0;
+        if (!fut_vertex_program_input_mask(only_b,1,&mask) || mask!=(1u<<3)) return 24;
+    }
+    uint32_t invalid[5][4]; memcpy(invalid, program, sizeof(invalid));
     invalid[0][1] = (4u<<21)|0x1Bu;
     if (fut_vertex_program_hlsl(invalid, 4, text, sizeof(text), &length) || length) return 2;
     memcpy(invalid, program, sizeof(invalid)); invalid[3][3] &= ~1u;
@@ -47,7 +61,7 @@ int main(void)
     if (FAILED(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_WARP, NULL, 0, NULL, 0,
         D3D11_SDK_VERSION, &device, &level, &context))) return 5;
     ID3D11VertexShader *shader = NULL; ID3DBlob *bytecode = NULL;
-    if (FAILED(fut_native_vertex_compile(device, program, 4, &shader, &bytecode))) return 6;
+    if (FAILED(fut_native_vertex_compile(device, program, count, &shader, &bytecode))) return 6;
     FutNativeConstants constants;
     if (FAILED(fut_native_constants_init(&constants, device, context))) return 7;
     float uniforms[192][4] = {{0}};
@@ -98,7 +112,7 @@ int main(void)
     if (!fut_native_constants_finish(&constants, NULL, 2000, NULL)) return 15;
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (FAILED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped))) return 16;
-    const float expected[] = {5,14,27,7,0.25f,0.5f,0.75f,1};
+    const float expected[] = {dp4?142:5,14,dp4?142:27,7,0.25f,0.5f,0.75f,1};
     const float *actual = mapped.pData;
     int correct = 1;
     for (unsigned i = 0; i < 8; ++i) {
@@ -115,4 +129,9 @@ int main(void)
     if (!correct) return 17;
     puts("Original-format shader recompiled and executed: paired issue, reciprocal, masks and outputs verified");
     return 0;
+}
+int main(void)
+{
+    int result=run_fixture(0);
+    return result ? result : run_fixture(1);
 }

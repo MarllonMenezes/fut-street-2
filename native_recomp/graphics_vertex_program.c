@@ -67,17 +67,18 @@ static int generate(const uint32_t (*words)[4], size_t count,
     for (size_t index = 0; index < count; ++index) {
         const uint32_t *w = words[index];
         unsigned mac = (w[1] >> 21) & 15, ilu = (w[1] >> 25) & 7;
-        /* First exercised program uses MOV/MUL/ADD and MOV/RCP. Other ops
+        /* Exercised programs use MOV/MUL/ADD/DP4 and MOV/RCP. Other ops
          * require implementations plus semantic tests before acceptance. */
-        if (mac > 3 || ilu > 2) return 0;
+        if ((mac > 3 && mac != 7) || ilu > 2) return 0;
         char a[96] = "0", b[96] = "0", csrc[96] = "0";
         if ((mac && !source(a, sizeof(a), w, 0)) ||
-            (mac == 2 && !source(b, sizeof(b), w, 1)) ||
+            ((mac == 2 || mac == 7) && !source(b, sizeof(b), w, 1)) ||
             ((mac == 3 || ilu) && !source(csrc, sizeof(csrc), w, 2))) return 0;
         emit(&out, "{float4 A=%s;float4 B=%s;float4 C=%s;float4 M=0;float4 I=0;\n", a, b, csrc);
         if (mac == 1) emit(&out, "M=A;\n");
         if (mac == 2) emit(&out, "M=A*B;\n");
         if (mac == 3) emit(&out, "M=A+C;\n");
+        if (mac == 7) emit(&out, "M=dot(A,B).xxxx;\n");
         if (ilu == 1) emit(&out, "I=C;\n");
         if (ilu == 2) emit(&out, "I=(1.0f/C.x).xxxx;\n");
         unsigned temp = (w[3] >> 20) & 15;
@@ -156,7 +157,7 @@ int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16
     for(size_t index=0;index<count;++index) {
         const uint32_t *w=words[index];
         unsigned mac=(w[1]>>21)&15,ilu=(w[1]>>25)&7;
-        if((mac && ((w[2]>>26)&3)==2) || (mac==2 && ((w[2]>>11)&3)==2) ||
+        if((mac && ((w[2]>>26)&3)==2) || ((mac==2 || mac==7) && ((w[2]>>11)&3)==2) ||
             ((mac==3 || ilu) && ((w[3]>>28)&3)==2)) found|=1u<<((w[1]>>9)&15);
         if(w[3]&1) break;
     }
