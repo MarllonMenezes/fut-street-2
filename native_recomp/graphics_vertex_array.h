@@ -1,0 +1,33 @@
+#ifndef FUT_GRAPHICS_VERTEX_ARRAY_H
+#define FUT_GRAPHICS_VERTEX_ARRAY_H
+#include "graphics_immediate.h"
+#include "graphics_objects.h"
+
+#define FUT_VERTEX_ARRAY_INDEX_CAPACITY 256u
+typedef struct {
+    uint16_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
+    uint32_t inline_words[FUT_IMMEDIATE_CAPACITY*6u];
+    unsigned count, inline_count, input_mode, active, ready;
+} FutGraphicsVertexArray;
+
+void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *array);
+int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned primitive);
+int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
+int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
+int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);
+/* Transactionally builds the existing triangle-list input. Only the observed
+ * S16x3/stride-6 position stream and zero-sized disabled arrays are admitted. */
+int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *array,
+    FutGraphicsImmediate *output, FutGraphicsMemoryRead read, void *memory_context,
+    const FutGraphicsDmaView *view_a, const FutGraphicsDmaView *view_b,
+    const uint32_t formats[16], const uint32_t offsets[16],
+    const float attributes[16][4], const uint8_t attribute_valid[16],
+    uint16_t required_mask);
+/* Observed INLINE_ARRAY tuple: float3 position, ARGB8 color, float2 UV.
+ * Expands triangle-strip winding into the existing native triangle-list input. */
+int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *array,
+    FutGraphicsImmediate *output, const uint32_t formats[16],
+    const float attributes[16][4], const uint8_t attribute_valid[16],
+    uint16_t required_mask);
+int fut_graphics_vertex_array_consume(FutGraphicsVertexArray *array);
+#endif

@@ -19,6 +19,7 @@
 #include "graphics_native_pipeline.h"
 #include "graphics_software_state.h"
 #include "graphics_native_immediate.h"
+#include "graphics_vertex_array.h"
 #include "graphics_native_draw.h"
 #include "graphics_native_display.h"
 #include "graphics_native_vblank.h"
@@ -188,6 +189,7 @@ typedef struct {
     FutNativePipeline pipeline;
     FutGraphicsSoftwareState software;
     FutGraphicsImmediate immediate;
+    FutGraphicsVertexArray vertex_array;
     FutNativeImmediate native_immediate;
     FutNativeDisplay diagnostic_preview;
     FutNativeDisplay scanout_display;
@@ -891,6 +893,11 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                          uint32_t value, size_t offset)
 {
     NativeGraphicsState *state = context;
+    if(state->vertex_array.active && (subchannel!=0 ||
+        (method!=0x1800u && method!=0x1818u && method!=0x17FCu))) {
+        fprintf(stderr,"[GRAPHICS] command refused inside indexed triangle strip: sub=%u method=%04X\n",subchannel,method);
+        return 0;
+    }
     /* Only the observed attribute form is supported inside a primitive.
      * Reject before setters/binding mutation; no stale-state draw snapshots. */
     if (state->immediate.ready || (state->immediate.active && state->immediate.input_kind==2 &&
@@ -946,6 +953,92 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
+        if(subchannel==0 && method==0x17FCu && value==6u) {
+            if(state->immediate.active || state->immediate.ready ||
+                !fut_graphics_vertex_array_begin(&state->vertex_array,value)) {
+                fputs("[GRAPHICS] indexed triangle-strip begin refused\n",stderr);return 0;
+            }
+            fputs("[GRAPHICS] triangle-strip begin captured; indexed and inline forms remain restricted to observed layouts\n",stderr);
+            return 1;
+        }
+        if(subchannel==0 && method==0x1818u && state->vertex_array.active) {
+            if(!fut_graphics_vertex_array_inline(&state->vertex_array,value)) {
+                fprintf(stderr,"[GRAPHICS] INLINE_ARRAY word refused: value=%08X words=%u\n",value,state->vertex_array.inline_count);return 0;
+            }
+            return 1;
+        }
+        if(subchannel==0 && method==0x1800u && state->vertex_array.active) {
+            if(!fut_graphics_vertex_array_indices(&state->vertex_array,value)) {
+                fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT16 refused: value=%08X count=%u\n",value,state->vertex_array.count);return 0;
+            }
+            return 1;
+        }
+        if(subchannel==0 && method==0x17FCu && value==0u && state->vertex_array.active) {
+            if(!fut_graphics_vertex_array_end(&state->vertex_array)) {
+                fprintf(stderr,"[GRAPHICS] triangle-strip end refused: mode=%u indices=%u inline_words=%u\n",
+                    state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count);return 0;
+            }
+            unsigned first=state->kelvin.program_start,count=0;
+            while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
+                ++count;if(state->kelvin.program[first+count-1][3]&1u) break;
+            }
+            uint16_t required=0;
+            int built=fut_vertex_program_input_mask(state->kelvin.program+first,count,&required);
+            if(built && state->vertex_array.input_mode==2) {
+                built=fut_graphics_vertex_array_build_inline(&state->vertex_array,&state->immediate,
+                    state->kelvin.vertex_array_format,state->kelvin.attributes,
+                    state->kelvin.attribute_valid,required);
+            } else if(built && state->vertex_array.input_mode==1) {
+                FutGraphicsDmaView view_a,view_b;const unsigned refs=(1u<<7)|(1u<<8);
+                int has_refs=(state->bindings.reference_masks[0]&refs)==refs;
+                /* These exact handles resolve to class 0x3D NVM objects. Reuse
+                 * the existing NVM aperture resolver, which bounds its 128 MiB
+                 * descriptor to the supported 64 MiB guest mapping. */
+                int has_a=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][7],&view_a);
+                int has_b=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][8],&view_b);
+                if(has_a && has_b) fprintf(stderr,
+                    "[GRAPHICS] indexed strip DMA diagnostic: A=%08X/%08X B=%08X/%08X format0=%08X offset0=%08X indices=%u,%u,%u,%u\n",
+                    view_a.guest_address,view_a.size,view_b.guest_address,view_b.size,
+                    state->kelvin.vertex_array_format[0],state->kelvin.vertex_array_offset[0],
+                    state->vertex_array.indices[0],state->vertex_array.indices[1],
+                    state->vertex_array.indices[2],state->vertex_array.indices[3]);
+                else {
+                    const FutGraphicsObject *aobj=&state->bindings.references[0][7];
+                    const FutGraphicsObject *bobj=&state->bindings.references[0][8];
+                    fprintf(stderr,"[GRAPHICS] indexed strip DMA diagnostic: refs=%u viewA=%u viewB=%u mask=%08X A(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X) B(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X)\n",
+                        has_refs,has_a,has_b,state->bindings.reference_masks[0],
+                        aobj->handle,aobj->descriptor,aobj->words[0],aobj->words[1],aobj->words[2],aobj->words[3],
+                        bobj->handle,bobj->descriptor,bobj->words[0],bobj->words[1],bobj->words[2],bobj->words[3]);
+                }
+                built=has_a && has_b && fut_graphics_vertex_array_build(&state->vertex_array,&state->immediate,
+                    state->bindings.read,state->bindings.memory_context,&view_a,&view_b,
+                    state->kelvin.vertex_array_format,state->kelvin.vertex_array_offset,
+                    state->kelvin.attributes,state->kelvin.attribute_valid,required);
+            } else built=0;
+            if(!built) {
+                fprintf(stderr,"[GRAPHICS] observed triangle-strip fetch refused: mode=%u indices=%u inline_words=%u required=%04X; no draw/completion\n",
+                    state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,required);return 0;
+            }
+            fprintf(stderr,"[GRAPHICS] observed triangle strip fetched transactionally: mode=%u indices=%u inline_words=%u expanded_vertices=%u; no pixels yet\n",
+                state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,state->immediate.count);
+            if(!native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
+            unsigned drawn=state->immediate.count;HRESULT hr;
+            if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
+                &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
+                &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,state->constant_coordinates!=0);
+            else hr=fut_native_draw_immediate(&state->native_immediate,&state->immediate,
+                &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                state->device,state->context,state->vertex_shader,state->pixel_shader,
+                &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop);
+            if(FAILED(hr)) {
+                fprintf(stderr,"[GRAPHICS] triangle-strip draw/completion refused: HRESULT=%08lX; no completion claimed\n",hr);return 0;
+            }
+            if(!fut_graphics_vertex_array_consume(&state->vertex_array)) return 0;
+            fprintf(stderr,"[GRAPHICS] triangle-strip draw completed with guest surface writeback: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
+                drawn,(unsigned long long)state->native_immediate.ia_vertices,(unsigned long long)state->native_immediate.ps_invocations);
+            return native_preview_original_draw(state);
+        }
         if (subchannel==0 && (method==0x17FCu || method==0x1818u ||
             (method>=0x1518u && method<=0x1524u) ||
             (method>=0x1880u && method<0x1900u))) {
