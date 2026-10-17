@@ -16,28 +16,39 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 17 de outubro de 2026
 
-**`NOT_READY` — ainda não jogável.** O código validado deste estágio está no
-commit [`cd3cce0`](https://github.com/MarllonMenezes/fut-street-2/commit/cd3cce017bd4d7e65185542379a98bf54a233771).
+**`NOT_READY` — ainda não jogável.** Este estágio valida a recuperação e
+compilação de uma entrada interna observada; a execução desse callback ainda
+não foi confirmada em runtime.
 
 | Etapa | Evidência atual |
 | --- | --- |
-| Tradução e compilação | Build nativo Release com 15.605 entradas exatas de dispatch. As funções originais recuperadas foram regeneradas e incluídas no executável testado. |
+| Tradução e compilação | Build nativo Release com 15.608 entradas exatas de dispatch. A entrada interna `0x001BF6D2` foi traduzida do XBE e incluída no executável testado. |
 | Boot | Execução parcial da lógica original no PC, em testes limitados. A inicialização completa ainda não foi comprovada. |
 | Rendering | Fundo de carregamento capturado da memória guest; apresentações DXGI com callback e retirada pela ISR original observados. Isso não comprova menu utilizável nem fidelidade NV2A. |
 | Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
 | Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
 
-A última função recuperada, `0x0021421A`, passou em **690 casos semânticos**
-com a rotina auxiliar original recompilada. O launch do jogo confirmou
-**96 entradas e 96 retornos** dessa função. A integração passou em **36/36
-testes nativos**, sem skips, e nos preflights estático e de runtime; preflight
-não executa o código guest e não aprova boot.
+As funções `0x001D864E` e `0x001D8079` passaram em **4.096** e **1.024**
+casos focais, respectivamente. Um launch anterior
+confirmou entrada e retorno de `0x001D8079`, além de **12 apresentações**
+com retirada pela ISR original. A recuperação atual de `0x001BF6D2` foi
+confirmada estaticamente: a função contêiner termina exatamente no callback,
+que contém seis instruções até RET; a função `0x001BF915` passa o endereço
+literal como callback a `0x001C2784`. O teste do recuperador passou em
+**14 casos**, e a integração passou em **36/36 testes nativos**. Esses gates
+não comprovam boot nem execução do novo callback.
 
-O teste mais recente usou timeout de **20 segundos**, logs e saves isolados
-no D:, e terminou por diagnóstico antes do limite: chamada indireta para
-**`0x001D864E`**, ainda ausente da geração. Esse é o próximo bloqueio concreto.
-O runner permite ajustar `-TraceBudget` entre 1 e 400.000 mensagens, mantendo
-20.000 como padrão e registrando o limite no resultado.
+O launch limitado mais recente (40 segundos, encerrado antes do limite) não
+chegou ao callback. O host recusou um método gráfico no intervalo
+`0x82802000..0x82803558` (`status=4`, offset 5396, cabeçalho `0x00040100`)
+e encerrou com `exit 3`; nenhum frame foi apresentado nesse run. Assim, a
+recuperação está compilada, mas a entrada dinâmica permanece sem validação de
+runtime. Os logs e saves foram isolados em D: e não são publicados.
+
+O teste anterior de 60 segundos havia confirmado a entrada e retorno de
+`0x001D8079` e 12 apresentações antes de encontrar o alvo indireto
+`0x001BF6D2`. O runner permite ajustar `-TraceBudget` entre 1 e 400.000
+mensagens, mantendo 20.000 como padrão e registrando o limite no resultado.
 
 As aproximações gráficas são opt-in e restritas aos casos observados:
 AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
@@ -55,17 +66,21 @@ nenhum START original foi observado. O DSP experimental não participa do boot.
 
 ### Próximos passos
 
-1. **Recuperar `0x001D864E`:** confirmar os limites e o fluxo no XBE local,
-   gerar a função original, validar ABI e comportamento, recompilar o
-   executável e repetir o launch limitado.
-2. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
+1. **Desbloquear o método gráfico recusado:** identificar o método e valor
+   guest no offset 5396 do ring `0x82802000..0x82803558`, confirmar sua forma
+   no fluxo original e então implementar somente o efeito demonstrado. Não
+   marcar a fila concluída artificialmente.
+2. **Confirmar `0x001BF6D2` em runtime:** repetir o launch limitado após o
+   parser avançar; verificar entrada/retorno do callback e localizar o
+   próximo bloqueio sem atribuir semântica além do corpo recompilado.
+3. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
    em cada execução, seja tradução, serviço de host, carregamento ou desenho.
    Não substituir funções ausentes por sucesso fictício.
-3. **Validar controles e cenário:** comprovar entrada chegando à lógica
+4. **Validar controles e cenário:** comprovar entrada chegando à lógica
    original, navegação do menu e carregamento de uma partida.
-4. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
+5. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
    executados pela lógica original, com estabilidade e resultado verificável.
-5. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
+6. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
    retirar a dependência do bypass e validar os efeitos das aproximações
    gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
 
@@ -92,8 +107,8 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
 
-O gate da geração atual exige exatamente 15.605 entradas de dispatch,
-incluindo os cinco pontos de entrada indiretos recuperados. Uma geração
+O gate da geração atual exige exatamente 15.608 entradas de dispatch,
+incluindo os oito pontos de entrada indiretos recuperados. Uma geração
 anterior não satisfaz esse contrato; confirme a regeneração e o executável
 realmente utilizado nos testes.
 

@@ -2,7 +2,9 @@
 import unittest
 import struct
 
-from tools.analysis.recomp_recover_observed_callback import read_dispatch, register_callback, validate_switch
+from tools.analysis.recomp_recover_observed_callback import (
+    read_dispatch, register_callback, validate_contained_callback, validate_switch,
+)
 
 
 def dispatch(rows, count=None):
@@ -71,6 +73,42 @@ class SwitchRecoveryTests(unittest.TestCase):
         code = self.code[:14] + struct.pack('<2I', 0x1005, 0x100d)
         with self.assertRaisesRegex(ValueError, 'bypasses'):
             validate_switch(code, 0x1000, 0x1016, 0x100e, 2)
+
+
+class ContainedCallbackTests(unittest.TestCase):
+    def setUp(self):
+        # push 0x1005; callback: nop; ret
+        self.data = bytes.fromhex("680510000090c3")
+
+    def test_requires_owner_boundary_end_and_literal_reference(self):
+        ins, refs = validate_contained_callback(
+            self.data, -0x1000, -0x1000, 0x1000, 0x1007, 0x1005, 0x1007,
+            0x1000, 0x1000, 0x1007)
+        self.assertEqual(ins[-2].address, 0x1005)
+        self.assertEqual(refs, [0x1000])
+
+    def test_rejects_missing_literal_reference(self):
+        with self.assertRaisesRegex(ValueError, "literal callback reference"):
+            validate_contained_callback(bytes.fromhex("909090c3"), -0x1000, -0x1000,
+                                        0x1000, 0x1004, 0x1001, 0x1004,
+                                        0x1000, 0x1000, 0x1004)
+
+    def test_rejects_wrong_owner_and_non_boundary_start(self):
+        with self.assertRaisesRegex(ValueError, "explicit owner"):
+            validate_contained_callback(self.data, -0x1000, -0x1000, 0x1000, 0x1007,
+                                        0x1005, 0x1007, 0x2000, 0x1000, 0x1007)
+        with self.assertRaisesRegex(ValueError, "instruction boundary"):
+            validate_contained_callback(self.data, -0x1000, -0x1000, 0x1000, 0x1007,
+                                        0x1002, 0x1007, 0x1000, 0x1000, 0x1007)
+
+    def test_rejects_non_owner_end_and_incomplete_owner_decode(self):
+        with self.assertRaisesRegex(ValueError, "end at owner end"):
+            validate_contained_callback(self.data, -0x1000, -0x1000, 0x1000, 0x1007,
+                                        0x1005, 0x1006, 0x1000, 0x1000, 0x1007)
+        with self.assertRaisesRegex(ValueError, "instruction boundary"):
+            validate_contained_callback(bytes.fromhex("0f90c3"), -0x1000, -0x1000,
+                                        0x1000, 0x1003,
+                                        0x1001, 0x1003, 0x1000, 0x1000, 0x1003)
 
 
 if __name__ == "__main__":

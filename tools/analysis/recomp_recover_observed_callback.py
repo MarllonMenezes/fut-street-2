@@ -58,6 +58,53 @@ def validate_switch(code: bytes, start: int, end: int, table: int, count: int):
     return instructions, targets, jump.address
 
 
+def validate_contained_callback(data: bytes, owner_file_va_delta: int, reference_file_va_delta: int,
+                                owner_start: int,
+                                owner_end: int, callback_start: int,
+                                callback_end: int, expected_owner: int,
+                                reference_start: int, reference_end: int):
+    """Prove an interior entry and a literal reference in its known caller."""
+    import capstone
+    if owner_start != expected_owner:
+        raise ValueError("Contained callback owner does not match the explicit owner")
+    if not owner_start < callback_start < callback_end == owner_end:
+        raise ValueError("Contained callback must start inside its owner and end at owner end")
+    owner_off = owner_file_va_delta + owner_start
+    owner_size = owner_end - owner_start
+    code = data[owner_off:owner_off + owner_size]
+    if len(code) != owner_size:
+        raise ValueError("Owner bytes are incomplete")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    owner_instructions = list(decoder.disasm(code, owner_start))
+    if sum(i.size for i in owner_instructions) != owner_size:
+        raise ValueError("Owner does not decode completely")
+    boundaries = {i.address for i in owner_instructions}
+    if callback_start not in boundaries:
+        raise ValueError("Callback start is not an owner instruction boundary")
+    callback = [i for i in owner_instructions if i.address >= callback_start]
+    if not callback or callback[0].address != callback_start or callback[-1].address + callback[-1].size != callback_end:
+        raise ValueError("Callback end does not match the decoded owner boundary")
+    if callback[-1].mnemonic not in ("ret", "jmp"):
+        raise ValueError("Contained callback does not end in RET or JMP")
+    ref_off = reference_file_va_delta + reference_start
+    ref_size = reference_end - reference_start
+    ref_code = data[ref_off:ref_off + ref_size]
+    if len(ref_code) != ref_size:
+        raise ValueError("Reference function bytes are incomplete")
+    ref_instructions = list(decoder.disasm(ref_code, reference_start))
+    if sum(i.size for i in ref_instructions) != ref_size:
+        raise ValueError("Reference function does not decode completely")
+    refs = []
+    for ins in ref_instructions:
+        for operand in ins.operands:
+            if operand.type == capstone.x86.X86_OP_IMM and operand.imm & 0xFFFFFFFF == callback_start:
+                refs.append(ins.address)
+    if not refs:
+        raise ValueError("Named reference function has no literal callback reference")
+    return owner_instructions, refs
+
+
 def read_dispatch(text: str) -> list[tuple[int, str]]:
     rows = [(int(m[1], 16), m[2]) for m in ROW.finditer(text)]
     addresses = [a for a, _ in rows]
@@ -111,8 +158,23 @@ def recover(args: argparse.Namespace) -> dict:
     known = {int(f["start"], 16): f for f in functions}
     if args.start in known or args.end not in known or args.end <= args.start:
         raise ValueError("Expected an omitted start bounded by a known following function")
-    if any(int(f["start"], 16) < args.end and int(f["end"], 16) > args.start for f in functions):
-        raise ValueError("Requested range overlaps an already translated function")
+    overlaps = [f for f in functions
+                if int(f["start"], 16) < args.end and int(f["end"], 16) > args.start]
+    contained_proof = None
+    if overlaps:
+        if args.contained_owner is None or len(overlaps) != 1:
+            raise ValueError("Requested range overlaps an already translated function")
+        owner = overlaps[0]
+        owner_start, owner_end = int(owner["start"], 16), int(owner["end"], 16)
+        if (owner_start != args.contained_owner or args.end != owner_end
+                or args.start <= owner_start):
+            raise ValueError("Overlap is not contained in the explicitly named owner")
+        reference = known.get(args.reference_function) if args.reference_function is not None else None
+        if reference is None:
+            raise ValueError("Contained callback requires an explicit known reference function")
+        contained_proof = True
+    elif args.contained_owner is not None or args.reference_function is not None:
+        raise ValueError("Named contained-callback owner does not overlap the callback")
     dispatch = (args.generated_dir / "recomp_dispatch.c").read_text(encoding="utf-8")
     registered = dict(read_dispatch(dispatch))
     sys.path.insert(0, str(args.vendor_root.resolve()))
@@ -127,6 +189,24 @@ def recover(args: argparse.Namespace) -> dict:
     if offset is None or config.va_to_file_offset(args.end - 1) != offset + size - 1:
         raise ValueError("Range is not contiguous in the original XBE")
     code = data[offset:offset + size]
+    if contained_proof:
+        owner = next(f for f in overlaps if int(f["start"], 16) == args.contained_owner)
+        owner_offset = config.va_to_file_offset(args.contained_owner)
+        reference = known[args.reference_function]
+        reference_start, reference_end = (int(reference["start"], 16), int(reference["end"], 16))
+        reference_offset = config.va_to_file_offset(reference_start)
+        if owner_offset is None or reference_offset is None:
+            raise ValueError("Owner or reference function is outside executable XBE sections")
+        if config.va_to_file_offset(owner_end - 1) != owner_offset + owner_end - args.contained_owner - 1:
+            raise ValueError("Owner is not contiguous in the original XBE")
+        if config.va_to_file_offset(reference_end - 1) != reference_offset + reference_end - reference_start - 1:
+            raise ValueError("Reference function is not contiguous in the original XBE")
+        contained_proof = validate_contained_callback(
+            data, owner_offset - args.contained_owner,
+            reference_offset - reference_start,
+            int(owner["start"], 16), int(owner["end"], 16),
+            args.start, args.end, args.contained_owner,
+            reference_start, reference_end)
     decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
     switch = args.switch_table
     targets, switch_jump = [], None
@@ -160,7 +240,10 @@ def recover(args: argparse.Namespace) -> dict:
     symbol = f"sub_{args.start:08X}"
     functions.append({"start": f"0x{args.start:08X}", "end": f"0x{args.end:08X}",
                       "size": size, "name": symbol, "section": known[args.end]["section"],
-                      "detection_method": "observed_callback", "confidence": 1.0,
+                      "detection_method": "observed_contained_callback" if contained_proof else "observed_callback", "confidence": 1.0,
+                      "overlap_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
+                      "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
+                      "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
                       "num_instructions": len(instructions), "data_ranges":
                       [[switch, args.end]] if switch is not None else []})
     new_dispatch, new_header = register_callback(
@@ -187,6 +270,9 @@ def recover(args: argparse.Namespace) -> dict:
               "xbe_sha256": digest, "body_sha256": hashlib.sha256(code).hexdigest(),
               "dispatch_entries": len(registered) + 1, "source_generation": str(args.generated_dir),
               "switch_table": switch, "switch_targets": targets,
+              "contained_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
+              "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
+              "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
               "indirect_calls_preserved": args.allow_indirect_calls,
               "vendor_root": str(args.vendor_root), "trace": str(args.trace),
               "vendor_sources_sha256": {
@@ -206,6 +292,10 @@ def main() -> None:
     parser.add_argument("--switch-table", type=lambda x: int(x, 0))
     parser.add_argument("--switch-count", type=int, default=0)
     parser.add_argument("--allow-indirect-calls", action="store_true")
+    parser.add_argument("--contained-owner", type=lambda x: int(x, 0),
+                        help="Explicit owner VA for a callback proven inside its range")
+    parser.add_argument("--reference-function", type=lambda x: int(x, 0),
+                        help="Known function containing a literal reference to the callback")
     args = parser.parse_args()
     print(json.dumps(recover(args), indent=2))
 
