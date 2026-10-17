@@ -13,13 +13,13 @@ $text = Get-Content -LiteralPath $dispatchPath -Raw
 $entryPattern = '(?m)^\s*\{\s*0x[0-9A-Fa-f]+u,\s*\(recomp_func_t\)[A-Za-z_][A-Za-z0-9_]*\s*\},'
 $entries = [regex]::Matches($text, $entryPattern)
 
-if ($entries.Count -ne 15608) {
-    throw "Expected 15608 generated dispatch entries, found $($entries.Count)"
+if ($entries.Count -ne 15610) {
+    throw "Expected 15610 generated dispatch entries, found $($entries.Count)"
 }
 
-# The current generation includes the eight recovered indirect-call seeds.
+# The current generation includes the ten recovered indirect-call seeds.
 # A count alone must not hide either missing start behind an unrelated entry.
-foreach ($seed in @('002A135C', '002A1D63', '00239C1A', '00227853', '0021421A', '001D864E', '001D8079', '001BF6D2')) {
+foreach ($seed in @('002A135C', '002A1D63', '00239C1A', '00227853', '0021421A', '001D864E', '001D8079', '001BF6D2', '00240AFB', '001D1EAD')) {
     if ($text -notmatch "(?m)^\s*\{\s*0x${seed}u,\s*\(recomp_func_t\)sub_${seed}\s*\},") {
         throw "Recovered indirect-call seed 0x$seed is missing"
     }

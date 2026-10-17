@@ -105,6 +105,52 @@ def validate_contained_callback(data: bytes, owner_file_va_delta: int, reference
     return owner_instructions, refs
 
 
+def validate_tail_jump_stub_gap(code: bytes, start: int, callback_end: int,
+                               gap_end: int, registered: set[int]):
+    """Prove a short gap consists only of direct registered JMP stubs."""
+    import capstone
+    if not start < callback_end < gap_end or len(code) != gap_end - start:
+        raise ValueError("Tail-stub gap must end at a later known function boundary")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    instructions = list(decoder.disasm(code, start))
+    if sum(i.size for i in instructions) != len(code):
+        raise ValueError("Tail-stub gap does not decode completely")
+    if not instructions or instructions[0].address != start:
+        raise ValueError("Tail-stub entry is not the first instruction")
+    first_end = instructions[0].address + instructions[0].size
+    if first_end != callback_end:
+        raise ValueError("Tail-stub end is not the first instruction boundary")
+    targets = []
+    for ins in instructions:
+        if ins.mnemonic != "jmp" or ins.size != 5 or len(ins.operands) != 1 or ins.operands[0].type != capstone.x86.X86_OP_IMM:
+            raise ValueError("Tail-stub gap must contain only direct near JMP instructions")
+        target = ins.operands[0].imm & 0xFFFFFFFF
+        if target not in registered:
+            raise ValueError(f"Tail-stub destination {target:08X} is not registered")
+        targets.append(target)
+    return instructions, targets
+
+
+def validate_linear_leaf(code: bytes, start: int, end: int):
+    """Require a complete straight-line leaf ending in its only RET."""
+    import capstone
+    if len(code) != end - start or not code:
+        raise ValueError("Linear leaf bytes do not match the requested range")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    instructions = list(decoder.disasm(code, start))
+    if sum(i.size for i in instructions) != len(code):
+        raise ValueError("Linear leaf does not decode completely")
+    if (not instructions or instructions[-1].mnemonic != "ret"
+            or instructions[-1].address + instructions[-1].size != end
+            or sum(i.mnemonic == "ret" for i in instructions) != 1):
+        raise ValueError("Linear leaf must end at its only RET")
+    if any(i.mnemonic == "call" or i.mnemonic.startswith("j") for i in instructions):
+        raise ValueError("Linear leaf cannot contain calls or branches")
+    return instructions
+
+
 def read_dispatch(text: str) -> list[tuple[int, str]]:
     rows = [(int(m[1], 16), m[2]) for m in ROW.finditer(text)]
     addresses = [a for a, _ in rows]
@@ -142,6 +188,8 @@ def register_callback(dispatch: str, header: str, start: int) -> tuple[str, str]
 def recover(args: argparse.Namespace) -> dict:
     import capstone
 
+    if args.tail_jump_stub and args.linear_leaf_gap:
+        raise ValueError("Tail-stub and linear-leaf recovery modes are mutually exclusive")
     output = args.output_dir.resolve()
     if output.drive.lower() != "d:" or output.exists():
         raise ValueError("Output must be a new directory on D:")
@@ -156,7 +204,27 @@ def recover(args: argparse.Namespace) -> dict:
         raise ValueError("Trace does not establish this unresolved callback")
     functions = json.loads(args.functions.read_text(encoding="utf-8-sig"))
     known = {int(f["start"], 16): f for f in functions}
-    if args.start in known or args.end not in known or args.end <= args.start:
+    if args.start in known or args.end <= args.start:
+        raise ValueError("Expected an omitted start with a nonempty recovery range")
+    tail_gap_end = None
+    linear_gap_end = None
+    if args.tail_jump_stub:
+        following = [address for address in known if address > args.start]
+        if not following:
+            raise ValueError("Tail-stub recovery requires a known following function boundary")
+        tail_gap_end = min(following)
+        if args.end >= tail_gap_end:
+            raise ValueError("Tail-stub entry must end before the following function")
+        if tail_gap_end - args.start > 64:
+            raise ValueError("Tail-stub proof gap exceeds the 64-byte bound")
+    elif args.linear_leaf_gap:
+        following = [address for address in known if address > args.start]
+        if not following:
+            raise ValueError("Linear-leaf recovery requires a known following function boundary")
+        linear_gap_end = min(following)
+        if args.end >= linear_gap_end:
+            raise ValueError("Linear-leaf entry must end before the following function")
+    elif args.end not in known:
         raise ValueError("Expected an omitted start bounded by a known following function")
     overlaps = [f for f in functions
                 if int(f["start"], 16) < args.end and int(f["end"], 16) > args.start]
@@ -189,6 +257,25 @@ def recover(args: argparse.Namespace) -> dict:
     if offset is None or config.va_to_file_offset(args.end - 1) != offset + size - 1:
         raise ValueError("Range is not contiguous in the original XBE")
     code = data[offset:offset + size]
+    tail_stub_targets = []
+    if args.tail_jump_stub:
+        gap_offset = config.va_to_file_offset(tail_gap_end - 1)
+        gap_size = tail_gap_end - args.start
+        if gap_offset != offset + gap_size - 1:
+            raise ValueError("Tail-stub gap is not contiguous in the original XBE")
+        gap_code = data[offset:offset + gap_size]
+        _, tail_stub_targets = validate_tail_jump_stub_gap(
+            gap_code, args.start, args.end, tail_gap_end, set(registered))
+    linear_leaf_proof = None
+    if args.linear_leaf_gap:
+        gap_offset = config.va_to_file_offset(linear_gap_end - 1)
+        gap_size = linear_gap_end - args.start
+        if gap_offset != offset + gap_size - 1:
+            raise ValueError("Linear-leaf gap is not contiguous in the original XBE")
+        gap_code = data[offset:offset + gap_size]
+        first = validate_linear_leaf(gap_code[:size], args.start, args.end)
+        neighbor = validate_linear_leaf(gap_code[size:], args.end, linear_gap_end)
+        linear_leaf_proof = (first, neighbor)
     if contained_proof:
         owner = next(f for f in overlaps if int(f["start"], 16) == args.contained_owner)
         owner_offset = config.va_to_file_offset(args.contained_owner)
@@ -238,12 +325,20 @@ def recover(args: argparse.Namespace) -> dict:
             elif ins.mnemonic != "call" and ins.address != instructions[-1].address:
                 raise ValueError("External branch before the final tail requires further analysis")
     symbol = f"sub_{args.start:08X}"
+    following_boundary = tail_gap_end if args.tail_jump_stub else linear_gap_end
+    boundary = known[following_boundary if following_boundary is not None else args.end]
     functions.append({"start": f"0x{args.start:08X}", "end": f"0x{args.end:08X}",
-                      "size": size, "name": symbol, "section": known[args.end]["section"],
-                      "detection_method": "observed_contained_callback" if contained_proof else "observed_callback", "confidence": 1.0,
+                      "size": size, "name": symbol, "section": boundary["section"],
+                      "detection_method": ("observed_linear_leaf" if linear_leaf_proof else
+                          "observed_tail_jump_stub" if args.tail_jump_stub else
+                          "observed_contained_callback" if contained_proof else "observed_callback"), "confidence": 1.0,
                       "overlap_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
                       "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
                       "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
+                      "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
+                      "tail_stub_gap_targets": [f"0x{x:08X}" for x in tail_stub_targets],
+                      "linear_leaf_gap_end": f"0x{linear_gap_end:08X}" if linear_leaf_proof else None,
+                      "linear_leaf_neighbor_end": f"0x{args.end + sum(i.size for i in linear_leaf_proof[1]):08X}" if linear_leaf_proof else None,
                       "num_instructions": len(instructions), "data_ranges":
                       [[switch, args.end]] if switch is not None else []})
     new_dispatch, new_header = register_callback(
@@ -273,6 +368,10 @@ def recover(args: argparse.Namespace) -> dict:
               "contained_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
               "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
               "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
+              "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
+              "tail_stub_gap_targets": [f"0x{x:08X}" for x in tail_stub_targets],
+              "linear_leaf_gap_end": f"0x{linear_gap_end:08X}" if linear_leaf_proof else None,
+              "linear_leaf_neighbor_end": f"0x{args.end + sum(i.size for i in linear_leaf_proof[1]):08X}" if linear_leaf_proof else None,
               "indirect_calls_preserved": args.allow_indirect_calls,
               "vendor_root": str(args.vendor_root), "trace": str(args.trace),
               "vendor_sources_sha256": {
@@ -296,6 +395,10 @@ def main() -> None:
                         help="Explicit owner VA for a callback proven inside its range")
     parser.add_argument("--reference-function", type=lambda x: int(x, 0),
                         help="Known function containing a literal reference to the callback")
+    parser.add_argument("--tail-jump-stub", action="store_true",
+                        help="Prove a direct tail-jump entry within a fully decoded stub gap")
+    parser.add_argument("--linear-leaf-gap", action="store_true",
+                        help="Prove an observed straight-line RET body and one adjacent leaf through the next known boundary")
     args = parser.parse_args()
     print(json.dumps(recover(args), indent=2))
 
