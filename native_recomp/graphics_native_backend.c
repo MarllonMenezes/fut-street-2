@@ -887,8 +887,9 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
     NativeGraphicsState *state = context;
     /* Only the observed attribute form is supported inside a primitive.
      * Reject before setters/binding mutation; no stale-state draw snapshots. */
-    if (state->immediate.ready || (state->immediate.active &&
-        (subchannel!=0 || (method!=0x17FCu && (method<0x1518u || method>0x1524u) &&
+    if (state->immediate.ready || (state->immediate.active && state->immediate.input_kind==2 &&
+        (subchannel!=0 || (method!=0x1818u && method!=0x17FCu))) || (state->immediate.active &&
+        (subchannel!=0 || (method!=0x17FCu && method!=0x1818u && (method<0x1518u || method>0x1524u) &&
             (method<0x1880u || method>=0x1900u) &&
             (method<0x1940u || method>=0x1980u))))) {
         fprintf(stderr,"[GRAPHICS] command refused inside/pending immediate primitive: sub=%u method=%04X\n",subchannel,method);
@@ -934,7 +935,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
-        if (subchannel==0 && (method==0x17FCu ||
+        if (subchannel==0 && (method==0x17FCu || method==0x1818u ||
             (method>=0x1518u && method<=0x1524u) ||
             (method>=0x1880u && method<0x1900u))) {
             FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);

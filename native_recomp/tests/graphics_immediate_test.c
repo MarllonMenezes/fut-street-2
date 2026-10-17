@@ -78,6 +78,34 @@ int main(void)
     CHECK(b.vertices[3][0][0]==b.vertices[0][0][0] &&
         b.vertices[4][0][0]==b.vertices[2][0][0] &&
         b.vertices[5][0][0]==expected_vertex3_x,28);
-    puts("Immediate2F: paired attributes, snapshots, raw bits, triangle bounds and pending completion verified");
+    memset(&b,0,sizeof(b));memset(&s,0,sizeof(s));
+    for(unsigned i=0;i<16;++i) CHECK(fut_graphics_kelvin_state(&s,0x1760+i*4,
+        i==0?0x32:i==3?0x40:i==9?0x22:2)==FUT_KELVIN_APPLIED,29);
+    s.attributes[4][0]=0.25f;s.attribute_valid[4]=15;
+    CHECK(rejected(0x1818,0),30);
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,8)==FUT_IMMEDIATE_APPLIED,31);
+    saved=s;
+    for(unsigned v=0;v<4;++v) {
+        uint32_t data[]={0x3F800000u+v,0x40000000,0x40400000,0x80402010,0,0x3F800000};
+        for(unsigned j=0;j<6;++j) {
+            CHECK(fut_graphics_immediate_method(&b,&s,0x1818,data[j])==FUT_IMMEDIATE_APPLIED,32);
+            if(j<5) CHECK(rejected(0x17FC,0) && rejected(0x1880,0),33);
+        }
+    }
+    CHECK(!memcmp(&saved,&s,sizeof(s)) && b.count==4 && b.defined[0]==0x219 &&
+        b.vertices[0][0][3]==1 && b.vertices[0][9][2]==0 && b.vertices[0][9][3]==1 &&
+        b.vertices[0][4][0]==0.25f && b.vertices[0][3][0]==64.0f/255 &&
+        b.vertices[0][3][1]==32.0f/255 && b.vertices[0][3][2]==16.0f/255 &&
+        b.vertices[0][3][3]==128.0f/255,34);
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,0)==FUT_IMMEDIATE_READY && b.count==6,35);
+    CHECK(!memcmp(b.vertices[3],b.vertices[0],sizeof(b.vertices[0])) &&
+        !memcmp(b.vertices[4],b.vertices[2],sizeof(b.vertices[0])) && rejected(0x1818,0),36);
+    CHECK(fut_graphics_immediate_consume(&b),37);
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,8)==FUT_IMMEDIATE_APPLIED,38);
+    s.vertex_array_format[9]=0x32;CHECK(rejected(0x1818,0),39);s.vertex_array_format[9]=0x22;
+    for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*6;++i)
+        CHECK(fut_graphics_immediate_method(&b,&s,0x1818,0)==FUT_IMMEDIATE_APPLIED,40);
+    CHECK(b.count==FUT_IMMEDIATE_CAPACITY && rejected(0x1818,0),41);
+    puts("Immediate attributes and restricted inline quads: layout, BGRA, defaults, masks and bounds verified");
     return 0;
 }

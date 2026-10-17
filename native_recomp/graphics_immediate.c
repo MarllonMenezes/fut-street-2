@@ -7,9 +7,9 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
     if(method==0x17FC) {
         if(value) {
             if((value!=5 && value!=8) || b->active || b->ready || b->pending_x || b->pending_position) return FUT_IMMEDIATE_REJECTED;
-            b->active=1;b->count=0;b->primitive=value;return FUT_IMMEDIATE_APPLIED;
+            b->active=1;b->count=0;b->primitive=value;b->input_kind=0;return FUT_IMMEDIATE_APPLIED;
         }
-        if(!b->active || b->pending_x || b->pending_position || !b->count ||
+        if(!b->active || b->pending_x || b->pending_position || b->inline_pending || !b->count ||
             (b->primitive==5 && b->count%3) || (b->primitive==8 && b->count%4)) return FUT_IMMEDIATE_REJECTED;
         if(b->primitive==8) {
             unsigned quads=b->count/4;
@@ -32,11 +32,41 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
         }
         b->active=0;b->ready=1;return FUT_IMMEDIATE_READY;
     }
+    if(method==0x1818) {
+        if(!b->active || b->ready || b->primitive!=8 || b->input_kind==1 ||
+            b->pending_x || b->pending_position || b->count>=FUT_IMMEDIATE_CAPACITY ||
+            b->inline_pending>=6 || s->vertex_array_format_valid!=0xFFFFu)
+            return FUT_IMMEDIATE_REJECTED;
+        for(unsigned i=0;i<16;++i) {
+            uint32_t format=i==0?0x32u:i==3?0x40u:i==9?0x22u:2u;
+            if(s->vertex_array_format[i]!=format) return FUT_IMMEDIATE_REJECTED;
+        }
+        b->input_kind=2;
+        b->inline_words[b->inline_pending++]=value;
+        if(b->inline_pending==6) {
+            float (*v)[4]=b->vertices[b->count];
+            memcpy(v,s->attributes,sizeof(s->attributes));
+            memcpy(v[0],b->inline_words,12);v[0][3]=1;
+            uint32_t color=b->inline_words[3];
+            v[3][0]=(float)((color>>16)&255u)/255.0f;
+            v[3][1]=(float)((color>>8)&255u)/255.0f;
+            v[3][2]=(float)(color&255u)/255.0f;
+            v[3][3]=(float)(color>>24)/255.0f;
+            memcpy(v[9],b->inline_words+4,8);v[9][2]=0;v[9][3]=1;
+            unsigned defined=0x209u;
+            for(unsigned i=0;i<16;++i) if(s->attribute_valid[i]==15) defined|=1u<<i;
+            b->defined[b->count++]=(uint16_t)defined;b->inline_pending=0;
+        }
+        return FUT_IMMEDIATE_APPLIED;
+    }
+    if(b->input_kind==2 && ((method>=0x1518 && method<=0x1524) ||
+        (method>=0x1880 && method<0x1900))) return FUT_IMMEDIATE_REJECTED;
     if(method>=0x1518 && method<=0x1524) {
         unsigned part=(method-0x1518)/4;
         if(!b->active || b->primitive!=8 || b->pending_x ||
             part!=b->pending_position || b->count>=FUT_IMMEDIATE_CAPACITY) return FUT_IMMEDIATE_REJECTED;
         memcpy(&s->attributes[0][part],&value,sizeof(value));
+        b->input_kind=1;
         s->attribute_valid[0]|=(uint8_t)(1u<<part);
         b->pending_position=part+1;
         if(part==3) {
@@ -55,6 +85,7 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
         (!part && (b->pending_x&bit)) || (part && !(b->pending_x&bit)) ||
         (!slot && part && b->pending_x!=1)) return FUT_IMMEDIATE_REJECTED;
     memcpy(&s->attributes[slot][part],&value,4);
+    if(b->active) b->input_kind=1;
     s->attributes[slot][2]=0;s->attributes[slot][3]=1;
     s->attribute_valid[slot]|=(uint8_t)((1u<<part)|12u);
     if(!part) b->pending_x|=bit; else b->pending_x&=~bit;
@@ -69,5 +100,5 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
 int fut_graphics_immediate_consume(FutGraphicsImmediate *b)
 {
     if(!b || b->active || !b->ready) return 0;
-    b->ready=0;b->count=0;b->primitive=0;return 1;
+    b->ready=0;b->count=0;b->primitive=0;b->input_kind=0;return 1;
 }

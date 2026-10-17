@@ -142,6 +142,21 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
         state->native_immediate.ia_vertices==3,90);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,91);
+    for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
+        i==0?0x32:i==3?0x40:i==9?0x22:2,0),92);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,8,0),93);
+    const float quad[4][3]={{0,0,0},{8,0,0},{8,6,0},{0,6,0}};
+    for(unsigned i=0;i<4;++i) {
+        uint32_t data[6];memcpy(data,quad[i],12);
+        data[3]=0x80402010;data[4]=0;data[5]=0x3F800000;
+        for(unsigned j=0;j<6;++j) CHECK(native_method(state,0,0x1818,data[j],0),94);
+        CHECK(!native_method(state,0,0x194C,0,0),95);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->immediate.ready && !state->native_surfaces.gpu_dirty &&
+        state->native_immediate.ia_vertices==6 && state->native_immediate.ps_invocations>0,96);
+    for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,97);
     return 0;
 }
 int main(void)

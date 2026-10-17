@@ -8,6 +8,8 @@ typedef struct {
     uint16_t defined[FUT_IMMEDIATE_DRAW_CAPACITY];
     unsigned count,primitive,pending_x,pending_position;
     int active,ready;
+    uint32_t inline_words[6];
+    unsigned inline_pending, input_kind; /* 1=attribute methods, 2=inline array. */
 } FutGraphicsImmediate;
 typedef enum {FUT_IMMEDIATE_APPLIED,FUT_IMMEDIATE_READY,FUT_IMMEDIATE_NOT_HANDLED,FUT_IMMEDIATE_REJECTED} FutImmediateStatus;
 /* Observed BEGIN(TRIANGLES)/ATTR2F and BEGIN(QUADS)/SET_VERTEX4F forms.
