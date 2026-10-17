@@ -34,6 +34,10 @@ function Test-Probe([string]$Name,[uint32[]]$Words,[int]$Expected,[string]$Patte
 Test-Probe 'cycle-limit' @(0x0C0000) 25 'cycle budget ended pc=000000'
 Test-Probe 'unknown-write' @(0x07F420,0x123456) 22 'unsupported peripheral write'
 Test-Probe 'first-start' @(0x08F496,1) 20 'first-DMA-start'
+foreach($command in 1..4) {
+    Test-Probe "unknown-command-bits-$command" @(0x08F496,(0x100 -bor $command)) 22 'unsupported peripheral write'
+}
+Test-Probe 'stop-freeze-unfreeze' @(0x08F496,2,0x08F496,3,0x08F496,4,0x08F496,1) 20 'first-DMA-start'
 Test-Probe 'bad-node' @(0x08F494,0x1000,0x08F496,1) 24 'first-DMA-start next=001000'
 Test-Probe 'short-input' @() 2 '' 1
 Write-Output 'DSP probe: cycle bound, unknown access, first-start capture, invalid node and input size passed'

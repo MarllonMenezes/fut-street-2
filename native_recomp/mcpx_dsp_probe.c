@@ -68,19 +68,20 @@ static void peripheral_write(void *opaque, uint32_t address, uint32_t value)
         p->dma[address - 0xFFFFD4] = value;
         return;
     }
-    if (address == 0xFFFFD6 && (value & 7) == 2) {
+    /* Unknown command bits have no established semantics in this probe. */
+    if (address == 0xFFFFD6 && value == 2) {
         p->dma[2] = (p->dma[2] & 8u) | 0x20u; /* STOP, preserving FREEZE */
         return;
     }
-    if (address == 0xFFFFD6 && (value & 7) == 3) {
+    if (address == 0xFFFFD6 && value == 3) {
         p->dma[2] |= 8u;
         return;
     }
-    if (address == 0xFFFFD6 && (value & 7) == 4) {
+    if (address == 0xFFFFD6 && value == 4) {
         p->dma[2] &= ~8u;
         return;
     }
-    if (address == 0xFFFFD6 && (value & 7) == 1) {
+    if (address == 0xFFFFD6 && value == 1) {
         if (!dump_node(p, "first-DMA-start")) stop_probe(24);
         stop_probe(20); /* Captured request, deliberately not executed. */
     }
