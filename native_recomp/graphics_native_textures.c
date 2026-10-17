@@ -14,9 +14,15 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context)
 {
     int bc1=plan && plan->storage==1;
+    int p8=plan && plan->storage==2;
     if (!native || !device || !read || !plan || !plan->width || !plan->height ||
         plan->width > 8191 || plan->height > 8191 ||
-        plan->storage>1 || (bc1 ? (plan->bytes_per_pixel || (plan->address&7u) ||
+        plan->storage>2 || (p8 && (plan->bytes_per_pixel!=1 || plan->palette_span!=1024 ||
+            (plan->palette_address&0xFC00003Fu)!=0x80000000u ||
+            plan->palette_span>0x84000000u-plan->palette_address || plan->pitch!=plan->width ||
+            plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
+            (plan->width&(plan->width-1)) || (plan->height&(plan->height-1)))) ||
+        (bc1 ? (plan->bytes_per_pixel || (plan->address&7u) ||
             plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
             (plan->width&(plan->width-1)) || (plan->height&(plan->height-1)) ||
             plan->pitch!=plan->width/4*8) : (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
@@ -34,7 +40,9 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     const uint8_t *upload=bytes;
     uint32_t upload_pitch=plan->pitch;
     uint8_t *expanded=NULL;
+    uint32_t palette[256];
     if (!read(context, plan->address, bytes, plan->span)) goto done;
+    if (p8 && !read(context,plan->palette_address,palette,sizeof(palette))) goto done;
     if(plan->bytes_per_pixel==1) {
         uint64_t expanded_size=(uint64_t)plan->width*4*plan->height;
         if(expanded_size>SIZE_MAX) {hr=E_OUTOFMEMORY;goto done;}
@@ -42,8 +50,20 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
         if(!expanded) {hr=E_OUTOFMEMORY;goto done;}
         upload=expanded;upload_pitch=plan->width*4;
         for(unsigned y=0;y<plan->height;++y) for(unsigned x=0;x<plan->width;++x) {
-            uint8_t alpha=bytes[(size_t)y*plan->pitch+x];
-            uint32_t argb=0x00FFFFFFu|((uint32_t)alpha<<24);
+            uint32_t argb;
+            if(p8) {
+                /* Compact Morton order: dimensions stop contributing bits
+                 * when exhausted, including rectangular power-of-two images. */
+                unsigned index=0,out_bit=1;
+                for(unsigned bit=1;bit<plan->width || bit<plan->height;bit<<=1) {
+                    if(bit<plan->width) {if(x&bit) index|=out_bit;out_bit<<=1;}
+                    if(bit<plan->height) {if(y&bit) index|=out_bit;out_bit<<=1;}
+                }
+                argb=palette[bytes[index]];
+            } else {
+                uint8_t alpha=bytes[(size_t)y*plan->pitch+x];
+                argb=0x00FFFFFFu|((uint32_t)alpha<<24);
+            }
             memcpy(expanded+(size_t)y*upload_pitch+x*4,&argb,4);
         }
     }

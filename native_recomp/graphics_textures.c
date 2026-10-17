@@ -8,6 +8,26 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
     if (!(state->control0 & 0x40000000u)) return FUT_TEXTURE_DISABLED;
     if ((state->valid & 0xBu) != 0xBu) return FUT_TEXTURE_INCOMPLETE;
     unsigned select = state->format & 3;
+    if ((state->format & ~0x0FF00003u) == 0x00010B28u) {
+        unsigned u=(state->format>>20)&15u,v=(state->format>>24)&15u;
+        if (!(state->valid&0x100u)) return FUT_TEXTURE_INCOMPLETE;
+        if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12 ||
+            (state->palette&0x3Eu) || (state->palette&1u)+1u!=select)
+            return FUT_TEXTURE_UNSUPPORTED;
+        FutGraphicsTexturePlan next={0};
+        next.width=1u<<u;next.height=1u<<v;next.pitch=next.width;
+        next.span=next.width*next.height;next.storage=2;next.bytes_per_pixel=1;
+        next.dma_context=select;next.palette_span=1024;
+        uint32_t palette_offset=state->palette&0xFFFFFFC0u;
+        if(!dma || (state->offset&3u) || (dma->guest_address&0xFC000003u)!=0x80000000u ||
+            !dma->size || dma->size>0x04000000u-(dma->guest_address&0x03FFFFFFu) ||
+            state->offset>dma->size || next.span>dma->size-state->offset ||
+            palette_offset>dma->size || next.palette_span>dma->size-palette_offset)
+            return FUT_TEXTURE_INVALID_RANGE;
+        next.address=dma->guest_address+state->offset;
+        next.palette_address=dma->guest_address+palette_offset;
+        *plan=next;return FUT_TEXTURE_READY;
+    }
     if ((state->format & ~0x0FF00003u) == 0x00010C28u) {
         unsigned u=(state->format>>20)&15u,v=(state->format>>24)&15u;
         if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12)

@@ -34,7 +34,7 @@ HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *native,
     const FutGraphicsTextureState *state,int resolve_verified);
 void fut_native_texture_destroy(FutNativeTexture *native);
 /* Projected coordinates, level zero. Extent is dimensions for linear storage,
- * or (1,1) for BC1 normalized coordinates.
+ * or (1,1) for BC1/P8 normalized coordinates.
  * Only valid with an approved sampler; not an original fragment program. */
 const char *fut_native_texture_hlsl(void);
 #endif

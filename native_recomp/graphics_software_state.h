@@ -38,6 +38,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * A separate RECOMP_DXT1_NOISE_APPROXIMATION=1 admits only the captured
  * 512x512 stage-0 BC1 state without modeling NV2A noise (2026-10-17).
  * Other texture stages must be disabled in that additional experiment. */
+/* RECOMP_P8_AA2_APPROXIMATION separately admits only the captured 32x32 P8
+ * state after exact palette expansion, with the same AA2 baseline limits. */
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *state,
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 #endif

@@ -89,10 +89,13 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
             uint32_t format=k->textures[stage].format;
             if(format!=0x11229 && format!=0x1122A && format!=0x11F29 && format!=0x11F2A) {
                 const FutGraphicsTextureState *t=&k->textures[stage];
-                /* New explicit diagnostic approximation: BC1 without the
-                 * unmeasured NV2A DXT1 noise, only this captured draw state. */
-                if(!fut_graphics_dxt1_noise_approximation_enabled() || stage!=0 ||
-                    format!=0x09910C29u || (t->valid&0x2Fu)!=0x2Fu ||
+                /* Separately authorized diagnostic scopes: BC1 without the
+                 * unmeasured NV2A noise, or losslessly expanded P8 under the
+                 * existing AA2 baseline. Only the captured states qualify. */
+                int bc1=format==0x09910C29u && fut_graphics_dxt1_noise_approximation_enabled();
+                int p8=format==0x05510B29u && fut_graphics_p8_aa2_approximation_enabled() &&
+                    (t->valid&0x100u) && !(t->palette&0x3Fu);
+                if((!bc1 && !p8) || stage!=0 || (t->valid&0x2Fu)!=0x2Fu ||
                     t->control0!=0x4003FFC0u || t->address!=0x30303u ||
                     t->filter!=0x02062000u || k->depth_test!=1 || k->stencil_test ||
                     k->draw.depth_write || k->compress_depth!=1 || k->control0!=0x00100001u)

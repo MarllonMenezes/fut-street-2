@@ -230,6 +230,60 @@ static int verify_bc1(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);fut_native_texture_destroy(&native);
     CHECK(good,132);return 0;
 }
+typedef struct {uint8_t indices[32];uint32_t palette[256];unsigned reads;int fail_palette;} P8Memory;
+static int p8_read(void *opaque,uint32_t address,void *data,size_t size)
+{
+    P8Memory *m=opaque;m->reads++;
+    if(address==0x80001000u && size==32) {memcpy(data,m->indices,32);return 1;}
+    if(address==0x80002000u && size==1024 && !m->fail_palette) {memcpy(data,m->palette,1024);return 1;}
+    return 0;
+}
+static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
+{
+    FutGraphicsTextureState s={.valid=0x10B,.control0=0x4003FFC0,.format=0x03210B29,
+        .offset=0x1000,.palette=0x2000};
+    FutGraphicsDmaView dma={0x80000000u,0x2400};FutGraphicsTexturePlan plan={0},sentinel={.width=99};
+    CHECK(fut_graphics_texture_plan(&s,&dma,&plan)==FUT_TEXTURE_READY && plan.width==4 &&
+        plan.height==8 && plan.storage==2 && plan.span==32 && plan.palette_address==0x80002000u,140);
+    dma.size--;
+    CHECK(fut_graphics_texture_plan(&s,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,141);
+    dma.size++;s.palette|=1;
+    CHECK(fut_graphics_texture_plan(&s,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED && sentinel.width==99,142);
+    s.palette=0x2004;
+    CHECK(fut_graphics_texture_plan(&s,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED,143);
+    P8Memory m={0};
+    for(unsigned i=0;i<32;++i)m.indices[i]=(uint8_t)(128+i);
+    m.indices[0]=255;
+    for(unsigned i=0;i<256;++i)m.palette[i]=((i&1)?0:0xFF000000u)|
+        (((i*3)&255)<<16)|(((i*5)&255)<<8)|((i*7)&255);
+    FutNativeTexture native={0};
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,p8_read,&m)) && m.reads==2,144);
+    ID3D11Texture2D *old=native.texture;m.fail_palette=1;
+    CHECK(FAILED(fut_native_texture_upload(&native,device,&plan,p8_read,&m)) && native.texture==old,145);
+    FutGraphicsTexturePlan bad=plan;bad.palette_address=0x83FFFFC0u;
+    unsigned reads=m.reads;
+    CHECK(fut_native_texture_upload(&native,device,&bad,p8_read,&m)==E_INVALIDARG &&
+        m.reads==reads && native.texture==old,146);
+    D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(native.texture,&desc);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *staging=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),147);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),148);
+    D3D11_MAPPED_SUBRESOURCE map;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&map)),149);
+    /* Independent 4x8 address table, not the production interleave algorithm. */
+    const unsigned offsets[8][4]={{0,1,4,5},{2,3,6,7},{8,9,12,13},{10,11,14,15},
+        {16,17,20,21},{18,19,22,23},{24,25,28,29},{26,27,30,31}};
+    int good=1;
+    for(unsigned y=0;y<8;++y)for(unsigned x=0;x<4;++x) {
+        uint32_t pixel;memcpy(&pixel,(uint8_t*)map.pData+y*map.RowPitch+x*4,4);
+        if(pixel!=m.palette[m.indices[offsets[y][x]]])good=0;
+    }
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
+    ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
+    CHECK(good,150);return 0;
+}
 int main(void)
 {
     FutGraphicsKelvinState kelvin={0};FutGraphicsDmaView dma={0x80000000,0x4000};
@@ -274,6 +328,7 @@ int main(void)
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),13);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),14);
     CHECK(verify_bc1(device,context,&completion)==0,133);
+    CHECK(verify_p8(device,context,&completion)==0,151);
     FutNativeTexture native={0};
     FutGraphicsTexturePlan invalid=plan;invalid.span++;
     CHECK(fut_native_texture_upload(&native,device,&invalid,memory_read,&memory)==E_INVALIDARG && !memory.reads,15);

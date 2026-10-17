@@ -20,4 +20,10 @@ static inline int fut_graphics_dxt1_noise_approximation_enabled(void)
     const char *value=getenv("RECOMP_DXT1_NOISE_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized 2026-10-17 for the captured 32x32 palette texture in AA2. */
+static inline int fut_graphics_p8_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_P8_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif
