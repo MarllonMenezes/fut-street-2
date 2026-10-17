@@ -5,12 +5,56 @@
 int main(void)
 {
     FutGraphicsKelvinState state = {0};
+    const unsigned offset_slots[] = {0, 3, 9};
+    const uint32_t offset_values[] = {0x00166574u, 0x00166580u, 0x00166584u};
+    FutGraphicsKelvinState observed_offsets = {0};
+    uint16_t expected_offset_mask = 0;
+    for (unsigned i=0;i<sizeof(offset_slots)/sizeof(offset_slots[0]);++i) {
+        unsigned slot = offset_slots[i];
+        expected_offset_mask |= (uint16_t)(1u << slot);
+        if (fut_graphics_kelvin_state(&observed_offsets, 0x1720u + slot * 4u, offset_values[i]) != FUT_KELVIN_APPLIED ||
+            observed_offsets.vertex_array_offset[slot] != offset_values[i] ||
+            observed_offsets.vertex_array_offset_valid != expected_offset_mask) return 68;
+    }
+    FutGraphicsKelvinState observed_offsets_before = observed_offsets;
+    if (fut_graphics_kelvin_state(&observed_offsets, 0x171Cu, 0) != FUT_KELVIN_NOT_HANDLED ||
+        fut_graphics_kelvin_state(&observed_offsets, 0x1760u, 0x635u) != FUT_KELVIN_APPLIED ||
+        observed_offsets.vertex_array_offset_valid != expected_offset_mask ||
+        fut_graphics_kelvin_state(&observed_offsets, 0x1721u, 0x00166574u) != FUT_KELVIN_REJECTED ||
+        observed_offsets.vertex_array_offset_valid != expected_offset_mask ||
+        memcmp(&observed_offsets_before.vertex_array_offset,
+            &observed_offsets.vertex_array_offset, sizeof(observed_offsets.vertex_array_offset)) ||
+        memcmp(&observed_offsets_before.vertex_array_offset_valid,
+            &observed_offsets.vertex_array_offset_valid, sizeof(observed_offsets.vertex_array_offset_valid))) return 69;
+    const uint32_t eye_vector[3] = {0, 0, 0};
+    for (unsigned i = 0; i < 3; ++i) {
+        if (fut_graphics_kelvin_state(&state, 0x181Cu + i * 4u, eye_vector[i]) != FUT_KELVIN_APPLIED ||
+            state.eye_vector[i] != eye_vector[i] ||
+            state.eye_vector_valid != (uint8_t)((1u << (i + 1u)) - 1u)) return 64;
+    }
+    FutGraphicsKelvinState eye_vector_before = state;
+    if (fut_graphics_kelvin_state(&state, 0x1818u, 0) != FUT_KELVIN_NOT_HANDLED ||
+        fut_graphics_kelvin_state(&state, 0x1828u, 0) != FUT_KELVIN_NOT_HANDLED ||
+        fut_graphics_kelvin_state(&state, 0x181Du, 0) != FUT_KELVIN_REJECTED ||
+        memcmp(&eye_vector_before, &state, sizeof(state))) return 65;
     for (unsigned i=0;i<16;++i) {
         uint32_t format=i==0?0x32u:i==3?0x40u:i==9?0x22u:2u;
         if(fut_graphics_kelvin_state(&state,0x1760+i*4,format)!=FUT_KELVIN_APPLIED ||
             state.vertex_array_format[i]!=format ||
             state.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 62;
     }
+    FutGraphicsKelvinState observed_array_formats = {0};
+    for (unsigned i=0;i<16;++i) {
+        uint32_t format=i==0?0x635u:0x602u;
+        if(fut_graphics_kelvin_state(&observed_array_formats,0x1760+i*4,format)!=FUT_KELVIN_APPLIED ||
+            observed_array_formats.vertex_array_format[i]!=format ||
+            observed_array_formats.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 66;
+    }
+    FutGraphicsKelvinState observed_formats_before = observed_array_formats;
+    const uint32_t unobserved_formats[] = {0x634u, 0x636u, 0x603u};
+    for (unsigned i=0;i<sizeof(unobserved_formats)/sizeof(unobserved_formats[0]);++i)
+        if(fut_graphics_kelvin_state(&observed_array_formats,0x1760,unobserved_formats[i])!=FUT_KELVIN_REJECTED ||
+            memcmp(&observed_formats_before,&observed_array_formats,sizeof(observed_array_formats))) return 67;
     FutGraphicsKelvinState format_before=state;
     const uint32_t bad_formats[]={0,0x12,0x42,0x132,0x10032,0xFFFFFFFFu};
     for(unsigned i=0;i<sizeof(bad_formats)/sizeof(bad_formats[0]);++i)

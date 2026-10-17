@@ -9,11 +9,26 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
 {
     if (!state || (method & 3u))
         return FUT_KELVIN_REJECTED;
+    if (method >= 0x181Cu && method <= 0x1824u) {
+        /* NV097_SET_EYE_VECTOR: retain its three raw component registers.
+         * This records guest state; native fixed-function lighting is still
+         * gated independently and no rendered effect is implied here. */
+        unsigned component = (method - 0x181Cu) / 4u;
+        state->eye_vector[component] = value;
+        state->eye_vector_valid |= (uint8_t)(1u << component);
+        return FUT_KELVIN_APPLIED;
+    }
+    if (method >= 0x1720u && method < 0x1760u) {
+        unsigned slot = (method - 0x1720u) / 4u;
+        state->vertex_array_offset[slot] = value;
+        state->vertex_array_offset_valid |= (uint16_t)(1u << slot);
+        return FUT_KELVIN_APPLIED;
+    }
     if (method >= 0x1760u && method < 0x17A0u) {
-        /* NV20 VTXBUF_FMT: type[3:0], size[7:4], stride[15:8].
-         * Only the title's observed zero-stride inline layouts are retained.
-         * Fetch, conversion and draw execution remain separately gated. */
-        if (value != 0x2u && value != 0x22u && value != 0x32u && value != 0x40u)
+        /* NV20 VTXBUF_FMT: retain only format words observed in the title.
+         * This records descriptors; fetch, conversion and drawing remain gated. */
+        if (value != 0x2u && value != 0x22u && value != 0x32u && value != 0x40u &&
+            value != 0x635u && value != 0x602u)
             return FUT_KELVIN_REJECTED;
         unsigned slot = (method - 0x1760u) / 4u;
         state->vertex_array_format[slot] = value;

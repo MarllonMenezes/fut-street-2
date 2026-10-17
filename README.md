@@ -17,28 +17,32 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 ## Estado verificável — 17 de outubro de 2026
 
 **`NOT_READY` — ainda não jogável.** A geração nativa contém 15.610 entradas
-de dispatch e o launch limitado executou callbacks recuperados até encontrar
-um pacote gráfico ainda sem handler.
+de dispatch e o launch limitado alcançou um desenho por vertex arrays que
+exige fetch e rasterização ainda não implementados.
 
 | Etapa | Evidência atual |
 | --- | --- |
 | Tradução e compilação | Build nativo Release com 15.610 entradas exatas. As entradas observadas `0x00240AFB` e `0x001D1EAD` foram recuperadas do XBE, regeneradas e incluídas no executável testado. |
 | Boot | Execução parcial da lógica recompilada confirmada em launches limitados; boot completo e menu ainda não comprovados. |
-| Rendering | 12 recibos DXGI com aposentadoria pela ISR original no launch recente; shader de vértice recompilado. O pacote gráfico seguinte foi recusado, sem comprovar menu nem fidelidade NV2A. |
+| Rendering | Recibos DXGI com aposentadoria pela ISR original e recompilação de shader observados em launches limitados. O launch mais recente passou por estado de vetor, formato e offset dos vertex arrays, depois parou em `SET_BEGIN_END=6` (triangle strip); não comprova desenho de vertex arrays, menu nem fidelidade NV2A. |
 | Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
 | Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
 
 As entradas `0x00240AFB` (dois saltos diretos para funções já registradas) e
 `0x001D1EAD` (folha linear terminada em RET, com folha vizinha decodificada)
 foram recuperadas com provas estáticas restritas. O último launch, limitado a
-60 segundos e encerrado antes do limite, confirmou entrada e retorno de ambas
-as rotinas. Depois de 12 recibos DXGI e da recompilação de um shader, parou em
-`FUT_GRAPHICS_HANDLER_REJECTED`: pacote no ring
-`0x82810F38..0x82812F44`, cabeçalho `0x000C181C`, com métodos incrementais
-`0x181C`, `0x1820` e `0x1824`, todos com valor zero. A origem guest e a
-semântica desses métodos ainda precisam ser identificadas; nenhum handler foi
-inventado. O recuperador passou em **19 testes focais** e o build testado em
-**36/36 testes nativos**. Logs, saves e código gerado ficam locais em D:.
+60 segundos e encerrado antes do limite, confirmou entrada e retorno das duas
+rotinas. Depois de reter os três componentes observados de
+`NV097_SET_EYE_VECTOR`, os 16 descritores de formato (`0x635` no primeiro slot,
+`0x602` nos demais) e o offset observado `0x00166574` de `NV097_SET_VERTEX_DATA_ARRAY_OFFSET`,
+o launch mais recente parou em `NV097_SET_BEGIN_END=6` no subcanal 0/classe
+`0x97`. Esse modo é triangle strip; a captura contém palavras posteriores de
+`ARRAY_ELEMENT16`, mas elas ainda não foram executadas. Os contextos DMA
+Vertex A e B estavam ligados ao handle `0x3`; offsets são guardados crus e o
+fetch ainda não resolve nem valida seu intervalo. O launch terminou com
+`exit 3` antes do timeout. O recuperador passou em **19 testes focais** e o
+build testado em **36/36 testes nativos**. Logs, saves e código gerado ficam
+locais em D:.
 
 As aproximações gráficas são opt-in e restritas aos casos observados:
 AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
@@ -56,19 +60,22 @@ nenhum START original foi observado. O DSP experimental não participa do boot.
 
 ### Próximos passos
 
-1. **Identificar o pacote gráfico `0x181C/0x1820/0x1824`:** mapear o produtor
-   guest, a classe/subcanal e o efeito documentado em fontes locais de
-   referência; implementar apenas se o contrato justificar um handler estreito.
-2. **Repetir o launch limitado:** validar o pacote, caso implementado, e
-   observar o próximo bloqueio. Não marcar a fila concluída artificialmente.
-3. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
+1. **Implementar o desenho indexado observado:** tratar `SET_BEGIN_END=6`,
+   capturar `ARRAY_ELEMENT16`, validar índices, resolver offsets pelos DMA
+   Vertex A/B ligados e ler apenas intervalos comprovados. Expandir o strip e
+   executar o shader original com as superfícies nativas.
+2. **Validar rendering:** comprovar pixels e writeback da superfície no guest;
+   uma fila aceita não basta para aprovar desenho.
+3. **Repetir o launch limitado:** localizar o próximo bloqueio sem concluir a
+   fila artificialmente.
+4. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
    em cada execução, seja tradução, serviço de host, carregamento ou desenho.
    Não substituir funções ausentes por sucesso fictício.
-4. **Validar controles e cenário:** comprovar entrada chegando à lógica
+5. **Validar controles e cenário:** comprovar entrada chegando à lógica
    original, navegação do menu e carregamento de uma partida.
-5. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
+6. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
    executados pela lógica original, com estabilidade e resultado verificável.
-6. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
+7. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
    retirar a dependência do bypass e validar os efeitos das aproximações
    gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
 

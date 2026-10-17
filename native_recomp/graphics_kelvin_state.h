@@ -25,6 +25,9 @@ typedef struct {
     /* Raw observed inline-array layout; retaining this does not enable draws. */
     uint32_t vertex_array_format[16];
     uint16_t vertex_array_format_valid;
+    /* Raw DMA-object offsets; address resolution and fetch remain gated. */
+    uint32_t vertex_array_offset[16];
+    uint16_t vertex_array_offset_valid;
     uint32_t clip_min, clip_max;
     uint32_t control0, line_width, anti_aliasing_control;
     unsigned depth_test, stencil_test;
@@ -39,6 +42,8 @@ typedef struct {
     unsigned flip_read, flip_write, flip_modulo;
     unsigned flip_valid;
     uint32_t shader_other_input, shader_clip_plane_mode, shadow_slope_threshold;
+    uint32_t eye_vector[3];
+    uint8_t eye_vector_valid;
     uint32_t clear_color, pattern_color;
     uint32_t clear_depth, clear_x, clear_y;
     unsigned clear_valid;
