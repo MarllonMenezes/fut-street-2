@@ -247,6 +247,19 @@ static int native_scanout_service(NativeGraphicsState *state)
                     fprintf(stderr,"[DISPLAY-DIAG] test=%08lX visible=%d iconic=%d rect_ok=%d rect=%ld,%ld,%ld,%ld\n",
                         test,IsWindowVisible(window),IsIconic(window),rect_ok,
                         rect.left,rect.top,rect.right,rect.bottom);
+                    UINT submitted=0;
+                    HRESULT count_hr=IDXGISwapChain2_GetLastPresentCount(state->scanout_display.swap,&submitted);
+                    RECT client={0};POINT center={0};
+                    int center_ok=GetClientRect(window,&client);
+                    if(center_ok) {
+                        center.x=(client.right-client.left)/2;center.y=(client.bottom-client.top)/2;
+                        center_ok=ClientToScreen(window,&center);
+                    }
+                    HWND at_center=center_ok?WindowFromPoint(center):NULL;
+                    fprintf(stderr,"[DISPLAY-DIAG] submitted_hr=%08lX submitted=%u device_hr=%08lX center_valid=%d center_owned=%d monitor_present=%d; observation only\n",
+                        count_hr,submitted,ID3D11Device_GetDeviceRemovedReason(state->device),center_ok,
+                        at_center && GetAncestor(at_center,GA_ROOT)==window,
+                        MonitorFromWindow(window,MONITOR_DEFAULTTONULL)!=NULL);
                 }
                 state->scanout_receipt_report_at=now+1000;
             }

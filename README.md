@@ -20,7 +20,8 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 de dispatch. O launch limitado confirmou fetch e execução de shaders, além de
 desenhos anteriores com pixels escritos no guest. A execução mais recente
 terminou ao aguardar disponibilidade de um slot de flip (`read=0`, `write=0`,
-`modulo=3`, `valid=7`); nenhuma apresentação real foi comprovada.
+`modulo=3`, `valid=7`). Capturas anteriores comprovam recibos DXGI e
+aposentadoria pela ISR original; o quadro pendente ficou sem novo recibo.
 
 | Etapa | Evidência atual |
 | --- | --- |
@@ -33,8 +34,8 @@ terminou ao aguardar disponibilidade de um slot de flip (`read=0`, `write=0`,
 As entradas `0x00240AFB` (dois saltos diretos para funções já registradas) e
 `0x001D1EAD` (folha linear terminada em RET, com folha vizinha decodificada)
 foram recuperadas com provas estáticas restritas. A build usada nesta etapa
-incluiu as 15.610 entradas; os **37/37 gates nativos passaram**. No launch
-limitado mais recente, `SET_BEGIN_END=6` foi seguido pelos índices executados
+incluiu as 15.610 entradas; os **37/37 gates nativos passaram**. Em captura
+anterior, `SET_BEGIN_END=6` foi seguido pelos índices executados
 `[0,1,2,3]`. Vertex A/B apontaram para o mesmo descritor IN_MEMORY `0x3D`,
 com alvo NVM e span declarada `0x07FFB000` (aproximadamente 128 MiB), limitada
 pelo host à região suportada de 64 MiB. O offset `0x00166574` passou pelas verificações de
@@ -47,8 +48,17 @@ bytes comprimidos, mas o launch integrado não repetiu o snapshot. O launch
 mais recente saiu com `exit 3` antes do limite de 60 segundos. Na fila
 rejeitada, o método `0x130` recebeu valor zero e não havia slot de flip livre
 (`read=0`, `write=0`, `modulo=3`, `valid=7`); a completion ficou inalterada e
-não houve apresentação. O opt-in P8 128×32 também não apareceu nesta execução.
+não houve confirmação de apresentação para o quadro pendente. O opt-in P8
+128×32 também não apareceu nesta execução.
 O XBE permaneceu inalterado. Logs, saves e código gerado ficam locais em D:.
+
+O diagnóstico do presenter confirmou submissão aceita, dispositivo saudável
+e estatísticas atrasadas. A janela estava visível e não minimizada, mas seu
+centro estava coberto. Isso sugere uma dependência de exibição/composição,
+sem provar a causa. O teste isolado de apresentação passa; manter a janela
+no topo e sincronizar via DWM não demonstraram solução e foram descartados.
+O diagnóstico opcional `RECOMP_DISPLAY_DIAG` agora registra esses estados
+sem alterar recibos, índices ou completion.
 
 As aproximações gráficas são opt-in e restritas aos casos observados:
 AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
@@ -69,10 +79,10 @@ nenhum START original foi observado. O DSP experimental não participa do boot.
 
 ### Próximos passos
 
-1. **Resolver a espera de flip:** rastrear estaticamente a origem do método
-   `0x130` e o ciclo de vida dos índices/slots até uma apresentação real.
-   Validar com testes de estado e launch limitado; não avançar índices nem
-   sinalizar completion sem evento de apresentação comprovado.
+1. **Resolver a espera de flip:** reproduzir no presenter isolado a diferença
+   entre submissão DXGI aceita e estatísticas de exibição atrasadas, incluindo
+   tamanho/visibilidade da janela. Correlacionar cada recibo com a ISR original;
+   não avançar índices nem sinalizar completion sem apresentação comprovada.
 2. **Validar o strip após o flip:** comprovar submissão concluída, pixels e
    writeback de cor/depth para o desenho alvo. Separar isso da prova de
    apresentação e da fidelidade NV2A.
