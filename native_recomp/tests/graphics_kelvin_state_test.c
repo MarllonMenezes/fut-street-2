@@ -36,6 +36,12 @@ int main(void)
     for (unsigned i = 0; i < 4; ++i)
         if (fut_graphics_kelvin_state(&state, 0xB80 + i * 4, i) != FUT_KELVIN_APPLIED) return 10;
     FutGraphicsKelvinState before = state;
+    if (fut_graphics_kelvin_state(&state, 0x1710, 0) != FUT_KELVIN_APPLIED ||
+        memcmp(&before, &state, sizeof(state))) return 60;
+    if (fut_graphics_kelvin_state(&state, 0x1710, 1) != FUT_KELVIN_REJECTED ||
+        memcmp(&before, &state, sizeof(state)) ||
+        fut_graphics_kelvin_state(&state, 0x1710, 0xFFFFFFFFu) != FUT_KELVIN_REJECTED ||
+        memcmp(&before, &state, sizeof(state))) return 61;
     if (fut_graphics_kelvin_state(&state, 0xB90, 0) != FUT_KELVIN_REJECTED ||
         memcmp(&before, &state, sizeof(state))) return 11;
     const uint32_t rejected[][2] = {{0x9FC,2},{0x128,0},{0x1EA4,192},{0x1E68,0},{0x16BC,2}};

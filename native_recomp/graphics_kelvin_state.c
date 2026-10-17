@@ -178,6 +178,13 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
         state->compress_depth = value; break;
     case 0x1E78:
         state->shader_other_input = value & 0x0FFFF000u; break;
+    case 0x1710:
+        /* NV20 VTXBUF_VALIDATE: Kelvin accepts zero and resets the index
+         * fetch bookkeeping (envytools pgraph_idx_unkf8). This backend has
+         * no guest array/index fetch cache; immediate vertices are already
+         * materialized. Array draws remain unsupported, not validated here. */
+        if (value) return FUT_KELVIN_REJECTED;
+        break;
     case 0x17F8:
         /* Retain the exact NV097 mode. Fragment-program mode 5 remains
          * rejected by the native shader compiler until clipping is modeled. */

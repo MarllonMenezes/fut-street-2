@@ -168,6 +168,10 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_constants_init(&state.native_constants,state.device,state.context)),2);
     state.bindings.bound_mask=1;
     state.bindings.objects[0].words[0]=0x97;
+    CHECK(native_method(&state,0,0x1710,0,0) &&
+        !native_method(&state,0,0x1710,1,0),73);
+    /* Validation must not accidentally authorize unimplemented array draws. */
+    CHECK(!native_method(&state,0,0x1810,0,0),74);
     state.bindings.reference_masks[0]=(1u<<5)|(1u<<6);
     const FutGraphicsObject dma={.words={0xB03D,0x07FFAFFF,3,0}};
     state.bindings.references[0][5]=dma; state.bindings.references[0][6]=dma;
@@ -271,6 +275,8 @@ int main(void)
     CHECK(native_method(&state,0,0x1B0C,0x4003FFC0,0) &&
         native_method(&state,0,0x1B14,0x04072000,0),42);
     CHECK(native_method(&state,0,0x17FC,5,0) && state.immediate.active,43);
+    CHECK(!native_method(&state,0,0x1710,0,0) && state.immediate.active &&
+        !state.immediate.count,75);
     uint32_t previous=state.kelvin.textures[0].filter;
     CHECK(!native_method(&state,0,0x1B14,0x01010000,0) &&
         state.kelvin.textures[0].filter==previous && !native_finish(&state),44);
