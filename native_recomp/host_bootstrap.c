@@ -151,9 +151,15 @@ static int snapshot_method(void *context, unsigned subchannel,
     return 1; /* Inspection accepted the word; no renderer work was executed. */
 }
 
-static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
+typedef struct {
+    HANDLE stop;
+    const uint32_t *main_regs[8];
+} GraphicsSnapshotContext;
+
+static DWORD WINAPI graphics_snapshot_thread(void *opaque)
 {
-    for (unsigned sample = 0; sample < 12; ++sample) {
+    const GraphicsSnapshotContext *snapshot=opaque;
+    for (unsigned sample = 0; sample < 30; ++sample) {
         uint32_t device = 0, start = 0, end = 0, submitted = 0;
         uint32_t consumer_ptr = 0, consumed = 0, channel = 0, put = 0, get = 0;
         uint32_t write_ptr = 0, fence_tag = 0, fence_end = 0;
@@ -165,8 +171,27 @@ static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
         uint32_t icall_2a90c0 = 0, icall_2a9200 = 0;
         uint32_t icall_2a9204 = 0, icall_2a9208 = 0;
         uint32_t wait_object = 0, wait_header = 0, wait_signal = 0;
-        if (WaitForSingleObject((HANDLE)stop_event, 1000) != WAIT_TIMEOUT)
+        if (WaitForSingleObject(snapshot->stop, 1000) != WAIT_TIMEOUT)
             break;
+        uint32_t regs[8]={0};int regs_valid=1;
+        for(unsigned i=0;i<8;++i) {
+            SIZE_T copied=0;
+            if(!ReadProcessMemory(GetCurrentProcess(),snapshot->main_regs[i],&regs[i],4,&copied) || copied!=4)
+                regs_valid=0;
+        }
+        if(regs_valid) {
+            fprintf(stderr,"[MAIN-SNAPSHOT] sample=%u eax=%08X ecx=%08X edx=%08X esp=%08X ebx=%08X esi=%08X edi=%08X ebp=%08X (read-only, non-atomic)\n",
+                sample,regs[0],regs[1],regs[2],regs[3],regs[4],regs[5],regs[6],regs[7]);
+            if(regs[3] && regs[3]<=UINT32_MAX-64u) {
+                char line[256];size_t used=(size_t)snprintf(line,sizeof(line),"[MAIN-STACK] esp=%08X",regs[3]);
+                for(unsigned i=0;i<16;++i) {
+                    uint32_t word=0;
+                    if(!snapshot_read32(regs[3]+i*4,&word)) break;
+                    used+=(size_t)snprintf(line+used,sizeof(line)-used," %08X",word);
+                }
+                fprintf(stderr,"%s\n",line);
+            }
+        }
         /* Optional read-only samples, including device handshakes while a
          * translated thread spins without making another kernel call. */
         xbox_PeekSample("GRAPHICS-PEEK");
@@ -194,6 +219,11 @@ static DWORD WINAPI graphics_snapshot_thread(void *stop_event)
         snapshot_read32(device + 0x2Cu, &submitted);
         snapshot_read32(device + 0x30u, &consumer_ptr);
         const int consumer_valid = consumer_ptr && snapshot_read32(consumer_ptr, &consumed);
+        uint32_t registers=0,observed=0;
+        if(consumer_valid && snapshot_read32(device+0x934u,&registers) &&
+            registers<=UINT32_MAX-0x400B14u && snapshot_read32(registers+0x400B10u,&observed))
+            fprintf(stderr,"[GRAPHICS-FENCE-OBSERVATION] sample=%u source=%08X value=%08X consumer=%08X xor_mask7C=%02X (read-only)\n",
+                sample,registers+0x400B10u,observed,consumed,((consumed<<2)^observed)&0x7Cu);
         snapshot_read32(device + 0x1C20u, &channel);
         if (channel && channel <= UINT32_MAX - 0x44u) {
             snapshot_read32(channel + 0x40u, &put);
@@ -276,6 +306,7 @@ int main(int argc, char **argv)
     int result = 1;
     HANDLE snapshot_stop = NULL;
     HANDLE snapshot_thread = NULL;
+    GraphicsSnapshotContext snapshot_context={0};
     McpxAciHost aci_host;
     int aci_host_ready = 0;
 
@@ -435,9 +466,14 @@ int main(int argc, char **argv)
             FUT_STREET_2_ENTRY_POINT);
     if (environment_variable_is_set("RECOMP_GRAPHICS_SNAPSHOT")) {
         snapshot_stop = CreateEventA(NULL, TRUE, FALSE, NULL);
+        snapshot_context.stop=snapshot_stop;
+        snapshot_context.main_regs[0]=&g_eax;snapshot_context.main_regs[1]=&g_ecx;
+        snapshot_context.main_regs[2]=&g_edx;snapshot_context.main_regs[3]=&g_esp;
+        snapshot_context.main_regs[4]=&g_ebx;snapshot_context.main_regs[5]=&g_esi;
+        snapshot_context.main_regs[6]=&g_edi;snapshot_context.main_regs[7]=&g_ebp;
         if (snapshot_stop)
             snapshot_thread = CreateThread(NULL, 0, graphics_snapshot_thread,
-                                           snapshot_stop, 0, NULL);
+                                           &snapshot_context, 0, NULL);
         if (!snapshot_stop || !snapshot_thread) {
             fprintf(stderr, "Cannot start read-only graphics snapshot.\n");
             goto cleanup;
