@@ -186,6 +186,32 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_constants_init(&state.native_constants,state.device,state.context)),2);
     state.bindings.bound_mask=1;
     state.bindings.objects[0].words[0]=0x97;
+    state.bindings.bound_mask|=1u<<5;state.bindings.objects[5].words[0]=0x44;
+    /* Replay only the MMIO write sink, leaving the real completion path active. */
+    for(unsigned success=0;success<2;++success) {
+        FILE *trace=tmpfile();CHECK(trace,98);
+        uint32_t marker=0x500F167Cu;
+        FutTraceRecord record={FUT_TRACE_WRITE,0xFD400B10u,0,success,4};
+        CHECK(fwrite(&record,sizeof(record),1,trace)==1 && fwrite(&marker,4,1,trace)==1,99);
+        rewind(trace);fut_trace_file=trace;fut_trace_replaying=1;fut_trace_active=1;fut_trace_bytes=0;
+        state.kelvin.pattern_color=0x1234;
+        CHECK(native_method(&state,5,0x310,marker,0)==(int)success &&
+            state.kelvin.pattern_color==(success?marker:0x1234u) && ftell(trace)==24,100);
+        fut_trace_file=NULL;fut_trace_replaying=0;fut_trace_active=0;fclose(trace);
+    }
+    /* A cancelled completion may not publish the marker at all. */
+    backend_stop=CreateEventA(NULL,TRUE,TRUE,NULL);CHECK(backend_stop,101);
+    FILE *cancel_trace=tmpfile();CHECK(cancel_trace,103);
+    uint32_t cancel_marker=0xDEADBEEFu;
+    FutTraceRecord cancel_record={FUT_TRACE_WRITE,0xFD400B10u,0,1,4};
+    CHECK(fwrite(&cancel_record,sizeof(cancel_record),1,cancel_trace)==1 &&
+        fwrite(&cancel_marker,4,1,cancel_trace)==1,104);
+    rewind(cancel_trace);fut_trace_file=cancel_trace;fut_trace_replaying=1;
+    fut_trace_active=1;fut_trace_bytes=0;
+    CHECK(!native_method(&state,5,0x310,0xDEADBEEF,0) &&
+        state.kelvin.pattern_color==0x500F167Cu && ftell(cancel_trace)==0,102);
+    fut_trace_file=NULL;fut_trace_replaying=0;fut_trace_active=0;fclose(cancel_trace);
+    CloseHandle(backend_stop);backend_stop=NULL;
     CHECK(native_method(&state,0,0x1760,0x32,0) &&
         state.kelvin.vertex_array_format[0]==0x32 &&
         state.kelvin.vertex_array_format_valid==1,76);

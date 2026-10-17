@@ -937,7 +937,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
     }
     const unsigned class_id = state->bindings.objects[subchannel].words[0] & 0xFFu;
     if (class_id == 0x44u && method == 0x310u) {
+        /* NV044 MONOCHROME_COLOR0 -> NV20 PGRAPH PATTERN_MONO_COLOR0.
+         * The title reuses that register as a FIFO fence observation. Publish
+         * the actual command word only after prior native work has finished. */
+        if(!native_finish(state) || !write32(0xFD400B10u,value)) return 0;
         state->kelvin.pattern_color = value;
+        fprintf(stderr,"[GRAPHICS] pattern color0 committed after native GPU completion: sub=%u value=%08X register=FD400B10\n",subchannel,value);
         return 1;
     }
     if (class_id == 0x97u) {
