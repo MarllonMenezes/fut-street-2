@@ -18,7 +18,7 @@ static const uint32_t rcc_cases[][2]={
 };
 static int run_fixture(int mode)
 {
-    int dp4=mode==1,rcc=mode>=2;
+    int dp4=mode==1,rcc=mode>=2,mad=mode==-2;
     /* Synthetic original-format program with independent expected results:
      * R1=v0; paired MOV oD0=v1 / RCP R1.w=1/old(R1.w);
      * R2=R1*c0; oPos=R2+c1. The paired MAC's R1 write is suppressed.
@@ -33,7 +33,7 @@ static int run_fixture(int mode)
         {0, (3u<<21)|(1u<<13)|0x1Bu, (2u<<28)|(1u<<26)|0x6Cu,
             (3u<<28)|(15u<<12)|0x800u|1u}
     };
-    unsigned count = (dp4 || rcc) ? 5 : 4;
+    unsigned count = (dp4 || rcc || mad) ? 5 : 4;
     /* Same paired-source snapshot and R1 destination check, now with RCC. */
     if(mode==-1) program[1][1]=(program[1][1]&~(7u<<25))|(3u<<25);
     if (dp4) {
@@ -49,6 +49,13 @@ static int run_fixture(int mode)
         program[4][1]=(3u<<25)|(2u<<9);
         program[4][3]=(2u<<28)|(10u<<12)|0x800u|4u|1u;
     }
+    if(mad) {
+        program[3][3]&=~1u;
+        /* old oPos*c0 + v2 = (9,40,107,38), written to x/z only. */
+        program[4][1]=(4u<<21)|(2u<<9)|0x1Bu;
+        program[4][2]=(12u<<28)|(1u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17)|0x6Cu;
+        program[4][3]=(2u<<28)|(10u<<12)|0x800u|1u;
+    }
     char text[16384]; size_t length;
     if (!fut_vertex_program_hlsl(program, count, text, sizeof(text), &length) || !length) return 1;
     if (dp4) {
@@ -57,8 +64,16 @@ static int run_fixture(int mode)
         uint16_t mask=0;
         if (!fut_vertex_program_input_mask(only_b,1,&mask) || mask!=(1u<<3)) return 24;
     }
+    if(mad) {
+        uint32_t probe[1][4]={{0,(4u<<21)|(3u<<9)|0x1Bu,
+            (1u<<26)|(2u<<11), (1u<<28)|0xF801u}};
+        uint16_t mask=0;
+        if(!fut_vertex_program_input_mask(probe,1,&mask) || mask!=(1u<<3)) return 25;
+        probe[0][2]=(1u<<26)|(1u<<11);probe[0][3]=(2u<<28)|0xF801u;
+        if(!fut_vertex_program_input_mask(probe,1,&mask) || mask!=(1u<<3)) return 26;
+    }
     uint32_t invalid[5][4]; memcpy(invalid, program, sizeof(invalid));
-    invalid[0][1] = (4u<<21)|0x1Bu;
+    invalid[0][1] = (5u<<21)|0x1Bu;
     if (fut_vertex_program_hlsl(invalid, 4, text, sizeof(text), &length) || length) return 2;
     memcpy(invalid, program, sizeof(invalid)); invalid[3][3] &= ~1u;
     if (fut_vertex_program_hlsl(invalid, 4, text, sizeof(text), &length)) return 3;
@@ -108,6 +123,7 @@ static int run_fixture(int mode)
         ID3D10Blob_GetBufferPointer(bytecode), ID3D10Blob_GetBufferSize(bytecode),
         declaration, 2, &output_stride, 1, D3D11_SO_NO_RASTERIZED_STREAM, NULL, &stream_shader))) return 10;
     float vertex[16][4] = {{2,4,6,2},{0.25f,0.5f,0.75f,1}};
+    if(mad) {const float add[]={-1,-2,-1,-4};memcpy(vertex[2],add,sizeof(add));}
     if(rcc) memcpy(&vertex[2][0],&rcc_cases[mode-2][0],4);
     D3D11_BUFFER_DESC desc = {0}; desc.ByteWidth = sizeof(vertex);
     desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
@@ -132,7 +148,7 @@ static int run_fixture(int mode)
     if (!fut_native_constants_finish(&constants, NULL, 2000, NULL)) return 15;
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (FAILED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped))) return 16;
-    const float expected[] = {dp4?142:5,14,dp4?142:27,7,0.25f,0.5f,0.75f,1};
+    const float expected[] = {mad?9:dp4?142:5,14,mad?107:dp4?142:27,7,0.25f,0.5f,0.75f,1};
     const float *actual = mapped.pData;
     int correct = 1;
     for (unsigned i = 0; i < 8; ++i) {
@@ -160,6 +176,8 @@ static int run_fixture(int mode)
 }
 int main(void)
 {
+    int mad=run_fixture(-2);
+    if(mad) return mad;
     int paired=run_fixture(-1);
     if(paired) return paired;
     for(unsigned mode=0;mode<2+sizeof(rcc_cases)/sizeof(rcc_cases[0]);++mode) {
