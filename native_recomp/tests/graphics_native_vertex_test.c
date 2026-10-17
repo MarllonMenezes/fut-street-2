@@ -6,8 +6,19 @@
 #include <string.h>
 #include <math.h>
 
-static int run_fixture(int dp4)
+/* Golden RCC bits from envytools xf_rcp(v2), including its LUT rounding. */
+static const uint32_t rcc_cases[][2]={
+    {0x00000000u,0x5F800000u},{0x80000000u,0xDF800000u},
+    {0x7F800000u,0x1F800000u},{0xFF800000u,0x9F800000u},
+    {0x7FC00000u,0x7FFFFFFFu},{0x40000000u,0x3F000000u},
+    {0xC0000000u,0xBF000000u},{0x3FC00000u,0x3F2AAAAAu},
+    {0x3F800001u,0x3F7FFFFDu},{0x60000000u,0x1F800000u},
+    {0x1F800000u,0x5F800000u},{0x00000001u,0x5F800000u},
+    {0x80000001u,0xDF800000u}
+};
+static int run_fixture(int mode)
 {
+    int dp4=mode==1,rcc=mode>=2;
     /* Synthetic original-format program with independent expected results:
      * R1=v0; paired MOV oD0=v1 / RCP R1.w=1/old(R1.w);
      * R2=R1*c0; oPos=R2+c1. The paired MAC's R1 write is suppressed.
@@ -22,13 +33,21 @@ static int run_fixture(int dp4)
         {0, (3u<<21)|(1u<<13)|0x1Bu, (2u<<28)|(1u<<26)|0x6Cu,
             (3u<<28)|(15u<<12)|0x800u|1u}
     };
-    unsigned count = dp4 ? 5 : 4;
+    unsigned count = (dp4 || rcc) ? 5 : 4;
+    /* Same paired-source snapshot and R1 destination check, now with RCC. */
+    if(mode==-1) program[1][1]=(program[1][1]&~(7u<<25))|(3u<<25);
     if (dp4) {
         program[3][3] &= ~1u;
         /* Independent dot: (5,14,27,7).(1,2,3,4)=142; write x/z only. */
         program[4][1]=(7u<<21)|(1u<<13)|0x1Bu;
         program[4][2]=(12u<<28)|(1u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17);
         program[4][3]=(10u<<12)|0x800u|1u;
+    }
+    if (rcc) {
+        program[3][3]&=~1u;
+        /* RCC v2.x -> oPos.xz; other position/color components survive. */
+        program[4][1]=(3u<<25)|(2u<<9);
+        program[4][3]=(2u<<28)|(10u<<12)|0x800u|4u|1u;
     }
     char text[16384]; size_t length;
     if (!fut_vertex_program_hlsl(program, count, text, sizeof(text), &length) || !length) return 1;
@@ -89,6 +108,7 @@ static int run_fixture(int dp4)
         ID3D10Blob_GetBufferPointer(bytecode), ID3D10Blob_GetBufferSize(bytecode),
         declaration, 2, &output_stride, 1, D3D11_SO_NO_RASTERIZED_STREAM, NULL, &stream_shader))) return 10;
     float vertex[16][4] = {{2,4,6,2},{0.25f,0.5f,0.75f,1}};
+    if(rcc) memcpy(&vertex[2][0],&rcc_cases[mode-2][0],4);
     D3D11_BUFFER_DESC desc = {0}; desc.ByteWidth = sizeof(vertex);
     desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA initial = {vertex,0,0};
@@ -116,6 +136,14 @@ static int run_fixture(int dp4)
     const float *actual = mapped.pData;
     int correct = 1;
     for (unsigned i = 0; i < 8; ++i) {
+        if(rcc && (i==0 || i==2)) {
+            uint32_t bits;memcpy(&bits,&actual[i],4);
+            if(bits!=rcc_cases[mode-2][1]) {
+                fprintf(stderr,"RCC input=%08X got=%08X expected=%08X\n",
+                    rcc_cases[mode-2][0],bits,rcc_cases[mode-2][1]);correct=0;
+            }
+            continue;
+        }
         if (!isfinite(actual[i]) || fabsf(actual[i] - expected[i]) > 0.00001f) {
             fprintf(stderr, "shader result[%u]=%g expected=%g\n", i, actual[i], expected[i]); correct = 0;
         }
@@ -132,6 +160,11 @@ static int run_fixture(int dp4)
 }
 int main(void)
 {
-    int result=run_fixture(0);
-    return result ? result : run_fixture(1);
+    int paired=run_fixture(-1);
+    if(paired) return paired;
+    for(unsigned mode=0;mode<2+sizeof(rcc_cases)/sizeof(rcc_cases[0]);++mode) {
+        int result=run_fixture((int)mode);
+        if(result) return result;
+    }
+    return 0;
 }

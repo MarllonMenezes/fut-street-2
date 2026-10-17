@@ -81,6 +81,7 @@
 !/native_recomp/graphics_native_draw.c
 !/native_recomp/graphics_native_draw.h
 !/native_recomp/graphics_shader_interface.h
+!/native_recomp/graphics_vertex_rcc.h
 !/native_recomp/graphics_scanout.c
 !/native_recomp/graphics_scanout.h
 !/native_recomp/guest_interrupt_gate.c

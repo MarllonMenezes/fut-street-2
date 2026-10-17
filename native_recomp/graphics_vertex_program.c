@@ -1,6 +1,7 @@
 #include "graphics_vertex_program.h"
 #include "graphics_sample_pattern.h"
 #include "graphics_shader_interface.h"
+#include "graphics_vertex_rcc.h"
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -56,6 +57,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
     if (!words || !count || count > 136 || !text || !capacity) return 0;
     text[0] = 0;
     Writer out = {text, capacity, 0, 0};
+    emit(&out,FUT_VERTEX_RCC_HLSL);
     if(screen) emit(&out,"cbuffer VertexSurface:register(b3){float4 vertexSurface;};\n");
     if(screen==2) emit(&out,FUT_AA2_COVERAGE_HLSL);
     emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\nstruct In{\n");
@@ -67,9 +69,9 @@ static int generate(const uint32_t (*words)[4], size_t count,
     for (size_t index = 0; index < count; ++index) {
         const uint32_t *w = words[index];
         unsigned mac = (w[1] >> 21) & 15, ilu = (w[1] >> 25) & 7;
-        /* Exercised programs use MOV/MUL/ADD/DP4 and MOV/RCP. Other ops
+        /* Exercised programs use MOV/MUL/ADD/DP4 and MOV/RCP/RCC. Other ops
          * require implementations plus semantic tests before acceptance. */
-        if ((mac > 3 && mac != 7) || ilu > 2) return 0;
+        if ((mac > 3 && mac != 7) || ilu > 3) return 0;
         char a[96] = "0", b[96] = "0", csrc[96] = "0";
         if ((mac && !source(a, sizeof(a), w, 0)) ||
             ((mac == 2 || mac == 7) && !source(b, sizeof(b), w, 1)) ||
@@ -81,6 +83,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
         if (mac == 7) emit(&out, "M=dot(A,B).xxxx;\n");
         if (ilu == 1) emit(&out, "I=C;\n");
         if (ilu == 2) emit(&out, "I=(1.0f/C.x).xxxx;\n");
+        if (ilu == 3) emit(&out, "I=fut_rcc(C.x).xxxx;\n");
         unsigned temp = (w[3] >> 20) & 15;
         unsigned mac_mask = (w[3] >> 24) & 15, ilu_mask = (w[3] >> 16) & 15;
         if (ilu && temp == 1) mac_mask = 0;
