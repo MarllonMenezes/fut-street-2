@@ -11,7 +11,8 @@ param(
     [switch]$GraphicsTrace,
     [switch]$Aa2Approximation,
     [switch]$QuincunxApproximation,
-    [switch]$Ac97ResetApproximation
+    [switch]$Ac97ResetApproximation,
+    [switch]$AudioEffectsBypass
 )
 
 $ErrorActionPreference = 'Stop'
@@ -45,7 +46,9 @@ $variables = @{
     RECOMP_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
+    RECOMP_AUDIO_EFFECTS_BYPASS = '0'
 }
+if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
 if ($GraphicsSnapshot) { $variables.RECOMP_GRAPHICS_SNAPSHOT = '1' }
 if ($HostOutputVblank) { $variables.RECOMP_HOST_OUTPUT_VBLANK = '1' }
 if ($NativeDisplayOrigin) { $variables.RECOMP_NATIVE_DISPLAY_ORIGIN = '1' }
@@ -100,6 +103,9 @@ try {
         aa2_approximation = [bool]$Aa2Approximation
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
+        audio_effects_bypass = [bool]$AudioEffectsBypass
+        audio_effects_bypass_max_completions = $(if ($AudioEffectsBypass) { 4096 } else { 0 })
+        functional_status = 'NOT_READY'
         stdout = $stdout; stderr = $stderr
     }
     $summary | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $runDirectory 'run.json') -Encoding UTF8

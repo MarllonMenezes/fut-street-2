@@ -3,6 +3,37 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+/* User-authorized boot exploration only. This fabricates bounded completions;
+ * it implements neither DSP execution nor audio. Called by a separate,
+ * explicitly selected generated-source overlay in the submitting thread. */
+int fut_audio_effects_bypass(uint32_t site, uint32_t address,
+                             volatile uint32_t *command)
+{
+    static unsigned applied;
+    const char *option = getenv("RECOMP_AUDIO_EFFECTS_BYPASS");
+    if (!option || strcmp(option, "0") == 0)
+        return 0;
+    if (strcmp(option, "1") != 0 || applied >= 4096u ||
+        site != 0x002872FFu || address != 0x83360810u ||
+        (uintptr_t)command != (uintptr_t)XBOX_PTR(address) ||
+        !g_xbox_mem_offset || *command != 3u) {
+        fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] refused scope/configuration "
+                "site=%08X address=%08X applied=%u; NOT_READY\n",
+                site, address, applied);
+        fflush(NULL);
+        _Exit(3);
+    }
+    *command = 0;
+    ++applied;
+    fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] site=%08X address=%08X "
+            "before=00000003 after=00000000 simulated-completion=1 "
+            "application=%u/4096 DSP-executed=0 audio-validated=0 NOT_READY\n",
+            site, address, applied);
+    fflush(stderr);
+    return 1;
+}
 
 static uint8_t g_tv_encoder_field_pin;
 

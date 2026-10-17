@@ -12,6 +12,7 @@ uint8_t recomp_xbox_io_read8(uint16_t port);
 void recomp_xbox_cli(void);
 void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
+int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 
 /* The unit target does not link the generated game code. The manual lookup
  * contract is tested by address identity; the native bring-up validates the
@@ -48,6 +49,35 @@ volatile uint64_t g_icall_count;
 int main(int argc, char **argv)
 {
     if (argc == 2) {
+        if (strncmp(argv[1], "audio-", 6) == 0) {
+            uint32_t words[] = {0xAAAAAAAAu, 3u, 0xBBBBBBBBu};
+            g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)&words[1] - (ptrdiff_t)0x83360810u;
+            uint32_t site = 0x002872FFu, address = 0x83360810u;
+            if (strcmp(argv[1], "audio-site") == 0) ++site;
+            if (strcmp(argv[1], "audio-address") == 0) ++address;
+            if (strcmp(argv[1], "audio-value") == 0) words[1] = 1;
+            if (strcmp(argv[1], "audio-pointer") == 0) {
+                fut_audio_effects_bypass(site, address, NULL);
+                return 98;
+            }
+            int applied = fut_audio_effects_bypass(site, address, &words[1]);
+            if (strcmp(argv[1], "audio-repeat") == 0) {
+                words[1] = 3;
+                return fut_audio_effects_bypass(site, address, &words[1]) == 1 &&
+                    words[1] == 0 && words[0] == 0xAAAAAAAAu &&
+                    words[2] == 0xBBBBBBBBu ? 0 : 98;
+            }
+            if (strcmp(argv[1], "audio-budget") == 0) {
+                for (unsigned i = 1; i < 4097; ++i) {
+                    words[1] = 3;
+                    fut_audio_effects_bypass(site, address, &words[1]);
+                }
+                return 98;
+            }
+            int expect = strcmp(argv[1], "audio-on") == 0;
+            return applied == expect && words[1] == (expect ? 0u : 3u) &&
+                words[0] == 0xAAAAAAAAu && words[2] == 0xBBBBBBBBu ? 0 : 97;
+        }
         if (strcmp(argv[1], "unresolved") == 0)
             recomp_icall_fail_log(0x1234u);
         else if (strcmp(argv[1], "not-code") == 0)

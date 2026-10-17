@@ -27,6 +27,9 @@ option(FUT_STREET2_BUILD_HOST_APP
 option(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER
     "Build the isolated MCPX DSP56300 adapter (does not enable AC97/APU boot)"
     OFF)
+option(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK
+    "Build the explicit bounded audio-wait diagnostic overlay (NOT_READY)"
+    OFF)
 
 if(RECOMP_ARCHIVER)
     # Some compiler distributions (including Zig's Windows Clang driver) do
@@ -52,6 +55,30 @@ file(GLOB_RECURSE RECOMP_GENERATED_SOURCES CONFIGURE_DEPENDS
 
 if(NOT RECOMP_GENERATED_SOURCES)
     message(FATAL_ERROR "No generated recomp_*.c files found in RECOMP_GENERATED_DIR")
+endif()
+
+if(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "Audio bypass requires the Windows experimental host")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(audio_overlay_script "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-audio-effects-bypass.ps1")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+        -File "${audio_overlay_script}" -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${CMAKE_CURRENT_BINARY_DIR}/audio-effects-bypass"
+        RESULT_VARIABLE audio_overlay_result OUTPUT_VARIABLE audio_overlay_source
+        ERROR_VARIABLE audio_overlay_error OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT audio_overlay_result EQUAL 0)
+        message(FATAL_ERROR "Audio overlay refused: ${audio_overlay_error}")
+    endif()
+    file(TO_CMAKE_PATH "${audio_overlay_source}" audio_overlay_source)
+    get_filename_component(audio_overlay_name "${audio_overlay_source}" NAME)
+    set(audio_original "${RECOMP_GENERATED_DIR}/${audio_overlay_name}")
+    list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${audio_original}")
+    list(APPEND RECOMP_GENERATED_SOURCES "${audio_overlay_source}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${audio_original}" "${audio_overlay_script}")
+    message(WARNING "Audio-wait overlay built; runtime opt-in still required. NOT_READY.")
 endif()
 
 list(LENGTH RECOMP_GENERATED_SOURCES RECOMP_SOURCE_COUNT)
@@ -196,6 +223,16 @@ if(BUILD_TESTING)
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime-diagnostic-stop.ps1"
             "$<TARGET_FILE:no_emulation_runtime_support_test>")
+    add_test(NAME audio_effects_bypass_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-effects-bypass-contract.ps1"
+            "$<TARGET_FILE:no_emulation_runtime_support_test>")
+    set_tests_properties(audio_effects_bypass_contract PROPERTIES TIMEOUT 15)
+    add_test(NAME audio_effects_overlay_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-effects-overlay-contract.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-audio-effects-bypass.ps1")
+    set_tests_properties(audio_effects_overlay_contract PROPERTIES TIMEOUT 15)
     add_test(NAME recomp_generated_dispatch_table
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
             -ExecutionPolicy Bypass
@@ -261,6 +298,10 @@ if(FUT_STREET2_BUILD_HOST_APP)
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel")
     target_compile_definitions(fut_street_2_recompiled_app PRIVATE
         WIN32_LEAN_AND_MEAN NOMINMAX)
+    if(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK)
+        target_compile_definitions(fut_street_2_recompiled_app PRIVATE
+            FUT_AUDIO_EFFECTS_BYPASS_HOOK=1)
+    endif()
     target_link_libraries(fut_street_2_recompiled_app PRIVATE
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel

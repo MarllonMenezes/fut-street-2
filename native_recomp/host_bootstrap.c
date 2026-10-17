@@ -358,6 +358,22 @@ int main(int argc, char **argv)
                 "--launch <default.xbe> <game-data-directory> <save-directory>.\n");
         return 2;
     }
+    {
+        const char *bypass = getenv("RECOMP_AUDIO_EFFECTS_BYPASS");
+        if (bypass && strcmp(bypass, "0") != 0) {
+            if (strcmp(bypass, "1") != 0) {
+                fprintf(stderr, "Invalid RECOMP_AUDIO_EFFECTS_BYPASS; use 0 or 1.\n");
+                return 2;
+            }
+#ifndef FUT_AUDIO_EFFECTS_BYPASS_HOOK
+            fprintf(stderr, "Audio bypass requested but this build has no overlay hook.\n");
+            return 2;
+#else
+            fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] armed: at most 4096 known "
+                    "effects submissions; simulated completions; NOT_READY\n");
+#endif
+        }
+    }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
         environment_variable_is_set("RECOMP_AC97_RESET_ONLY") ||
         environment_variable_is_set("RECOMP_PB_EXEC") ||
