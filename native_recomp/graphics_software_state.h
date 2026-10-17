@@ -34,7 +34,10 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 /* Strict AA2 path normally requires no retained software controls. Explicit
  * RECOMP_AA2_APPROXIMATION=1 also admits only the observed 640x480 baseline
- * under the user-authorized experiment; unknown raw values remain refused. */
+ * under the user-authorized experiment; unknown raw values remain refused.
+ * A separate RECOMP_DXT1_NOISE_APPROXIMATION=1 admits only the captured
+ * 512x512 stage-0 BC1 state without modeling NV2A noise (2026-10-17).
+ * Other texture stages must be disabled in that additional experiment. */
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *state,
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 #endif

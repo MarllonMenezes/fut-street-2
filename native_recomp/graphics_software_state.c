@@ -87,7 +87,19 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
             s->rdi_value[0]!=1 || s->rdi_value[1]!=1) return 0;
         for(unsigned stage=0;stage<4;++stage) if(k->textures[stage].control0&0x40000000u) {
             uint32_t format=k->textures[stage].format;
-            if(format!=0x11229 && format!=0x1122A && format!=0x11F29 && format!=0x11F2A) return 0;
+            if(format!=0x11229 && format!=0x1122A && format!=0x11F29 && format!=0x11F2A) {
+                const FutGraphicsTextureState *t=&k->textures[stage];
+                /* New explicit diagnostic approximation: BC1 without the
+                 * unmeasured NV2A DXT1 noise, only this captured draw state. */
+                if(!fut_graphics_dxt1_noise_approximation_enabled() || stage!=0 ||
+                    format!=0x09910C29u || (t->valid&0x2Fu)!=0x2Fu ||
+                    t->control0!=0x4003FFC0u || t->address!=0x30303u ||
+                    t->filter!=0x02062000u || k->depth_test!=1 || k->stencil_test ||
+                    k->draw.depth_write || k->compress_depth!=1 || k->control0!=0x00100001u)
+                    return 0;
+                for(unsigned other=1;other<4;++other)
+                    if(k->textures[other].control0&0x40000000u) return 0;
+            }
         }
     }
     /* Texture translation and ordinary Z/S pipeline validation remain separate

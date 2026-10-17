@@ -10,12 +10,16 @@ param(
     [switch]$NativeDisplayOrigin,
     [switch]$GraphicsTrace,
     [switch]$Aa2Approximation,
+    [switch]$Dxt1NoiseApproximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
     [switch]$AudioEffectsBypass
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Dxt1NoiseApproximation -and -not $Aa2Approximation) {
+    throw 'The restricted DXT1-noise experiment requires -Aa2Approximation.'
+}
 foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Input missing: $path" }
 }
@@ -44,6 +48,7 @@ $variables = @{
     RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
     RECOMP_TRACE_BUDGET = '20000'
     RECOMP_AA2_APPROXIMATION = '0'
+    RECOMP_DXT1_NOISE_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
@@ -54,6 +59,7 @@ if ($HostOutputVblank) { $variables.RECOMP_HOST_OUTPUT_VBLANK = '1' }
 if ($NativeDisplayOrigin) { $variables.RECOMP_NATIVE_DISPLAY_ORIGIN = '1' }
 if ($GraphicsTrace) { $variables.RECOMP_GRAPHICS_TRACE = '1' }
 if ($Aa2Approximation) { $variables.RECOMP_AA2_APPROXIMATION = '1' }
+if ($Dxt1NoiseApproximation) { $variables.RECOMP_DXT1_NOISE_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
 $previous = @{}
@@ -101,6 +107,7 @@ try {
         native_display_origin = [bool]$NativeDisplayOrigin
         graphics_trace = [bool]$GraphicsTrace
         aa2_approximation = [bool]$Aa2Approximation
+        dxt1_noise_approximation = [bool]$Dxt1NoiseApproximation
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass

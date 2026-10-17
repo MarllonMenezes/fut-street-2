@@ -790,6 +790,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
                 rop.compare_always_read,rop.depth_read,rop.dont_cull_uncompressed,rop.baseline[0],rop.baseline[1]);
         return 0;
     }
+    if(aa2 && state->kelvin.textures[0].format==0x09910C29u &&
+        fut_graphics_dxt1_noise_approximation_enabled())
+        fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
     if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
         "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");

@@ -5,6 +5,7 @@
 int main(void)
 {
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","0");
     FutGraphicsSoftwareState state = {0};
     if (!fut_graphics_software_draw_ready(&state)) return 1;
     if (!fut_graphics_software_state(&state, 0x28, 0, 0, 0) || state.dxt1_noise != 1 ||
@@ -105,6 +106,40 @@ int main(void)
     _putenv_s("RECOMP_AA2_APPROXIMATION","true");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 35;
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
-    puts("Selectors retained; AA2 approximation requires explicit opt-in and exact observed baseline/dimensions/linear formats; unknown values remain refused");
+    state=baseline;kelvin=(FutGraphicsKelvinState){0};
+    kelvin.anti_aliasing_control=0xFFFF0001;kelvin.depth_test=1;
+    kelvin.compress_depth=1;kelvin.control0=0x100001;
+    kelvin.textures[0]=(FutGraphicsTextureState){.format=0x09910C29,.control0=0x4003FFC0,
+        .address=0x30303,.filter=0x02062000,.valid=0x2F};
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,.logical_height=480,.samples=2};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 36;
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 37;
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 38;
+    FutGraphicsKelvinState scoped=kelvin;
+    for(unsigned i=0;i<9;++i) {
+        kelvin=scoped;
+        switch(i) {
+        case 0:kelvin.textures[0].format^=0x100000;break;
+        case 1:kelvin.textures[0].filter^=0x10000;break;
+        case 2:kelvin.textures[0].address^=1;break;
+        case 3:kelvin.textures[0].control0^=0x40;break;
+        case 4:kelvin.draw.depth_write=1;break;
+        case 5:kelvin.stencil_test=1;break;
+        case 6:kelvin.control0^=1;break;
+        case 7:kelvin.textures[1].control0=0x40000000;break;
+        case 8:kelvin.textures[0].valid=0;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 39;
+    }
+    kelvin=scoped;surface.logical_width=320;surface.width=640;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 40;
+    surface.logical_width=640;surface.width=1280;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 41;
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","0");
+    puts("Software controls: independent opt-ins, exact captured BC1 scope and negative variants verified");
     return 0;
 }
