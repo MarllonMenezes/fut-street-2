@@ -524,8 +524,9 @@ static int native_prepare_textures(NativeGraphicsState *state)
         FutGraphicsTexturePlan plan;
         FutGraphicsTextureStatus status=fut_graphics_texture_plan(texture,&dma,&plan);
         if (status != FUT_TEXTURE_READY) {
-            fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X pitch=%08X\n",
-                stage,status,texture->format,texture->control1);
+            fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X offset=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X dma=%08X/%08X\n",
+                stage,status,texture->format,texture->offset,texture->image_rect,
+                texture->control0,texture->control1,texture->valid,dma.guest_address,dma.size);
             return 0;
         }
         HRESULT hr=fut_native_texture_upload(&state->textures[stage],state->device,&plan,object_memory_read,NULL);

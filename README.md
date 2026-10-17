@@ -18,14 +18,15 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 **`NOT_READY` — ainda não jogável.** A build Release contém 15.610 entradas
 de dispatch. O launch limitado alcançou o triangle strip de vertex arrays,
-validou quatro índices e executou o shader recompilado para seis vértices; a
-rasterização desse desenho ainda está bloqueada pelo formato da textura usada.
+validou quatro índices e executou o shader recompilado para seis vértices. A
+tentativa mais recente preparou uma textura 128×32, mas o desenho parou nos
+controles de depth/compressão/AA ainda fora do domínio traduzido.
 
 | Etapa | Evidência atual |
 | --- | --- |
 | Tradução e compilação | Build nativo Release com 15.610 entradas exatas. As entradas observadas `0x00240AFB` e `0x001D1EAD` foram recuperadas do XBE, regeneradas e incluídas no executável testado. |
 | Boot | Execução parcial da lógica recompilada confirmada em launches limitados; boot completo e menu ainda não comprovados. |
-| Rendering | Recibos DXGI com aposentadoria pela ISR original e recompilação de shader observados. No alvo atual, o host validou o DMA NVM de 64 MiB, buscou quatro índices e executou o shader original para seis vértices. A conversão S32K usa o modelo local S16-para-float, sem validação no NV2A. A preparação do raster parou na textura `0x06610E29` (`control1=0x14000000`); esse strip não produziu pixels nem writeback. Desenhos anteriores escreveram superfícies no guest, mas isso não aprova este desenho nem a fidelidade NV2A. |
+| Rendering | Recibos DXGI com aposentadoria pela ISR original e recompilação de shader observados. No alvo atual, o host validou o DMA NVM de 64 MiB, buscou quatro índices e executou o shader original para seis vértices. A conversão S32K usa o modelo local S16-para-float, sem validação no NV2A. Em uma execução, a preparação do raster parou na textura `0x06610E29` (`control1=0x14000000`). Em outra, uma textura 128×32 foi preparada, mas o desenho parou nos controles de depth/compressão/AA; não há pixels/writeback comprovados para esse strip. Desenhos anteriores escreveram superfícies no guest, sem aprovar este desenho nem a fidelidade NV2A. |
 | Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
 | Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
 
@@ -39,11 +40,13 @@ com alvo NVM e span declarada `0x07FFB000` (aproximadamente 128 MiB), limitada
 pelo host à região suportada de 64 MiB. O offset `0x00166574` passou pelas verificações de
 intervalo; os seis vértices convertidos pelo modelo S16-para-float chegaram ao
 shader recompilado. Isso comprova fetch e invocação do shader neste caso, não
-a semântica NV2A da conversão nem a rasterização do strip.
-O próximo bloqueio é a textura `0x06610E29`, com `control1=0x14000000`, que
-o decoder atual recusa como armazenamento não suportado. O processo saiu com
-`exit 3` antes do timeout de 60 segundos; o XBE permaneceu inalterado. Logs,
-saves e código gerado ficam locais em D:.
+a semântica NV2A da conversão nem a rasterização do strip. Uma execução mais
+recente saiu com `exit 3` antes do timeout de 60 segundos após informar
+`depth=1`, `depth_write=1`, `compress_depth=1`, `samples=2`, `dither=1` e
+`anti_alias_control=0xFFFF0001`; o desenho foi recusado e a fila não foi
+concluída. Essa execução preparou uma textura 128×32. Ela não reproduziu a
+recusa de `0x06610E29`, que continua sem dimensão/span ativos confirmados. O
+XBE permaneceu inalterado. Logs, saves e código gerado ficam locais em D:.
 
 As aproximações gráficas são opt-in e restritas aos casos observados:
 AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
@@ -61,24 +64,27 @@ nenhum START original foi observado. O DSP experimental não participa do boot.
 
 ### Próximos passos
 
-1. **Resolver a textura do strip:** identificar em fontes locais e nos
-   registros executados a organização exata de `0x06610E29` e de
-   `control1=0x14000000`; validar endereço, dimensões e span antes de admitir
-   leitura. Não inferir formato a partir do nome nem usar aproximação sem
-   autorização específica.
-2. **Validar rendering do strip:** repetir o launch limitado e exigir desenho
+1. **Desbloquear os controles do desenho:** mapear as dependências originais
+   para depth, depth compression e anti-aliasing que produziram o domínio
+   recusado. Validar cada estado com fonte/call site e testes focais; não
+   ampliar aproximações de AA nem declarar equivalência sem evidência.
+2. **Retomar a textura `0x06610E29`:** capturar o snapshot de registradores
+   efetivamente ativo se ela reaparecer. Confirmar endereço, dimensões e span
+   antes de admitir leitura; a execução mais recente não reproduziu essa
+   recusa, e os setters enfileirados após o END não provam seu estado ativo.
+3. **Validar rendering do strip:** repetir o launch limitado e exigir desenho
    nativo concluído com pixels e writeback da superfície no guest. A execução
    do shader e a fila aceita não bastam.
-3. **Repetir o launch limitado:** localizar o próximo bloqueio sem concluir a
+4. **Repetir o launch limitado:** localizar o próximo bloqueio sem concluir a
    fila artificialmente.
-4. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
+5. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
    em cada execução, seja tradução, serviço de host, carregamento ou desenho.
    Não substituir funções ausentes por sucesso fictício.
-5. **Validar controles e cenário:** comprovar entrada chegando à lógica
+6. **Validar controles e cenário:** comprovar entrada chegando à lógica
    original, navegação do menu e carregamento de uma partida.
-6. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
+7. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
    executados pela lógica original, com estabilidade e resultado verificável.
-7. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
+8. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
    retirar a dependência do bypass e validar os efeitos das aproximações
    gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
 
