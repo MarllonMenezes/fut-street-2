@@ -10,10 +10,52 @@ import hashlib
 import json
 import re
 import shutil
+import struct
 import sys
 from pathlib import Path
 
 ROW = re.compile(r"(?m)^[ \t]*\{ 0x([0-9A-Fa-f]+)u, \(recomp_func_t\)(\w+) \},")
+
+
+def validate_switch(code: bytes, start: int, end: int, table: int, count: int):
+    """Prove a trailing dword table guarded by CMP index,N / JA default."""
+    import capstone
+    if not 1 <= count <= 256 or not start < table or table + count * 4 != end:
+        raise ValueError("Switch table must exactly fill the trailing range")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    instructions = list(decoder.disasm(code[:table - start], start))
+    if (sum(i.size for i in instructions) != table - start
+            or instructions[-1].mnemonic != "ret"):
+        raise ValueError("Switch code must decode completely through RET")
+    boundaries = {i.address for i in instructions}
+    targets = list(struct.unpack(f"<{count}I", code[table - start:]))
+    if any(t not in boundaries for t in targets):
+        raise ValueError("Switch destination is not a code boundary")
+    jumps = [i for i in instructions if i.mnemonic == "jmp" and i.operands[0].type == capstone.x86.X86_OP_MEM]
+    if len(jumps) != 1:
+        raise ValueError("Expected exactly one indexed switch")
+    jump = jumps[0]
+    mem = jump.operands[0].mem
+    pos = instructions.index(jump)
+    if (mem.base or mem.segment or not mem.index or mem.scale != 4
+            or mem.disp != table or pos < 2):
+        raise ValueError("Unexpected switch addressing")
+    cmp, guard = instructions[pos - 2:pos]
+    if (cmp.mnemonic != "cmp" or len(cmp.operands) != 2
+            or cmp.operands[0].type != capstone.x86.X86_OP_REG
+            or cmp.operands[0].reg != mem.index
+            or cmp.operands[1].type != capstone.x86.X86_OP_IMM
+            or cmp.operands[1].imm != count - 1
+            or guard.mnemonic != "ja" or guard.operands[0].type != capstone.x86.X86_OP_IMM
+            or guard.operands[0].imm not in boundaries):
+        raise ValueError("Switch lacks the exact unsigned bound guard")
+    bypass = {guard.address, jump.address}
+    if (any(t in bypass for t in targets)
+            or any(i.mnemonic.startswith('j') and i.operands[0].type == capstone.x86.X86_OP_IMM
+                   and i.operands[0].imm in bypass for i in instructions)):
+        raise ValueError("Control flow bypasses the switch bound check")
+    return instructions, targets, jump.address
 
 
 def read_dispatch(text: str) -> list[tuple[int, str]]:
@@ -86,13 +128,26 @@ def recover(args: argparse.Namespace) -> dict:
         raise ValueError("Range is not contiguous in the original XBE")
     code = data[offset:offset + size]
     decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
-    instructions = list(decoder.disasm(code, args.start))
-    if sum(i.size for i in instructions) != size or instructions[-1].mnemonic not in ("ret", "jmp"):
+    switch = args.switch_table
+    targets, switch_jump = [], None
+    if switch is not None:
+        instructions, targets, switch_jump = validate_switch(
+            code, args.start, args.end, switch, args.switch_count)
+    else:
+        if args.switch_count:
+            raise ValueError("Switch count requires a table")
+        instructions = list(decoder.disasm(code, args.start))
+    if switch is None and (sum(i.size for i in instructions) != size or instructions[-1].mnemonic not in ("ret", "jmp")):
         raise ValueError("Incomplete decode or unproven function end")
     boundaries = {i.address for i in instructions}
     for ins in instructions:
         if ins.mnemonic == "call" or ins.mnemonic.startswith("j"):
             if not ins.op_str.startswith("0x"):
+                if ins.address == switch_jump:
+                    continue
+                if (args.allow_indirect_calls and ins.mnemonic == "call"
+                        and ins.op_str.startswith("dword ptr [")):
+                    continue
                 raise ValueError("Indirect control flow requires a separate recovery analysis")
             target = int(ins.op_str, 16)
             if args.start <= target < args.end:
@@ -106,7 +161,8 @@ def recover(args: argparse.Namespace) -> dict:
     functions.append({"start": f"0x{args.start:08X}", "end": f"0x{args.end:08X}",
                       "size": size, "name": symbol, "section": known[args.end]["section"],
                       "detection_method": "observed_callback", "confidence": 1.0,
-                      "num_instructions": len(instructions), "data_ranges": []})
+                      "num_instructions": len(instructions), "data_ranges":
+                      [[switch, args.end]] if switch is not None else []})
     new_dispatch, new_header = register_callback(
         dispatch, (args.generated_dir / "recomp_funcs.h").read_text(encoding="utf-8"), args.start)
     output.mkdir(parents=True)
@@ -130,6 +186,8 @@ def recover(args: argparse.Namespace) -> dict:
               "end": f"0x{args.end:08X}", "size": size, "instructions": len(instructions),
               "xbe_sha256": digest, "body_sha256": hashlib.sha256(code).hexdigest(),
               "dispatch_entries": len(registered) + 1, "source_generation": str(args.generated_dir),
+              "switch_table": switch, "switch_targets": targets,
+              "indirect_calls_preserved": args.allow_indirect_calls,
               "vendor_root": str(args.vendor_root), "trace": str(args.trace),
               "vendor_sources_sha256": {
                   name: hashlib.sha256((args.vendor_root / "tools" / "recomp" / name).read_bytes()).hexdigest()
@@ -145,6 +203,9 @@ def main() -> None:
     parser.add_argument("--xbe-sha256", required=True)
     parser.add_argument("--start", type=lambda x: int(x, 0), required=True)
     parser.add_argument("--end", type=lambda x: int(x, 0), required=True)
+    parser.add_argument("--switch-table", type=lambda x: int(x, 0))
+    parser.add_argument("--switch-count", type=int, default=0)
+    parser.add_argument("--allow-indirect-calls", action="store_true")
     args = parser.parse_args()
     print(json.dumps(recover(args), indent=2))
 

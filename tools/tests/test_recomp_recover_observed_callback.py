@@ -1,7 +1,8 @@
 """Synthetic contracts for adding a recovered callback to generated dispatch."""
 import unittest
+import struct
 
-from tools.analysis.recomp_recover_observed_callback import read_dispatch, register_callback
+from tools.analysis.recomp_recover_observed_callback import read_dispatch, register_callback, validate_switch
 
 
 def dispatch(rows, count=None):
@@ -43,6 +44,33 @@ class RecoveryRegistrationTests(unittest.TestCase):
     def test_refuses_orphan_declaration_without_duplicating_it(self):
         with self.assertRaisesRegex(ValueError, "already registered"):
             register_callback(dispatch(self.rows), self.header + "void sub_00001100(void);", 0x1100)
+
+
+class SwitchRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.code = bytes.fromhex('83f8017708ff24850e100000c3c3') + struct.pack('<2I', 0x100c, 0x100d)
+
+    def test_bounded_table_preserves_both_arms(self):
+        ins, targets, jump = validate_switch(self.code, 0x1000, 0x1016, 0x100e, 2)
+        self.assertEqual(targets, [0x100c, 0x100d])
+        self.assertEqual(jump, 0x1005)
+        self.assertEqual(ins[-1].address, 0x100d)
+
+    def test_rejects_wrong_bound_signed_guard_index_and_destination(self):
+        for offset, value in [(2, 2), (3, 0x7f), (6, 0x20), (7, 0x8d), (14, 1)]:
+            code = bytearray(self.code)
+            code[offset] = value
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                validate_switch(bytes(code), 0x1000, 0x1016, 0x100e, 2)
+
+    def test_rejects_unaccounted_trailing_bytes(self):
+        with self.assertRaises(ValueError):
+            validate_switch(self.code + b'\0', 0x1000, 0x1017, 0x100e, 2)
+
+    def test_rejects_table_arm_that_bypasses_guard(self):
+        code = self.code[:14] + struct.pack('<2I', 0x1005, 0x100d)
+        with self.assertRaisesRegex(ValueError, 'bypasses'):
+            validate_switch(code, 0x1000, 0x1016, 0x100e, 2)
 
 
 if __name__ == "__main__":
