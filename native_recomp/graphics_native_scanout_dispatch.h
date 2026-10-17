@@ -21,6 +21,10 @@ typedef enum {
 
 int fut_native_scanout_dispatch_init(FutNativeScanoutDispatch *dispatch);
 void fut_native_scanout_dispatch_destroy(FutNativeScanoutDispatch *dispatch);
+/* Exact software notification 5: run original dispatcher -> KeSetEvent(+1A4).
+ * Caller validates guest context and finishes previous GPU work first. */
+FutNativeScanoutDispatchResult fut_native_event5_dispatch_call(
+    FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification);
 FutNativeScanoutDispatchResult fut_native_scanout_dispatch_preflight(
     FutNativeScanoutDispatch *dispatch, uint32_t context, uint32_t notification,
     uint32_t expected_callback);

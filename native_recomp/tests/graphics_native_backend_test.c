@@ -8,6 +8,9 @@ int fut_native_scanout_dispatch_init(FutNativeScanoutDispatch *dispatch)
 { (void)dispatch;return 0; }
 void fut_native_scanout_dispatch_destroy(FutNativeScanoutDispatch *dispatch)
 { (void)dispatch; }
+FutNativeScanoutDispatchResult fut_native_event5_dispatch_call(
+    FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification)
+{ (void)dispatch;(void)context;(void)notification;return FUT_SCANOUT_DISPATCH_NO_CONTEXT; }
 FutNativeScanoutDispatchResult fut_native_scanout_dispatch_preflight(
     FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification,
     uint32_t callback)

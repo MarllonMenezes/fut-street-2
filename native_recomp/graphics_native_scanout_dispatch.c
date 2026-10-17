@@ -61,6 +61,27 @@ void fut_native_scanout_dispatch_destroy(FutNativeScanoutDispatch *dispatch)
     dispatch->stack_slot=-1;dispatch->stack_top=0;dispatch->tib=0;
 }
 
+FutNativeScanoutDispatchResult fut_native_event5_dispatch_call(
+    FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification)
+{
+    if(!dispatch || dispatch->stack_slot<0 || !dispatch->tib || dispatch->stack_top<8 ||
+        !context || context>UINT32_MAX-0x1B4u || notification!=5u)
+        return FUT_SCANOUT_DISPATCH_NO_CONTEXT;
+    if(!fut_guest_interrupt_scope_active()) return FUT_SCANOUT_DISPATCH_NO_INTERRUPT_GATE;
+    recomp_func_t handler=recomp_lookup(FUT_SCANOUT_HANDLER_VA);
+    if(!handler) return FUT_SCANOUT_DISPATCH_MISSING_RECOMPILED_CODE;
+    uint32_t entry_esp=dispatch->stack_top-8u,*stack=guest_u32(entry_esp);
+    if(!stack) return FUT_SCANOUT_DISPATCH_BAD_GUEST_STACK;
+    FutRecompRegisterSnapshot saved;snapshot_registers(&saved);
+    stack[0]=FUT_SCANOUT_CALLER_RETURN_VA;stack[1]=notification;
+    g_fs_base=dispatch->tib;g_esp=entry_esp;g_ecx=context;
+    g_eax=g_edx=g_ebx=g_esi=g_edi=g_ebp=0;g_seh_ebp=entry_esp;g_df=0;
+    handler();
+    int stack_ok=g_esp==dispatch->stack_top;
+    restore_registers(&saved);
+    return stack_ok?FUT_SCANOUT_DISPATCH_OK:FUT_SCANOUT_DISPATCH_BAD_GUEST_STACK;
+}
+
 FutNativeScanoutDispatchResult fut_native_scanout_dispatch_preflight(
     FutNativeScanoutDispatch *dispatch,uint32_t context,uint32_t notification,
     uint32_t expected_callback)

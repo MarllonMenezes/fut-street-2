@@ -975,6 +975,26 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1;
         }
         if (method == 0x100u && value) {
+            if(value==5u) {
+                if(subchannel!=0 || fut_trace_file || !native_finish(state)) return 0;
+                if(!fut_native_scanout_dispatch_init(&state->scanout_dispatch)) return 0;
+                ULONGLONG deadline=GetTickCount64()+2000;
+                while(!fut_guest_interrupt_try_enter()) {
+                    if(GetTickCount64()>=deadline || (backend_stop &&
+                        WaitForSingleObject(backend_stop,0)!=WAIT_TIMEOUT)) return 0;
+                    Sleep(1);
+                }
+                uint32_t address=0,w[119];
+                int valid=native_scanout_context(&address,w) &&
+                    (w[0x1A4/4]&0x00FF00FFu)==0x00040000u;
+                FutNativeScanoutDispatchResult result=valid?
+                    fut_native_event5_dispatch_call(&state->scanout_dispatch,address,value):
+                    FUT_SCANOUT_DISPATCH_NO_CONTEXT;
+                fut_guest_interrupt_leave();
+                fprintf(stderr,"[GRAPHICS] original software event5 dispatcher result=%d context=%08X event=%08X; prior GPU work completed; no host event-state write\n",
+                    result,address,valid?address+0x1A4u:0);
+                return result==FUT_SCANOUT_DISPATCH_OK;
+            }
             if((value&31u)==1u) {
                 return native_scanout_enqueue(state,value);
             }

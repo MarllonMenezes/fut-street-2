@@ -12,6 +12,7 @@
 static uint8_t *guest_mapping;
 static int handler_calls,callback_calls,stack_frees;
 static int hide_handler,hide_callback;
+static int event_calls,bad_event_stack;
 static uint32_t expected_context,expected_notification,expected_tib;
 RECOMP_TLS uint32_t g_eax,g_ecx,g_edx,g_esp,g_ebx,g_esi,g_edi,g_ebp;
 RECOMP_TLS uint32_t g_seh_ebp,g_fs_base;
@@ -37,6 +38,12 @@ static void fake_handler(void)
     if(g_ecx!=expected_context || (g_esp&15u)!=8u ||
         *mem32(g_esp)!=0x0029769Bu || *mem32(g_esp+4)!=expected_notification)
         handler_calls=-100;
+    if(expected_notification==5) {
+        if(g_fs_base!=expected_tib || g_df || g_seh_ebp!=g_esp) handler_calls=-100;
+        ++event_calls;*mem32(g_ecx+0x1A8)=1;
+        g_eax=0x111;g_ebx=0x222;g_esi=0x333;g_df=1;
+        g_esp+=bad_event_stack?4:8;return;
+    }
     g_esp-=4;*mem32(g_esp)=0x002974CEu;fake_callback();
     g_esp+=8;
 }
@@ -99,6 +106,26 @@ int main(void)
         handler_calls==1 && callback_calls==1 && g_esp==0x1234 && g_ecx==0x5678 &&
         g_fs_base==0x6789 && g_seh_ebp==0x9876 && g_df==1 &&
         before==0x12345678u && after==0x12345679u,7);
+    fut_guest_interrupt_leave();
+    expected_notification=5;
+    CHECK(fut_native_event5_dispatch_call(&dispatch,expected_context,5)==
+        FUT_SCANOUT_DISPATCH_NO_INTERRUPT_GATE && event_calls==0,15);
+    CHECK(fut_guest_interrupt_try_enter(),16);
+    CHECK(fut_native_event5_dispatch_call(&dispatch,expected_context,37)==
+        FUT_SCANOUT_DISPATCH_NO_CONTEXT && event_calls==0,17);
+    hide_handler=1;
+    CHECK(fut_native_event5_dispatch_call(&dispatch,expected_context,5)==
+        FUT_SCANOUT_DISPATCH_MISSING_RECOMPILED_CODE && event_calls==0,18);
+    hide_handler=0;hide_callback=1;
+    *mem32(expected_context+0x1A8)=0;g_eax=0xABC;g_ebx=0xDEF;g_esi=0x987;
+    CHECK(fut_native_event5_dispatch_call(&dispatch,expected_context,5)==FUT_SCANOUT_DISPATCH_OK &&
+        event_calls==1 && callback_calls==1 && *mem32(expected_context+0x1A8)==1 &&
+        g_eax==0xABC && g_ebx==0xDEF && g_esi==0x987 && g_esp==0x1234 &&
+        g_ecx==0x5678 && g_fs_base==0x6789 && g_df==1,19);
+    bad_event_stack=1;
+    CHECK(fut_native_event5_dispatch_call(&dispatch,expected_context,5)==
+        FUT_SCANOUT_DISPATCH_BAD_GUEST_STACK && event_calls==2 && g_esp==0x1234 &&
+        g_fs_base==0x6789 && g_df==1,20);
     fut_guest_interrupt_leave();
     fut_native_scanout_dispatch_destroy(&dispatch);
     VirtualFree(guest_mapping,0,MEM_RELEASE);
