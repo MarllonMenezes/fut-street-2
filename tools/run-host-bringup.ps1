@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory = $true)][string]$GameDataDirectory,
     [string]$OutputRoot = 'D:\projeto zeta\artifacts\bringup',
     [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
+    [ValidateRange(1, 400000)][int]$TraceBudget = 20000,
     [switch]$GraphicsSnapshot,
     [switch]$HostOutputVblank,
     [switch]$NativeDisplayOrigin,
@@ -47,7 +48,7 @@ $stderr = Join-Path $runDirectory 'stderr.log'
 $variables = @{
     TEMP = $tempDirectory; TMP = $tempDirectory; TMPDIR = $tempDirectory
     RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
-    RECOMP_TRACE_BUDGET = '20000'
+    RECOMP_TRACE_BUDGET = [string]$TraceBudget
     RECOMP_AA2_APPROXIMATION = '0'
     RECOMP_DXT1_NOISE_APPROXIMATION = '0'
     RECOMP_P8_AA2_APPROXIMATION = '0'
@@ -105,6 +106,7 @@ try {
         xbe = $XbePath; xbe_sha256 = (Get-FileHash -LiteralPath $XbePath).Hash
         game_data = $GameDataDirectory; save_directory = $saveDirectory
         timeout_seconds = $TimeoutSeconds; timed_out = $timedOut
+        trace_budget = $TraceBudget
         exit_code = $process.ExitCode; diagnostic_trap = $true
         graphics_snapshot = [bool]$GraphicsSnapshot
         native_display_origin = [bool]$NativeDisplayOrigin
