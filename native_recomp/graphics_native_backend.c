@@ -256,6 +256,14 @@ static int native_scanout_service(NativeGraphicsState *state)
                         center_ok=ClientToScreen(window,&center);
                     }
                     HWND at_center=center_ok?WindowFromPoint(center):NULL;
+                    HWND center_root=at_center?GetAncestor(at_center,GA_ROOT):NULL;
+                    char center_class[128]={0};DWORD center_pid=0;
+                    if(center_root) {
+                        GetClassNameA(center_root,center_class,sizeof(center_class));
+                        GetWindowThreadProcessId(center_root,&center_pid);
+                    }
+                    fprintf(stderr,"[DISPLAY-DIAG] hung=%d center_class=%s center_same_process=%d; no window titles captured\n",
+                        IsHungAppWindow(window),center_class,center_pid==GetCurrentProcessId());
                     fprintf(stderr,"[DISPLAY-DIAG] submitted_hr=%08lX submitted=%u device_hr=%08lX center_valid=%d center_owned=%d monitor_present=%d; observation only\n",
                         count_hr,submitted,ID3D11Device_GetDeviceRemovedReason(state->device),center_ok,
                         at_center && GetAncestor(at_center,GA_ROOT)==window,
@@ -324,6 +332,9 @@ static int native_scanout_service(NativeGraphicsState *state)
             fut_guest_interrupt_leave();return 0;
         }
         state->kelvin.flip_read=(state->kelvin.flip_read+1u)%state->kelvin.flip_modulo;
+        fprintf(stderr,"[GRAPHICS] DXGI receipt source=%s observed_QPC=%lld; latency-event receipts carry no refresh/sync timestamp\n",
+            state->scanout_receipt.source==1?"frame-latency-event":"frame-statistics",
+            (long long)state->scanout_receipt.observed_qpc.QuadPart);
         fprintf(stderr,"[GRAPHICS] original queued surface presented and ISR retirement matched: physical=%08X PCRTC=%08X disabled=%u ordinal=%u DXGI_present=%u refresh=%u/%u QPC=%lld; flip read=%u write=%u modulo=%u; host timing approximation\n",
             title_physical,physical,state->scanout_disabled,state->scanout_plan.next_enqueue,state->scanout_receipt.present_count,
             state->scanout_receipt.present_refresh,state->scanout_receipt.sync_refresh,

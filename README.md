@@ -17,93 +17,69 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 ## Estado verificável — 17 de outubro de 2026
 
 **`NOT_READY` — ainda não jogável.** A build Release contém 15.610 entradas
-de dispatch. O launch limitado confirmou fetch e execução de shaders, além de
-desenhos anteriores com pixels escritos no guest. A execução mais recente
-terminou ao aguardar disponibilidade de um slot de flip (`read=0`, `write=0`,
-`modulo=3`, `valid=7`). Capturas anteriores comprovam recibos DXGI e
-aposentadoria pela ISR original; o quadro pendente ficou sem novo recibo.
+de dispatch. O último launch limitado superou a espera de flip, correlacionou
+13 recibos DXGI com aposentadoria pela ISR original e concluiu o strip P8
+128×32 autorizado. O próximo bloqueio é uma chamada original ainda sem
+tradução em `0x001D17BC`.
 
 | Etapa | Evidência atual |
 | --- | --- |
-| Tradução e compilação | Build nativo Release com 15.610 entradas exatas. As entradas observadas `0x00240AFB` e `0x001D1EAD` foram recuperadas do XBE, regeneradas e incluídas no executável testado. |
-| Boot | Execução parcial da lógica recompilada confirmada em launches limitados; boot completo e menu ainda não comprovados. |
-| Rendering | Recibos DXGI com aposentadoria pela ISR original, recompilação de shader e desenhos anteriores com writeback de pixels no guest foram observados. O fetch atual validou quatro índices e executou o shader original para seis vértices; a conversão S32K permanece um modelo S16-para-float sem medição NV2A. Foi implementado e testado o plano/upload de armazenamento linear DXT23 como BC2, mas o último launch não reproduziu esse formato. Também não reproduziu o desenho P8 128×32 autorizado. O bloqueio atual é a espera pelo método de flip `0x130`, sem slot livre/apresentação observada; completion da submissão permaneceu inalterada. Pixels desse strip e apresentação não estão comprovados. |
-| Áudio | Não funcional nem validado. O caminho experimental usa bypass explícito da espera de efeitos no host; o DSP continua isolado. |
-| Controles e gameplay | Menu navegável, controles na lógica original e partida curta ainda não comprovados. |
+| Tradução e compilação | Build nativo Release com 15.610 entradas; 37/37 gates nativos passaram. As funções recuperadas foram regeneradas e ligadas no executável testado. O alvo `0x001D17BC` permanece sem tradução. |
+| Boot | Execução parcial da lógica original confirmada; o launch saiu com `exit 3` antes do timeout de 60 segundos no alvo ausente. Boot completo e menu ainda não comprovados. |
+| Rendering | 13 recibos DXGI correlacionados com a ISR original: três por estatísticas exatas e dez pelo evento real de latência. O strip P8 128×32 autorizado executou seis vértices expandidos, IA=12 e PS=14.553, com writeback da superfície no guest. Isso não comprova fidelidade NV2A ou imagem completa do jogo. |
+| Áudio | Não funcional nem validado. O experimento usa bypass explícito da espera de efeitos no host; DSP permanece isolado. |
+| Controles e gameplay | Menu navegável, comandos na lógica original e partida curta ainda não comprovados. |
 
-As entradas `0x00240AFB` (dois saltos diretos para funções já registradas) e
-`0x001D1EAD` (folha linear terminada em RET, com folha vizinha decodificada)
-foram recuperadas com provas estáticas restritas. A build usada nesta etapa
-incluiu as 15.610 entradas; os **37/37 gates nativos passaram**. Em captura
-anterior, `SET_BEGIN_END=6` foi seguido pelos índices executados
-`[0,1,2,3]`. Vertex A/B apontaram para o mesmo descritor IN_MEMORY `0x3D`,
-com alvo NVM e span declarada `0x07FFB000` (aproximadamente 128 MiB), limitada
-pelo host à região suportada de 64 MiB. O offset `0x00166574` passou pelas verificações de
-intervalo; os seis vértices convertidos pelo modelo S16-para-float chegaram ao
-shader recompilado. Isso comprova fetch e invocação do shader neste caso, não
-a semântica NV2A da conversão nem a rasterização desse strip. A implementação
-BC2 calcula para o snapshot anterior da textura `0x06610E29` 1280×480, pitch
-5120 e span `0x96000`; testes sintéticos comprovaram formato e preservação dos
-bytes comprimidos, mas o launch integrado não repetiu o snapshot. O launch
-mais recente saiu com `exit 3` antes do limite de 60 segundos. Na fila
-rejeitada, o método `0x130` recebeu valor zero e não havia slot de flip livre
-(`read=0`, `write=0`, `modulo=3`, `valid=7`); a completion ficou inalterada e
-não houve confirmação de apresentação para o quadro pendente. O opt-in P8
-128×32 também não apareceu nesta execução.
-O XBE permaneceu inalterado. Logs, saves e código gerado ficam locais em D:.
+O presenter antes esperava exclusivamente `GetFrameStatistics`. O teste
+sintético reproduziu estatísticas atrasadas mesmo após uma submissão aceita.
+Agora ele também reconhece o evento documentado de
+[conclusão da apresentação do DXGI](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_3/nf-dxgi1_3-idxgiswapchain2-getframelatencywaitableobject),
+com somente um quadro pendente e identificador de submissão conferido.
+A prontidão inicial é consumida antes do desenho; um sinal consumido para
+confirmar o quadro fica reservado para a próxima etapa de staging.
+Recibos distinguem sua origem: o evento registra o instante de observação da
+CPU e mantém refresh e timestamp de sincronismo zerados. Nenhuma estatística
+é sintetizada. O avanço do flip continua condicionado à correlação com a
+aposentadoria pela ISR original, sob o modelo já existente de timing do host.
 
-O diagnóstico do presenter confirmou submissão aceita, dispositivo saudável
-e estatísticas atrasadas. A janela estava visível e não minimizada, mas seu
-centro estava coberto. Isso sugere uma dependência de exibição/composição,
-sem provar a causa. O teste isolado de apresentação passa; manter a janela
-no topo e sincronizar via DWM não demonstraram solução e foram descartados.
-O diagnóstico opcional `RECOMP_DISPLAY_DIAG` agora registra esses estados
-sem alterar recibos, índices ou completion.
+O caso P8 128×32 foi exercitado com depth-write e a aproximação AA2 autorizada;
+compressão de depth e fidelidade NV2A continuam sem validação. A conversão
+S32K segue o modelo local S16-para-float. O armazenamento DXT23→BC2 passou
+nos testes de plano/upload e preservação dos blocos comprimidos, mas ainda
+precisa reaparecer em runtime para comprovar seu uso.
 
-As aproximações gráficas são opt-in e restritas aos casos observados:
-AA2 em ARGB8 com os baselines aceitos; quincunx somente no resolve de
-1280×480 para 640×480; BC1 padrão sem o ruído DXT1 desconhecido somente na
-textura 512×512 e desenho AA2 autorizado; P8 32×32 convertido sem perdas
-para ARGB8 e rasterizado sob opção AA2 própria; e o caso P8 128×32 autorizado
-com depth-write dentro da opção independente. O armazenamento DXT23→BC2 usa
-blocos padrão de 16 bytes por 4×4 pixels; o launch ainda não confirmou seu uso
-nem o comportamento de amostragem NV2A. As aproximações gráficas não
-comprovam equivalência NV2A nem autorizam outros formatos ou modos.
+As aproximações gráficas continuam restritas aos casos observados e aceitos:
+dithering neutro em ARGB8 single-sample; AA2 com os baselines autorizados;
+quincunx no resolve 1280×480→640×480; BC1 sem o ruído DXT1 desconhecido na
+textura 512×512 e desenho aceito; P8 32×32 e P8 128×32 nas opções independentes.
+Esses experimentos não comprovam equivalência NV2A.
 
-O bypass de áudio também exige opção explícita e fica desligado no build
-padrão. Sua conclusão artificial serve para investigar os bloqueios seguintes;
-não representa execução do DSP ou áudio correto. O caminho sem bypass ainda
-aguarda os efeitos de áudio. No experimento DSP isolado, o contrato do
-periférico `FFFFB2` e o campo de passo do DMA circular permanecem desconhecidos;
-nenhum START original foi observado. O DSP experimental não participa do boot.
+O bypass de áudio exige opção explícita. Sua conclusão artificial serve para
+investigar os bloqueios seguintes; não representa execução do DSP ou áudio
+correto. No experimento DSP isolado, `FFFFB2` e o campo de passo do DMA circular
+continuam desconhecidos; nenhum START original foi observado. O DSP não
+participa do boot. O XBE permaneceu intacto e os logs, saves, capturas e código
+gerado proprietário ficam locais em D:.
 
 ### Próximos passos
 
-1. **Resolver a espera de flip:** reproduzir no presenter isolado a diferença
-   entre submissão DXGI aceita e estatísticas de exibição atrasadas, incluindo
-   tamanho/visibilidade da janela. Correlacionar cada recibo com a ISR original;
-   não avançar índices nem sinalizar completion sem apresentação comprovada.
-2. **Validar o strip após o flip:** comprovar submissão concluída, pixels e
-   writeback de cor/depth para o desenho alvo. Separar isso da prova de
-   apresentação e da fidelidade NV2A.
-3. **Retomar DXT23 e P8 128×32:** repetir capturas limitadas até os estados
-   autorizados reaparecerem; confirmar upload/amostragem efetivos e pixels.
-   Hoje BC2 só passou testes de planner/uploader e P8 128×32 só passou o gate.
-4. **Chegar ao menu utilizável:** resolver o primeiro bloqueio encontrado
-   em cada execução, seja tradução, serviço de host, carregamento ou desenho.
-   Não substituir funções ausentes por sucesso fictício.
+1. **Recuperar `0x001D17BC`:** confirmar limites e call sites originais, usar
+   o tradutor existente, regenerar o trecho e validar o executável resultante.
+2. **Retomar o boot limitado:** localizar o primeiro bloqueio seguinte,
+   preservando recibos reais, limites de execução e opções autorizadas.
+3. **Verificar rendering:** capturar e avaliar os quadros produzidos, além de
+   confirmar DXT23/BC2 em runtime quando esse estado reaparecer.
+4. **Chegar ao menu utilizável:** resolver dependências de tradução, serviços
+   do host e carregamento encontradas pelo caminho original.
 5. **Validar controles e cenário:** comprovar entrada chegando à lógica
-   original, navegação do menu e carregamento de uma partida.
-6. **Comprovar uma partida curta:** jogadores, bola, regras e progressão
-   executados pela lógica original, com estabilidade e resultado verificável.
-7. **Fechar áudio e fidelidade:** resolver os contratos DSP/APU com evidência,
-   retirar a dependência do bypass e validar os efeitos das aproximações
-   gráficas. Uma PoC com experimentos não equivale ao jogo pronto.
+   original e carregamento de uma partida.
+6. **Comprovar uma partida curta:** jogadores, bola, regras, placar e progressão
+   pela lógica original, com estabilidade verificável.
+7. **Fechar áudio e fidelidade:** resolver DSP/APU, retirar a dependência do
+   bypass e avaliar os limites das aproximações gráficas.
 
 Build, boot, rendering, áudio e gameplay são critérios separados. O estado
-permanece `NOT_READY` até a comprovação dos requisitos funcionais. Insumos,
-código gerado proprietário, capturas, logs e relatórios locais não são
-publicados neste repositório.
+permanece `NOT_READY` até a comprovação dos requisitos funcionais.
 
 ## Abordagem
 

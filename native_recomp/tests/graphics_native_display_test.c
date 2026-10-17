@@ -11,6 +11,12 @@ static int unavailable_environment(HRESULT hr)
         hr==DXGI_ERROR_SESSION_DISCONNECTED || hr==DXGI_STATUS_OCCLUDED;
 }
 typedef struct {FutNativeDisplay *display;HRESULT result;} ForeignThread;
+static int valid_receipt(const FutNativeDisplayReceipt *r)
+{
+    if(r->observed_qpc.QuadPart<=0) return 0;
+    if(r->source==0) return r->sync_qpc.QuadPart>0;
+    return r->source==1 && !r->sync_qpc.QuadPart && !r->present_refresh && !r->sync_refresh;
+}
 static DWORD WINAPI foreign_thread(void *opaque)
 {
     ForeignThread *f=opaque;FutNativeDisplayReceipt receipt;
@@ -75,7 +81,7 @@ int main(void)
     CHECK(fut_native_display_stage(&d,context,first_texture,2000,NULL)==S_OK,53);
     FutNativeDisplayReceipt first_receipt={0};
     CHECK(submit_and_receive(&d,&first_receipt)==S_OK && first_receipt.present_count==1 &&
-        first_receipt.sync_qpc.QuadPart>0 && !d.pending,54);
+        valid_receipt(&first_receipt) && !d.pending,54);
     ID3D11Texture2D_Release(first_texture);
     IDXGIOutput *timing_output=NULL;FutNativeVBlank clock={0};FutNativeVBlankReceipt edge;
     CHECK(IDXGISwapChain2_GetContainingOutput(d.swap,&timing_output)==S_OK,49);
@@ -139,16 +145,20 @@ int main(void)
         if(unavailable_environment(hr)) {fprintf(stderr,"DXGI receipt unavailable HRESULT=%08lX; pending=%u, no receipt fabricated\n",hr,d.pending);unavailable=1;}
         else {
             CHECK(hr==S_OK,37); /* A timeout or unexpected API error is NOT a skip. */
-            CHECK(!d.pending && receipt.present_count==d.target_present && receipt.sync_qpc.QuadPart>0,18);
+            CHECK(!d.pending && receipt.present_count==d.target_present && valid_receipt(&receipt),18);
             printf("DXGI synthetic receipt: present=%u present_refresh=%u sync_refresh=%u qpc=%lld\n",
                 receipt.present_count,receipt.present_refresh,receipt.sync_refresh,(long long)receipt.sync_qpc.QuadPart);
         }
     }
     if(!unavailable) {
-        UINT first_present=receipt.present_count;LARGE_INTEGER first_qpc=receipt.sync_qpc;
+        UINT first_present=receipt.present_count;LARGE_INTEGER first_qpc=receipt.observed_qpc;
         memcpy(&saved,&receipt,sizeof(saved));d.pending=1;d.target_present=first_present+1;
         CHECK(fut_native_display_poll(&d,&receipt)==S_FALSE && d.pending &&
             !memcmp(&receipt,&saved,sizeof(saved)),38); /* Old receipt is not a new frame. */
+        d.target_present=first_present;d.count_valid=0;
+        CHECK(fut_native_display_poll(&d,&receipt)==S_FALSE && d.pending &&
+            !memcmp(&receipt,&saved,sizeof(saved)),55); /* A signal without an ID is insufficient. */
+        d.count_valid=1;
         d.pending=0;d.target_present=first_present;
         for(unsigned i=0;i<128*64;++i) pixels[i]^=0x00FFFFFF;
         ID3D11Texture2D *second=NULL;desc.Width=128;
@@ -159,7 +169,7 @@ int main(void)
         if(unavailable_environment(hr)) unavailable=1;
         else {
             CHECK(hr==S_OK && receipt.present_count==first_present+1 &&
-                receipt.sync_qpc.QuadPart>=first_qpc.QuadPart && !d.pending,41);
+                valid_receipt(&receipt) && receipt.observed_qpc.QuadPart>=first_qpc.QuadPart && !d.pending,41);
             printf("DXGI second synthetic receipt: present=%u present_refresh=%u sync_refresh=%u qpc=%lld\n",
                 receipt.present_count,receipt.present_refresh,receipt.sync_refresh,(long long)receipt.sync_qpc.QuadPart);
         }

@@ -103,8 +103,9 @@ HRESULT fut_native_display_stage(FutNativeDisplay *d,ID3D11DeviceContext *contex
     for(;;) {
         if(stop && WaitForSingleObject(stop,0)!=WAIT_TIMEOUT) return E_ABORT;
         hr=pump(d);if(FAILED(hr)) return hr;
+        if(d->latency_ready) break;
         DWORD wait=WaitForSingleObject(d->latency,0);
-        if(wait==WAIT_OBJECT_0) break;
+        if(wait==WAIT_OBJECT_0) {d->latency_ready=1;break;}
         if(wait!=WAIT_TIMEOUT) return E_FAIL;
         if(GetTickCount64()>=deadline) return HRESULT_FROM_WIN32(WAIT_TIMEOUT);
         Sleep(1);
@@ -113,7 +114,7 @@ HRESULT fut_native_display_stage(FutNativeDisplay *d,ID3D11DeviceContext *contex
     hr=IDXGISwapChain2_GetBuffer(d->swap,0,&IID_ID3D11Texture2D,(void**)&back);
     if(FAILED(hr)) return hr;
     ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)back,(ID3D11Resource*)source);
-    ID3D11Texture2D_Release(back);d->staged=1;return S_OK;
+    ID3D11Texture2D_Release(back);d->staged=1;d->latency_ready=0;return S_OK;
 }
 HRESULT fut_native_display_submit(FutNativeDisplay *d,unsigned interval)
 {
@@ -135,9 +136,27 @@ HRESULT fut_native_display_poll(FutNativeDisplay *d,FutNativeDisplayReceipt *rec
     HRESULT hr=pump(d);if(FAILED(hr)) return hr;
     if(!d->pending) return E_INVALIDARG;
     DXGI_FRAME_STATISTICS stats={0};hr=IDXGISwapChain2_GetFrameStatistics(d->swap,&stats);
-    if(hr==DXGI_ERROR_FRAME_STATISTICS_DISJOINT) return S_FALSE;
-    if(hr!=S_OK) return hr;
-    if(!d->count_valid || stats.PresentCount!=d->target_present || !stats.SyncQPCTime.QuadPart) return S_FALSE;
-    FutNativeDisplayReceipt result={stats.PresentCount,stats.PresentRefreshCount,stats.SyncRefreshCount,stats.SyncQPCTime};
+    if(hr!=S_OK && hr!=DXGI_ERROR_FRAME_STATISTICS_DISJOINT) return hr;
+    FutNativeDisplayReceipt result={0};
+    if(hr==S_OK && d->count_valid && stats.PresentCount==d->target_present && stats.SyncQPCTime.QuadPart) {
+        result.present_count=stats.PresentCount;result.present_refresh=stats.PresentRefreshCount;
+        result.sync_refresh=stats.SyncRefreshCount;result.sync_qpc=stats.SyncQPCTime;
+    } else {
+        /* DXGI documents this event as finishing presentation of the previous
+         * frame. Stage consumed initial readiness; only one present is pending.
+         * Stale statistics are not replaced with invented refresh counters. */
+        UINT submitted=0;
+        hr=IDXGISwapChain2_GetLastPresentCount(d->swap,&submitted);
+        if(hr!=S_OK) return hr;
+        if(!d->count_valid || submitted!=d->target_present) return S_FALSE;
+        if(!d->latency_ready) {
+            DWORD wait=WaitForSingleObject(d->latency,0);
+            if(wait==WAIT_TIMEOUT) return S_FALSE;
+            if(wait!=WAIT_OBJECT_0) return E_FAIL;
+            d->latency_ready=1; /* Transfer the consumed readiness to next stage. */
+        }
+        result.present_count=submitted;result.source=1;
+    }
+    if(!QueryPerformanceCounter(&result.observed_qpc) || result.observed_qpc.QuadPart<=0) return E_FAIL;
     *receipt=result;d->pending=0;return S_OK;
 }

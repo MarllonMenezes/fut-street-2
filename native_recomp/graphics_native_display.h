@@ -7,7 +7,7 @@ typedef struct {
     IDXGISwapChain2 *swap;
     HANDLE latency;
     DWORD owner;
-    unsigned width,height,staged,pending,count_valid;
+    unsigned width,height,staged,pending,count_valid,latency_ready;
     UINT target_present;
 } FutNativeDisplay;
 typedef struct {
@@ -15,6 +15,8 @@ typedef struct {
     /* DXGI synchronization reference, not an exact per-frame presentation
      * timestamp and not a guest clock. Keep the refresh counters alongside it. */
     LARGE_INTEGER sync_qpc;
+    unsigned source; /* 0=matching frame statistics, 1=DXGI latency event. */
+    LARGE_INTEGER observed_qpc; /* CPU observation time; never a scanout timestamp. */
 } FutNativeDisplayReceipt;
 /* RECOMP_NATIVE_DISPLAY_ORIGIN=1 opts visible windows into position (0,0)
  * for controlled bring-up; otherwise Windows chooses the initial placement.
@@ -30,7 +32,9 @@ HRESULT fut_native_display_stage(FutNativeDisplay *display,ID3D11DeviceContext *
 /* S_OK means queued, NOT a receipt. Occlusion/still-drawing do not publish a
  * submission. After a queued frame, no replay is allowed until receipt/close. */
 HRESULT fut_native_display_submit(FutNativeDisplay *display,unsigned interval);
-/* S_OK only for matching DXGI statistics. S_FALSE/disjoint means pending;
+/* S_OK for matching statistics or a new DXGI frame-latency event for the
+ * sole pending present ID. Event receipts leave refresh/sync_qpc zero.
+ * S_FALSE means pending;
  * output untouched unless confirmed. No mapping to guest VBlank is asserted. */
 HRESULT fut_native_display_poll(FutNativeDisplay *display,FutNativeDisplayReceipt *receipt);
 #endif
