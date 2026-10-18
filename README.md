@@ -46,7 +46,7 @@ aposentadoria pela ISR original, sob o modelo já existente de timing do host.
 
 O caso P8 128×32 foi exercitado com depth-write e a aproximação AA2 autorizada;
 compressão de depth e fidelidade NV2A continuam sem validação. A conversão
-S32K segue o modelo local S16-para-float. O draw BC2/DXT23 1280×480 autorizado
+S32K segue o modelo local S16-para-float. O draw BC2/DXT23 64×64 autorizado
 passou pela gate, completou a chamada D3D e writeback do guest; filtragem BC2,
 compress-depth e fidelidade NV2A continuam sem validação. Os descritores
 vertex inline adicionais foram apenas retidos e testados contra o pacote
@@ -56,7 +56,7 @@ As aproximações gráficas continuam restritas aos casos observados e aceitos:
 dithering neutro em ARGB8 single-sample; AA2 com os baselines autorizados;
 quincunx no resolve 1280×480→640×480; BC1 sem o ruído DXT1 desconhecido na
 textura 512×512 e desenho aceito; P8 32×32 e P8 128×32 nas opções independentes.
-BC2/DXT23 1280×480 no draw AA2 capturado tem opção própria desligada por
+BC2/DXT23 64×64 no draw AA2 capturado tem opção própria desligada por
 padrão. Nenhuma dessas aproximações comprova equivalência NV2A.
 
 O bypass de áudio exige opção explícita. Sua conclusão artificial serve para

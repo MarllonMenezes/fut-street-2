@@ -965,7 +965,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fputs("[GRAPHICS] AUTHORIZED_P8_128X32_AA2_APPROXIMATION: lossless palette expansion, existing AA2 and depth-write mappings; exact 128x32/640x480 captured state; compressed-depth and NV2A AA2 fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x06610E29u &&
         fut_graphics_bc2_aa2_approximation_enabled())
-        fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode; exact 1280x480 offset/pitch and 640x480 AA2 captured state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
+        fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode, FORMAT dimensions 64x64; exact captured offset/retained pitch/rectangle and 640x480 AA2 state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_%sAA2_APPROXIMATION: exact captured 640x480 state using existing host AA2 mapping and BT.601 candidate; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",
             yuy2_second?"02487680_":"");

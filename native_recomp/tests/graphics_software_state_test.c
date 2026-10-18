@@ -215,6 +215,11 @@ int main(void)
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 58;
     FutGraphicsKelvinState bc2=kelvin;
+    /* Correct storage dimensions do not widen the separately authorized
+     * AA2 register tuple to the newly observed 1024x512 texture. */
+    kelvin.textures[0].format=0x09A10E29u;
+    kelvin.textures[0].offset=0x00C9DF00u;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 77;
     for(unsigned i=0;i<15;++i) {
         kelvin=bc2;surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,
             .logical_width=640,.logical_height=480,.samples=2};

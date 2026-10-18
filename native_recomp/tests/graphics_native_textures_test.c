@@ -237,34 +237,51 @@ static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     FutGraphicsDmaView dma={0x80000000u,0x04000000u};
     FutGraphicsTexturePlan plan={0},sentinel={.width=99};
     CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY && plan.storage==3 &&
-        plan.width==1280 && plan.height==480 && plan.pitch==5120 && plan.span==0x96000 &&
+        plan.width==64 && plan.height==64 && plan.pitch==256 && plan.span==4096 &&
         plan.address==0x80D1F980u,160);
-    FutGraphicsDmaView short_dma={0x80000000u,0x00DB597Fu};
+    FutGraphicsDmaView short_dma={0x80000000u,0x00D2097Fu};
     CHECK(fut_graphics_texture_plan(&state,&short_dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,161);
-    FutGraphicsTextureState bad=state;bad.control1=0x13F00000u;
-    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,162);
-    bad=state;bad.control1=0x14010000u;
-    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,163);
+    FutGraphicsTextureState bad=state;
+    /* Compressed FORMAT sizes must not inherit the earlier linear image's
+     * rectangle/pitch, even when those setter-valid bits are absent. */
+    bad.valid=0xBu;bad.control1=0xFFFFFFFFu;bad.image_rect=0;
+    FutGraphicsTexturePlan unchanged={0};
+    CHECK(fut_graphics_texture_plan(&bad,&dma,&unchanged)==FUT_TEXTURE_READY &&
+        !memcmp(&plan,&unchanged,sizeof(plan)),162);
+    FutGraphicsTextureState second=state;second.format=0x09A10E29u;second.offset=0x00C9DF00u;
+    CHECK(fut_graphics_texture_plan(&second,&dma,&unchanged)==FUT_TEXTURE_READY &&
+        unchanged.width==1024 && unchanged.height==512 && unchanged.pitch==4096 &&
+        unchanged.span==0x80000 && unchanged.address==0x80C9DF00u,163);
     bad=state;bad.offset++;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,164);
-    bad=state;bad.image_rect=0x050100E0u;
-    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE,165);
-    bad=state;bad.format=0x06610F29u;
-    CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED,166);
+    FutGraphicsDmaView unaligned=dma;unaligned.guest_address+=4;
+    CHECK(fut_graphics_texture_plan(&state,&unaligned,&sentinel)==FUT_TEXTURE_INVALID_RANGE,165);
+    const uint32_t unsupported[]={0x06110E29u,0x06D10E29u,0x01610E29u,0x0D610E29u,
+        0x06620E29u,0x06610E2Du,0x06610E2Bu,0x06610F29u};
+    for(unsigned i=0;i<sizeof(unsupported)/sizeof(unsupported[0]);++i) {
+        bad=state;bad.format=unsupported[i];
+        CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED &&
+            sentinel.width==99,166);
+    }
 
-    FutGraphicsTextureState small={.valid=0x9B,.control0=0x4003FFC0,.format=0x06610E29,
+    FutGraphicsTextureState small={.valid=0xB,.control0=0x4003FFC0,.format=0x03310E29,
         .offset=0x1000,.image_rect=0x00040004,.control1=0x00100000};
-    FutGraphicsDmaView small_dma={0x80000000u,0x1020u};
+    FutGraphicsDmaView small_dma={0x80000000u,0x1040u};
     CHECK(fut_graphics_texture_plan(&small,&small_dma,&plan)==FUT_TEXTURE_READY &&
-        plan.storage==3 && plan.pitch==16 && plan.span==16 && plan.address==0x80001000u,167);
+        plan.storage==3 && plan.width==8 && plan.height==8 && plan.pitch==32 &&
+        plan.span==64 && plan.address==0x80001000u,167);
     Memory memory={0};
-    memset(memory.bytes,0xFF,8); /* Alpha nibbles = 15 for all sixteen texels. */
-    uint16_t red=0xF800;memcpy(memory.bytes+8,&red,2);memcpy(memory.bytes+10,&red,2);
+    const uint16_t colors[]={0xF800,0x07E0,0x001F,0xFFFF};
+    for(unsigned i=0;i<4;++i) {
+        memset(memory.bytes+i*16,i==3?0x55:0xFF,8);
+        memcpy(memory.bytes+i*16+8,&colors[i],2);
+        memcpy(memory.bytes+i*16+10,&colors[i],2);
+    }
     FutNativeTexture native={0};
     CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)) &&
         memory.reads==1 && native.valid && native.view && native.texel_and==0 && native.texel_or==UINT32_MAX,168);
     D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(native.texture,&desc);
-    CHECK(desc.Width==4 && desc.Height==4 && desc.Format==DXGI_FORMAT_BC2_UNORM,169);
+    CHECK(desc.Width==8 && desc.Height==8 && desc.Format==DXGI_FORMAT_BC2_UNORM,169);
     desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
     ID3D11Texture2D *staging=NULL;
     CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),170);
@@ -272,7 +289,8 @@ static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),171);
     D3D11_MAPPED_SUBRESOURCE mapped;
     CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped)),172);
-    int exact=!memcmp(mapped.pData,memory.bytes,16);
+    int exact=!memcmp(mapped.pData,memory.bytes,32) &&
+        !memcmp((uint8_t*)mapped.pData+mapped.RowPitch,memory.bytes+32,32);
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
     ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
     CHECK(exact,173);return 0;

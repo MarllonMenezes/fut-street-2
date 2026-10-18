@@ -33,7 +33,8 @@ static inline int fut_graphics_p8_128x32_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_P8_128X32_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
-/* Authorized 2026-10-18 for only the captured BC2/DXT23 1280x480 AA2 draw. */
+/* Authorized 2026-10-18 for only the captured BC2/DXT23 register tuple.
+ * FORMAT encodes 64x64; retained IMAGE_RECT/pitch are still scope gates. */
 static inline int fut_graphics_bc2_aa2_approximation_enabled(void)
 {
     const char *value=getenv("RECOMP_BC2_AA2_APPROXIMATION");

@@ -42,8 +42,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * state after exact palette expansion, with the same AA2 baseline limits. */
 /* RECOMP_P8_128X32_AA2_APPROXIMATION is a separately authorized experiment
  * for only the captured 128x32 P8 state with depth test/write enabled. */
-/* RECOMP_BC2_AA2_APPROXIMATION is only the authorized BC2 1280x480 capture,
- * including exact offset, pitch, address, sampler and image rectangle. */
+/* RECOMP_BC2_AA2_APPROXIMATION is only the authorized BC2 64x64 capture,
+ * including exact offset, retained pitch/rectangle, address and sampler. */
 /* RECOMP_YUY2_023F1580_AA2_APPROXIMATION additionally requires the separately
  * authorized BT.601 conversion opt-in and admits only the exact 640x480 draw. */
 /* The separate RECOMP_YUY2_02487680_* opt-ins admit only the second captured
