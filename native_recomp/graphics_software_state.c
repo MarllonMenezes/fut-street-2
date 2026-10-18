@@ -79,15 +79,20 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     const FutGraphicsTextureState *t0=&k->textures[0];
     unsigned texture_u=(t0->format>>20)&15u,texture_v=(t0->format>>24)&15u;
     int family_dimensions=texture_u>=2 && texture_u<=12 && texture_v>=2 && texture_v<=12;
-    int family_baseline=t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
-        t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
+    int family_common_baseline=t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
         t0->filter==0x02062000u && k->draw.dither==1;
+    int family_baseline=family_common_baseline && t0->control1==0x14000000u &&
+        t0->image_rect==0x050001E0u;
+    /* BC2 dimensions come from FORMAT; allow the observed retained LC_IMAGE
+     * register pair without widening the palette-texture baseline. */
+    int bc2_lc_retained_baseline=family_common_baseline &&
+        t0->control1==0x05000000u && t0->image_rect==0x028001E0u;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int bc2_family=bc2_format && fut_graphics_bc2_aa2_family_approximation_enabled() &&
         family_dimensions &&
         !(t0->offset&15u) && t0->offset<=0x04000000u &&
         (1u<<texture_u)*(1u<<texture_v)<=0x04000000u-t0->offset &&
-        family_baseline && t0->address==0x10303u;
+        (family_baseline || bc2_lc_retained_baseline) && t0->address==0x10303u;
     int p8_format=(t0->format&~0x0FF00000u)==0x00010B29u;
     int p8_family=p8_format && fut_graphics_p8_aa2_family_approximation_enabled() &&
         family_dimensions && family_baseline && k->draw.depth_write==1 &&
@@ -144,7 +149,10 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                     fut_graphics_yuy2_second_aa2_approximation_enabled() &&
                     fut_graphics_yuy2_second_bt601_approximation_enabled() &&
                     t->offset==0x02487680u;
-                int yuy2=yuy2_first || yuy2_second;
+                int yuy2_family=format==0x00012429u &&
+                    fut_graphics_yuy2_family_aa2_approximation_enabled() &&
+                    fut_graphics_yuy2_family_bt601_approximation_enabled();
+                int yuy2=yuy2_first || yuy2_second || yuy2_family;
                 yuy2=yuy2 && t->image_rect==0x028001E0u &&
                     t->control1==0x05000000u && t->valid==0x3BFu;
                 int depth_write_matches=(p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;

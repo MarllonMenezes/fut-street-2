@@ -86,19 +86,26 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
     return FUT_TEXTURE_READY;
 }
 
+static int observed_yuy2_state_in_range(const FutGraphicsTextureState *s,
+    const FutGraphicsDmaView *dma)
+{
+    if(!s || !dma || s->format!=0x00012429u || (s->format&3u)!=1u ||
+        s->image_rect!=0x028001E0u || s->control0!=0x4003FFC0u ||
+        s->control1!=0x05000000u || s->valid!=0x3BFu ||
+        (s->offset&3u) || dma->guest_address!=0x80000000u ||
+        dma->size!=0x04000000u || s->offset>dma->size ||
+        FUT_GRAPHICS_OBSERVED_YUY2_BYTES>dma->size-s->offset ||
+        s->offset>UINT32_MAX-dma->guest_address) return 0;
+    return 1;
+}
+
 int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
     void *ctx,const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
     uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES])
 {
     const uint32_t offset=s?s->offset:0;
     uint8_t *captured;
-    if(!read || !s || !dma || !output || s->format!=0x00012429u ||
-        (offset!=0x023F1580u && offset!=0x02487680u) || s->image_rect!=0x028001E0u ||
-        s->control0!=0x4003FFC0u || s->control1!=0x05000000u || s->valid!=0x3BFu ||
-        (s->format&3u)!=1u || dma->guest_address!=0x80000000u ||
-        dma->size!=0x04000000u || (dma->guest_address&0xFC000000u)!=0x80000000u ||
-        offset>dma->size || FUT_GRAPHICS_OBSERVED_YUY2_BYTES>dma->size-offset ||
-        offset>UINT32_MAX-dma->guest_address) return 0;
+    if(!read || !output || !observed_yuy2_state_in_range(s,dma)) return 0;
     captured=malloc(FUT_GRAPHICS_OBSERVED_YUY2_BYTES);
     if(!captured) return 0;
     if(!read(ctx,dma->guest_address+offset,captured,FUT_GRAPHICS_OBSERVED_YUY2_BYTES)) {
@@ -112,11 +119,7 @@ int fut_graphics_texture_plan_observed_yuy2_approximation(
     const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
     FutGraphicsTexturePlan *plan)
 {
-    if(!s || !dma || !plan || s->format!=0x00012429u ||
-        (s->offset!=0x023F1580u && s->offset!=0x02487680u) ||
-        s->image_rect!=0x028001E0u || s->control0!=0x4003FFC0u ||
-        s->control1!=0x05000000u || s->valid!=0x3BFu ||
-        dma->guest_address!=0x80000000u || dma->size!=0x04000000u)
+    if(!plan || !observed_yuy2_state_in_range(s,dma))
         return 0;
     FutGraphicsTexturePlan next={0};
     next.address=dma->guest_address+s->offset;next.span=FUT_GRAPHICS_OBSERVED_YUY2_BYTES;

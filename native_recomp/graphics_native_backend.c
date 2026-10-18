@@ -550,9 +550,11 @@ static int native_prepare_textures(NativeGraphicsState *state)
         }
         FutGraphicsTexturePlan plan;
         FutGraphicsTextureStatus status=fut_graphics_texture_plan(texture,&dma,&plan);
-        int yuy2_bt601_enabled=texture->offset==0x02487680u?
-            fut_graphics_yuy2_second_bt601_approximation_enabled():
-            fut_graphics_yuy2_bt601_approximation_enabled();
+        int yuy2_bt601_enabled=texture->offset==0x023F1580u?
+            fut_graphics_yuy2_bt601_approximation_enabled():
+            texture->offset==0x02487680u?
+                fut_graphics_yuy2_second_bt601_approximation_enabled():
+                fut_graphics_yuy2_family_bt601_approximation_enabled();
         if(status!=FUT_TEXTURE_READY && stage==0 &&
             texture->format==0x00012429u && yuy2_bt601_enabled &&
             state->native_surfaces.plan.samples==2 &&
@@ -560,15 +562,20 @@ static int native_prepare_textures(NativeGraphicsState *state)
             state->native_surfaces.plan.logical_height==480 &&
             fut_graphics_texture_plan_observed_yuy2_approximation(texture,&dma,&plan)) {
             status=FUT_TEXTURE_READY;
-            fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_%sBT601_APPROXIMATION: exact captured LC_IMAGE 640x480 state; limited-range BT.601 to BGRA8; matrix/range/rounding not NV2A-verified\n",
-                texture->offset==0x02487680u?"02487680_":"");
+            if(texture->offset==0x023F1580u)
+                fputs("[GRAPHICS] AUTHORIZED_YUY2_BT601_APPROXIMATION: exact captured LC_IMAGE 640x480 state; limited-range BT.601 to BGRA8; matrix/range/rounding not NV2A-verified\n",stderr);
+            else if(texture->offset==0x02487680u)
+                fputs("[GRAPHICS] AUTHORIZED_YUY2_02487680_BT601_APPROXIMATION: exact captured LC_IMAGE 640x480 state; limited-range BT.601 to BGRA8; matrix/range/rounding not NV2A-verified\n",stderr);
+            else
+                fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_FAMILY_BT601_APPROXIMATION: format=%08X offset=%08X bounded 640x480 buffer; limited-range BT.601 to BGRA8; matrix/range/rounding not NV2A-verified\n",
+                    texture->format,texture->offset);
         }
         if (status != FUT_TEXTURE_READY) {
             if(status==FUT_TEXTURE_UNSUPPORTED)
                 native_capture_observed_yuy2(state,texture,&dma);
-            fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X offset=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X dma=%08X/%08X\n",
-                stage,status,texture->format,texture->offset,texture->image_rect,
-                texture->control0,texture->control1,texture->valid,dma.guest_address,dma.size);
+            fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X offset=%08X address=%08X filter=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X dma=%08X/%08X\n",
+                stage,status,texture->format,texture->offset,texture->address,texture->filter,
+                texture->image_rect,texture->control0,texture->control1,texture->valid,dma.guest_address,dma.size);
             return 0;
         }
         HRESULT hr=fut_native_texture_upload(&state->textures[stage],state->device,&plan,object_memory_read,NULL);
@@ -929,12 +936,15 @@ static int native_prepare_draw(NativeGraphicsState *state)
         state->surfaces.format!=0x00001128u) software_ready=0;
     const FutGraphicsTextureState *yuy2_texture=&state->kelvin.textures[0];
     int yuy2_second=yuy2_texture->offset==0x02487680u;
-    int yuy2_aa2_enabled=yuy2_second?
-        fut_graphics_yuy2_second_aa2_approximation_enabled():
-        fut_graphics_yuy2_aa2_approximation_enabled();
-    int yuy2_bt601_enabled=yuy2_second?
-        fut_graphics_yuy2_second_bt601_approximation_enabled():
-        fut_graphics_yuy2_bt601_approximation_enabled();
+    int yuy2_first=yuy2_texture->offset==0x023F1580u;
+    int yuy2_aa2_enabled=yuy2_first?
+        fut_graphics_yuy2_aa2_approximation_enabled():
+        yuy2_second?fut_graphics_yuy2_second_aa2_approximation_enabled():
+        fut_graphics_yuy2_family_aa2_approximation_enabled();
+    int yuy2_bt601_enabled=yuy2_first?
+        fut_graphics_yuy2_bt601_approximation_enabled():
+        yuy2_second?fut_graphics_yuy2_second_bt601_approximation_enabled():
+        fut_graphics_yuy2_family_bt601_approximation_enabled();
     if(aa2 && yuy2_texture->format==0x00012429u &&
         (yuy2_aa2_enabled || yuy2_bt601_enabled) &&
         (!yuy2_aa2_enabled || !yuy2_bt601_enabled || state->surfaces.format!=0x00001128u))
@@ -971,7 +981,10 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fut_graphics_p8_128x32_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_P8_128X32_AA2_APPROXIMATION: lossless palette expansion, existing AA2 and depth-write mappings; exact 128x32/640x480 captured state; compressed-depth and NV2A AA2 fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x06610E29u &&
-        fut_graphics_bc2_aa2_approximation_enabled())
+        fut_graphics_bc2_aa2_approximation_enabled() &&
+        state->kelvin.textures[0].offset==0x00D1F980u &&
+        state->kelvin.textures[0].control1==0x14000000u &&
+        state->kelvin.textures[0].image_rect==0x050001E0u)
         fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode, FORMAT dimensions 64x64; exact captured offset/retained pitch/rectangle and 640x480 AA2 state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x09A10E29u &&
         fut_graphics_bc2_c9df00_aa2_approximation_enabled())
@@ -989,9 +1002,15 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_P8_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; lossless palette expansion under observed AA2/depth-write baseline; NV2A fidelity unverified; NOT_READY\n",
             state->kelvin.textures[0].format,state->kelvin.textures[0].offset,
             state->textures[0].plan.width,state->textures[0].plan.height);
-    if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled)
+    if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled &&
+        (yuy2_first || yuy2_second))
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_%sAA2_APPROXIMATION: exact captured 640x480 state using existing host AA2 mapping and BT.601 candidate; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",
             yuy2_second?"02487680_":"");
+    if(aa2 && yuy2_texture->format==0x00012429u &&
+        fut_graphics_yuy2_family_aa2_approximation_enabled() &&
+        fut_graphics_yuy2_family_bt601_approximation_enabled())
+        fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X 640x480 bounded YUY2 buffer; BT.601 and existing host AA2 mappings are approximations; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",
+            yuy2_texture->format,yuy2_texture->offset);
     if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
         "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");

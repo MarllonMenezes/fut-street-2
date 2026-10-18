@@ -7,7 +7,7 @@ typedef struct {
     uint32_t address, span, pitch, width, height;
     unsigned bytes_per_pixel; /* A8=1, A8R8G8B8=4; zero for BC1/BC2 block storage. */
     unsigned dma_context; /* Texture context A=1 (method184), B=2 (method188). */
-    unsigned storage; /* 0=linear texels, 1=BC1, 2=swizzled P8, 3=BC2 blocks, 4=experimental exact YUY2. */
+    unsigned storage; /* 0=linear texels, 1=BC1, 2=swizzled P8, 3=BC2 blocks, 4=experimental bounded YUY2. */
     uint32_t palette_address, palette_span; /* P8 only, 256 A8R8G8B8 entries. */
 } FutGraphicsTexturePlan;
 typedef enum {
@@ -21,8 +21,8 @@ typedef enum {
 FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState *state,
     const FutGraphicsDmaView *dma, FutGraphicsTexturePlan *plan);
 
-/* Passive captures for two observed YUY2 linear states. This reads guest bytes
- * transactionally and does not translate or sample the format. */
+/* Passive capture for the observed bounded YUY2 640x480 linear state. This
+ * reads guest bytes transactionally and does not translate or sample them. */
 #define FUT_GRAPHICS_OBSERVED_YUY2_BYTES 614400u
 int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
     void *memory_context, const FutGraphicsTextureState *state,

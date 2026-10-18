@@ -11,7 +11,7 @@ static uint32_t last_address;
 static int read_memory(void *context,uint32_t address,void *data,size_t size)
 {
     (void)context;++reads;
-    if(fail_read || (address!=0x823F1580u && address!=0x82487680u) || size!=sizeof(source)) return 0;
+    if(fail_read || (address!=0x823F1580u && address!=0x82487680u && address!=0x81A63C80u) || size!=sizeof(source)) return 0;
     last_address=address;
     memcpy(data,source,size);return 1;
 }
@@ -33,6 +33,9 @@ int main(void)
     FutGraphicsTextureState second_plan=state;second_plan.offset=0x02487680u;
     CHECK(fut_graphics_texture_plan_observed_yuy2_approximation(&second_plan,&dma,&plan),31);
     CHECK(plan.address==0x82487680u && plan.width==640 && plan.height==480 && plan.pitch==1280,32);
+    FutGraphicsTextureState family_plan=state;family_plan.offset=0x01A63C80u;
+    CHECK(fut_graphics_texture_plan_observed_yuy2_approximation(&family_plan,&dma,&plan),34);
+    CHECK(plan.address==0x81A63C80u && plan.span==sizeof(source) && plan.width==640 && plan.height==480 && plan.pitch==1280,35);
     FutGraphicsTextureState third_plan=second_plan;third_plan.offset++;
     FutGraphicsTexturePlan rejected_plan={.width=99};
     CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&third_plan,&dma,&rejected_plan) &&
@@ -47,6 +50,8 @@ int main(void)
     CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&bad_plan,&dma,&sentinel) && sentinel.width==99,17);
     bad_plan=state;bad_plan.offset++;
     CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&bad_plan,&dma,&sentinel) && sentinel.width==99,18);
+    bad_plan=state;bad_plan.offset=0x03F70000u;
+    CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&bad_plan,&dma,&sentinel) && sentinel.width==99,36);
     bad_plan=state;bad_plan.image_rect++;
     CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&bad_plan,&dma,&sentinel) && sentinel.width==99,19);
     bad_plan=state;bad_plan.control0^=1;
@@ -75,6 +80,10 @@ int main(void)
     reads=0;
     CHECK(fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&second_capture,&dma,output),28);
     CHECK(reads==1 && last_address==0x82487680u && !memcmp(source,output,sizeof(source)),29);
+    FutGraphicsTextureState family_capture=state;family_capture.offset=0x01A63C80u;
+    reads=0;
+    CHECK(fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&family_capture,&dma,output),37);
+    CHECK(reads==1 && last_address==0x81A63C80u && !memcmp(source,output,sizeof(source)),38);
     memset(output,0xA5,sizeof(output));reads=0;fail_read=1;
     CHECK(!fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&state,&dma,output),3);
     CHECK(reads==1 && output[0]==0xA5 && output[sizeof(output)-1]==0xA5,4);
@@ -89,8 +98,10 @@ int main(void)
     CHECK(rejected_without_read(state,short_dma),11);
     FutGraphicsDmaView other=dma;other.guest_address+=4;
     CHECK(rejected_without_read(state,other),12);
-    FutGraphicsTextureState third_capture=state;third_capture.offset=0x02487684u;
-    CHECK(rejected_without_read(third_capture,dma),30);
-    puts("Exact LC_IMAGE captures, transactional reads, default-off opt-ins and BT.601 vector verified");
+    FutGraphicsTextureState bad_capture=state;bad_capture.offset=0x02487681u;
+    CHECK(rejected_without_read(bad_capture,dma),30);
+    bad_capture=state;bad_capture.offset=0x03F70000u;
+    CHECK(rejected_without_read(bad_capture,dma),39);
+    puts("Bounded LC_IMAGE captures, transactional reads and BT.601 vector verified");
     return 0;
 }

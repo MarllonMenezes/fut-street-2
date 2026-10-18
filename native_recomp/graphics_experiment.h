@@ -100,4 +100,16 @@ static inline int fut_graphics_yuy2_second_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_YUY2_02487680_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized for the observed YUY2 640x480 layout across bounded DMA offsets.
+ * BT.601 conversion and AA2 admission remain separate default-off choices. */
+static inline int fut_graphics_yuy2_family_bt601_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_FAMILY_BT601_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
+static inline int fut_graphics_yuy2_family_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_FAMILY_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif

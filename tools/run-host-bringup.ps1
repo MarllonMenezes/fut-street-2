@@ -22,6 +22,8 @@ param(
     [switch]$Yuy2Aa2Approximation,
     [switch]$Yuy2SecondBt601Approximation,
     [switch]$Yuy2SecondAa2Approximation,
+    [switch]$Yuy2FamilyBt601Approximation,
+    [switch]$Yuy2FamilyAa2Approximation,
     [switch]$CaptureLcImage,
     [switch]$Lines16segmentAa2Approximation,
     [switch]$Lines4segmentAa2Approximation,
@@ -34,7 +36,7 @@ $ErrorActionPreference = 'Stop'
 if ($Lines4segmentAa2Approximation -and -not $Aa2Approximation) {
     throw 'Four-segment LINES requires -Aa2Approximation.'
 }
-if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Bc2C9df00Aa2Approximation -or $Bc2Aa2FamilyApproximation -or $P8Aa2FamilyApproximation -or $Yuy2Bt601Approximation -or $Yuy2SecondBt601Approximation) -and -not $Aa2Approximation) {
+if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Bc2C9df00Aa2Approximation -or $Bc2Aa2FamilyApproximation -or $P8Aa2FamilyApproximation -or $Yuy2Bt601Approximation -or $Yuy2SecondBt601Approximation -or $Yuy2FamilyBt601Approximation -or $Yuy2FamilyAa2Approximation) -and -not $Aa2Approximation) {
     throw 'Restricted texture experiments require -Aa2Approximation.'
 }
 if ($Yuy2Aa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2Bt601Approximation)) {
@@ -42,6 +44,9 @@ if ($Yuy2Aa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2Bt601Approx
 }
 if ($Yuy2SecondAa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2SecondBt601Approximation)) {
     throw 'Second YUY2 AA2 requires -Aa2Approximation and -Yuy2SecondBt601Approximation.'
+}
+if ($Yuy2FamilyAa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2FamilyBt601Approximation)) {
+    throw 'YUY2 family AA2 requires -Aa2Approximation and -Yuy2FamilyBt601Approximation.'
 }
 foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Input missing: $path" }
@@ -82,6 +87,8 @@ $variables = @{
     RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '0'
     RECOMP_YUY2_02487680_BT601_APPROXIMATION = '0'
     RECOMP_YUY2_02487680_AA2_APPROXIMATION = '0'
+    RECOMP_YUY2_FAMILY_BT601_APPROXIMATION = '0'
+    RECOMP_YUY2_FAMILY_AA2_APPROXIMATION = '0'
     RECOMP_CAPTURE_LC_IMAGE = '0'
     RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '0'
@@ -106,6 +113,8 @@ if ($Yuy2Bt601Approximation) { $variables.RECOMP_YUY2_023F1580_BT601_APPROXIMATI
 if ($Yuy2Aa2Approximation) { $variables.RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '1' }
 if ($Yuy2SecondBt601Approximation) { $variables.RECOMP_YUY2_02487680_BT601_APPROXIMATION = '1' }
 if ($Yuy2SecondAa2Approximation) { $variables.RECOMP_YUY2_02487680_AA2_APPROXIMATION = '1' }
+if ($Yuy2FamilyBt601Approximation) { $variables.RECOMP_YUY2_FAMILY_BT601_APPROXIMATION = '1' }
+if ($Yuy2FamilyAa2Approximation) { $variables.RECOMP_YUY2_FAMILY_AA2_APPROXIMATION = '1' }
 if ($CaptureLcImage) { $variables.RECOMP_CAPTURE_LC_IMAGE = '1' }
 if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '1' }
 if ($Lines4segmentAa2Approximation) { $variables.RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '1' }
@@ -168,6 +177,8 @@ try {
         yuy2_aa2_approximation = [bool]$Yuy2Aa2Approximation
         yuy2_second_bt601_approximation = [bool]$Yuy2SecondBt601Approximation
         yuy2_second_aa2_approximation = [bool]$Yuy2SecondAa2Approximation
+        yuy2_family_bt601_approximation = [bool]$Yuy2FamilyBt601Approximation
+        yuy2_family_aa2_approximation = [bool]$Yuy2FamilyAa2Approximation
         capture_lc_image = [bool]$CaptureLcImage
         lines_16segment_aa2_approximation = [bool]$Lines16segmentAa2Approximation
         lines_4segment_aa2_approximation = [bool]$Lines4segmentAa2Approximation
