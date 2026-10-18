@@ -113,7 +113,8 @@ int fut_graphics_texture_plan_observed_yuy2_approximation(
     const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
     FutGraphicsTexturePlan *plan)
 {
-    if(!s || !dma || !plan || s->format!=0x00012429u || s->offset!=0x023F1580u ||
+    if(!s || !dma || !plan || s->format!=0x00012429u ||
+        (s->offset!=0x023F1580u && s->offset!=0x02487680u) ||
         s->image_rect!=0x028001E0u || s->control0!=0x4003FFC0u ||
         s->control1!=0x05000000u || s->valid!=0x3BFu ||
         dma->guest_address!=0x80000000u || dma->size!=0x04000000u)

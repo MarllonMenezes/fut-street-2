@@ -11,6 +11,8 @@ int main(void)
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_02487680_AA2_APPROXIMATION","0");
     FutGraphicsSoftwareState state = {0};
     if (!fut_graphics_software_draw_ready(&state)) return 1;
     if (!fut_graphics_software_state(&state, 0x28, 0, 0, 0) || state.dxt1_noise != 1 ||
@@ -297,7 +299,23 @@ int main(void)
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 70;
     _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
+    kelvin=yuy2;kelvin.textures[0].offset=0x02487680;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 71;
+    _putenv_s("RECOMP_YUY2_02487680_AA2_APPROXIMATION","1");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 72;
+    _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 73;
+    FutGraphicsKelvinState second_yuy2=kelvin;
+    kelvin=second_yuy2;kelvin.textures[0].offset=0x02487681;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 74;
+    kelvin=second_yuy2;_putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 75;
+    _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","1");
+    kelvin=second_yuy2;_putenv_s("RECOMP_YUY2_02487680_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 76;
+    _putenv_s("RECOMP_YUY2_02487680_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
-    puts("Software controls: exact BC1/P8/BC2/YUY2 AA2 scopes, independent opt-ins and negative variants verified");
+    puts("Software controls: exact BC1/P8/BC2 and both YUY2 AA2 scopes, independent opt-ins and negative variants verified");
     return 0;
 }

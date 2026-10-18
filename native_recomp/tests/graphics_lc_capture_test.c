@@ -30,6 +30,13 @@ int main(void)
     CHECK(fut_graphics_texture_plan_observed_yuy2_approximation(&state,&dma,&plan),13);
     CHECK(plan.storage==4 && plan.width==640 && plan.height==480 && plan.pitch==1280 &&
         plan.span==sizeof(source) && plan.bytes_per_pixel==2 && plan.address==0x823F1580u,14);
+    FutGraphicsTextureState second_plan=state;second_plan.offset=0x02487680u;
+    CHECK(fut_graphics_texture_plan_observed_yuy2_approximation(&second_plan,&dma,&plan),31);
+    CHECK(plan.address==0x82487680u && plan.width==640 && plan.height==480 && plan.pitch==1280,32);
+    FutGraphicsTextureState third_plan=second_plan;third_plan.offset++;
+    FutGraphicsTexturePlan rejected_plan={.width=99};
+    CHECK(!fut_graphics_texture_plan_observed_yuy2_approximation(&third_plan,&dma,&rejected_plan) &&
+        rejected_plan.width==99,33);
     FutGraphicsTexturePlan sentinel={.width=99};
     CHECK(!_putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0") &&
         !fut_graphics_yuy2_bt601_approximation_enabled(),15);

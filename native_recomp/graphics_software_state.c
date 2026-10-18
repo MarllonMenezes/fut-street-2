@@ -101,10 +101,16 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int bc2=format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
                     t->offset==0x00D1F980u && t->image_rect==0x050001E0u &&
                     t->control1==0x14000000u;
-                int yuy2=format==0x00012429u &&
+                int yuy2_first=format==0x00012429u &&
                     fut_graphics_yuy2_aa2_approximation_enabled() &&
                     fut_graphics_yuy2_bt601_approximation_enabled() &&
-                    t->offset==0x023F1580u && t->image_rect==0x028001E0u &&
+                    t->offset==0x023F1580u;
+                int yuy2_second=format==0x00012429u &&
+                    fut_graphics_yuy2_second_aa2_approximation_enabled() &&
+                    fut_graphics_yuy2_second_bt601_approximation_enabled() &&
+                    t->offset==0x02487680u;
+                int yuy2=yuy2_first || yuy2_second;
+                yuy2=yuy2 && t->image_rect==0x028001E0u &&
                     t->control1==0x05000000u && t->valid==0x3BFu;
                 int depth_write_matches=(p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;
                 unsigned valid_mask=bc2?0x9Bu:0x2Fu;

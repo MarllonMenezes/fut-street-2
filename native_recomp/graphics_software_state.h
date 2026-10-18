@@ -46,6 +46,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * including exact offset, pitch, address, sampler and image rectangle. */
 /* RECOMP_YUY2_023F1580_AA2_APPROXIMATION additionally requires the separately
  * authorized BT.601 conversion opt-in and admits only the exact 640x480 draw. */
+/* The separate RECOMP_YUY2_02487680_* opt-ins admit only the second captured
+ * YUY2 draw; both BT.601 and AA2 flags are required. */
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *state,
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 #endif

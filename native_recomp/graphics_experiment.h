@@ -58,4 +58,16 @@ static inline int fut_graphics_yuy2_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_YUY2_023F1580_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Separately authorized 2026-10-18 for only the second captured draw at
+ * offset 0x02487680. These are independent, default-off opt-ins. */
+static inline int fut_graphics_yuy2_second_bt601_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_02487680_BT601_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
+static inline int fut_graphics_yuy2_second_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_02487680_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif
