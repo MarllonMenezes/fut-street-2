@@ -2,6 +2,7 @@
 #include "graphics_native_draw.h"
 #include "graphics_native_vertex.h"
 #include "graphics_sample_pattern.h"
+#include "graphics_experiment.h"
 #include <stdio.h>
 #include <string.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"native draw test failed: %d\n",n);return n;}}while(0)
@@ -23,7 +24,10 @@ static int read_memory(void *opaque,uint32_t address,void *data,size_t size)
 static int write_memory(void *opaque,uint32_t address,const void *data,size_t size)
 {
     Memory *m=opaque;++m->writes;
-    if(!m->batch->ready || m->batch->count!=3 || !m->native->submitted) m->bad_order=1;
+    unsigned supported_count=m->batch->count==3 ||
+        (m->batch->count==32 && m->batch->primitive==2 &&
+            fut_graphics_lines_16segment_aa2_approximation_enabled());
+    if(!m->batch->ready || !supported_count || !m->native->submitted) m->bad_order=1;
     if(address==m->fail_address || size>96) return 0;
     if(address==0x80001000) memcpy(m->color,data,size);
     else if(address==0x80002000) memcpy(m->depth,data,size);
@@ -151,11 +155,46 @@ int main(void)
         if(covered) CHECK((zs&255)==0x37 && (zs>>8)>=0x7FFFFF && (zs>>8)<=0x800001,40);
         else CHECK(zs==0xFFFFFF00,41);
     }
+    /* The separately authorized exact packet uses D3D11 LINELIST in the same
+     * AA2/depth fixture. This proves host submission/writeback only. */
+    memset(&batch,0,sizeof(batch));batch.primitive=2;batch.input_kind=4;batch.ready=1;batch.count=32;
+    for(unsigned i=0;i<32;++i) {
+        float x=(float)(i%8u),y=(float)(i/8u)*0.5f;
+        batch.vertices[i][0][0]=x;batch.vertices[i][0][1]=y;
+        batch.vertices[i][0][2]=8388607.5f;batch.vertices[i][0][3]=1;batch.defined[i]=1;
+    }
+    CHECK(_putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","0")==0,44);
+    CHECK(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)==E_INVALIDARG &&
+        batch.ready && !native.submitted && m.writes==3,45);
+    CHECK(_putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","1")==0,46);
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)),47);
+    CHECK(AA_DRAW(1)==E_INVALIDARG && batch.ready && !native.submitted && m.writes==3,48);
+#define AA_LINES(proof) fut_native_draw_immediate_aa2_lines(&native,&batch,&surfaces,&pipeline,&state,&software,device,context,aa_vertex,aa_pixel,&completion,read_memory,write_memory,&m,stop,proof)
+    CHECK(AA_LINES(0)==E_NOTIMPL && batch.ready && !native.submitted && m.writes==3,49);
+    for(unsigned i=0;i<24;++i) {
+        const uint32_t blue=0xFF0000FF,clear_z=0xFFFFFF00;
+        memcpy(m.color+i*4,&blue,4);memcpy(m.depth+i*4,&clear_z,4);
+    }
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&aa_plan,read_memory,&m)),50);
+    HRESULT line_hr=AA_LINES(1);
+    if(FAILED(line_hr) || batch.ready || native.submitted || surfaces.gpu_dirty || m.writes!=5 ||
+        m.bad_order || native.ia_vertices!=32 || !native.ps_invocations)
+        fprintf(stderr,"line result hr=%08lX ready=%u submitted=%u dirty=%u writes=%u bad_order=%u IA=%llu PS=%llu\n",
+            line_hr,batch.ready,native.submitted,surfaces.gpu_dirty,m.writes,m.bad_order,
+            (unsigned long long)native.ia_vertices,(unsigned long long)native.ps_invocations);
+    CHECK(SUCCEEDED(line_hr) && !batch.ready && !native.submitted &&
+        !surfaces.gpu_dirty && m.writes==5 && !m.bad_order && native.ia_vertices==64 &&
+        native.ps_invocations>0,51);
+    D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    ID3D11DeviceContext_IAGetPrimitiveTopology(context,&topology);
+    CHECK(topology==D3D11_PRIMITIVE_TOPOLOGY_LINELIST,52);
+#undef AA_LINES
     ID3D11Buffer *pass_bound=NULL;ID3D11DeviceContext_PSGetConstantBuffers(context,4,1,&pass_bound);
     CHECK(!pass_bound,42);
     state.anti_aliasing_control=0;state.depth_test=state.stencil_test=0;
     state.draw.stencil_op[2]=0x1E00;state.draw.stencil_ref=0;
     state.draw.dither=1;
+    _putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","0");
     CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)),32);
     /* A failure writing the second attachment must not acknowledge the batch
      * or permit replay of a partially published draw (e.g. alpha blending). */
@@ -168,9 +207,9 @@ int main(void)
      * path intentionally admits only draws with Z/S disabled. */
     state.depth_test=1;state.draw.dither=0;state.anti_aliasing_control=0xFFFF0001;
     CHECK(FAILED(AA_DRAW(1)) && batch.ready && batch.count==3 && native.submitted &&
-        surfaces.gpu_dirty==2 && m.writes==5 && !m.bad_order,23);
+        surfaces.gpu_dirty==2 && m.writes==7 && !m.bad_order,23);
     m.fail_address=0;
-    CHECK(AA_DRAW(1)==E_PENDING && m.writes==5 && batch.ready,24);
+    CHECK(AA_DRAW(1)==E_PENDING && m.writes==7 && batch.ready,24);
     CHECK(fut_native_immediate_upload(&native,device,context,vs,&batch,1)==E_PENDING,25);
     CHECK(fut_native_surfaces_prepare(&surfaces,device,&plan,read_memory,&m)==E_PENDING,26);
     ID3D11VertexShader_Release(aa_vertex);ID3D10Blob_Release(aa_vs);

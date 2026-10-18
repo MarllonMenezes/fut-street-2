@@ -177,6 +177,30 @@ int main(void)
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
     CHECK(batch.ready && batch.count==3,19); /* SO test does not consume original draw. */
     CHECK(verify_screen(device,context,&constants,program)==0,20);
+    FutGraphicsImmediate saved_batch=batch;
+    memset(&batch,0,sizeof(batch));batch.primitive=2;batch.input_kind=4;batch.ready=1;batch.count=32;
+    for(unsigned i=0;i<32;++i) {
+        batch.vertices[i][0][0]=(float)(i&7u);batch.vertices[i][0][1]=(float)(i>>3);
+        batch.vertices[i][0][2]=0;batch.vertices[i][0][3]=1;batch.defined[i]=1;
+    }
+    CHECK(_putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","0")==0,61);
+    CHECK(fut_native_immediate_upload(&native,device,context,bytecode,&batch,1)==E_INVALIDARG &&
+        native.count==3 && batch.ready,62);
+    CHECK(_putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","1")==0,63);
+    batch.input_kind=3;
+    CHECK(fut_native_immediate_upload(&native,device,context,bytecode,&batch,1)==E_INVALIDARG,64);
+    batch.input_kind=4;batch.count=31;
+    CHECK(fut_native_immediate_upload(&native,device,context,bytecode,&batch,1)==E_INVALIDARG,65);
+    batch.count=32;
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,1)) &&
+        native.count==32 && native.primitive==2,66);
+    D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+    ID3D11DeviceContext_IAGetPrimitiveTopology(context,&topology);
+    CHECK(topology==D3D11_PRIMITIVE_TOPOLOGY_LINELIST,67);
+    CHECK(_putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","0")==0,68);
+    CHECK(fut_native_immediate_upload(&native,device,context,bytecode,&batch,1)==E_INVALIDARG &&
+        native.count==32,69);
+    batch=saved_batch;
     ID3D11Buffer_Release(staging);ID3D11Buffer_Release(output);
     ID3D11GeometryShader_Release(stream);fut_native_immediate_destroy(&native);
     fut_native_constants_destroy(&constants);ID3D11VertexShader_Release(shader);ID3D10Blob_Release(bytecode);

@@ -2,9 +2,16 @@
 #include <stdint.h>
 #include <string.h>
 static uint8_t memory[128];
+static unsigned fail_read_at,read_calls;
 static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
 {
     (void)ctx;
+    ++read_calls;
+    if(fail_read_at && read_calls==fail_read_at) return 0;
+    if(address>=0x801689D4u && address-0x801689D4u<=sizeof(memory) &&
+        size<=sizeof(memory)-(address-0x801689D4u)) {
+        memcpy(data,memory+(address-0x801689D4u),size);return 1;
+    }
     if(address<0x1000u || address-0x1000u>sizeof(memory) || size>sizeof(memory)-(address-0x1000u)) return 0;
     memcpy(data,memory+(address-0x1000u),size);return 1;
 }
@@ -64,5 +71,69 @@ int main(void)
     FutGraphicsImmediate inline_before=out;inline_formats[3]=0x740u;
     CHECK(!fut_graphics_vertex_array_build_inline(&a,&out,inline_formats,attrs,valid,0x201));
     CHECK(memcmp(&out,&inline_before,sizeof(out))==0);
+
+    FutGraphicsDmaView captured_view={0x80000000u,0x04000000u};
+    FutGraphicsDmaView captured_short={0x80000000u,0x00168A33u};
+    uint8_t captured[96],captured_before[96];
+    for(unsigned i=0;i<sizeof(memory);++i) memory[i]=(uint8_t)(i*17u+3u);
+    memset(captured,0xA5,sizeof(captured));
+    fail_read_at=0;read_calls=0;
+    CHECK(fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_view,&captured_view,0x635u,0x001689D4u,captured));
+    CHECK(read_calls==16 && memcmp(captured,memory,96)==0);
+    memcpy(captured_before,captured,sizeof(captured));
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_view,&different,0x635u,0x001689D4u,captured));
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_short,&captured_short,0x635u,0x001689D4u,captured));
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_view,&captured_view,0x632u,0x001689D4u,captured));
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_view,&captured_view,0x635u,0x001689D0u,captured));
+    FutGraphicsDmaView wrong_base={0x80000004u,0x04000000u};
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &wrong_base,&wrong_base,0x635u,0x001689D4u,captured));
+    fail_read_at=7;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_capture_observed_lines(read_memory,NULL,
+        &captured_view,&captured_view,0x635u,0x001689D4u,captured));
+    CHECK(memcmp(captured,captured_before,sizeof(captured))==0);
+
+    /* Exact captured LINELIST packet: 32 indices expand to 32 endpoints. */
+    int16_t line_positions[16][3];
+    for(unsigned i=0;i<16;++i) {line_positions[i][0]=(int16_t)(i*10);line_positions[i][1]=(int16_t)(i*20);line_positions[i][2]=0;}
+    memcpy(memory,line_positions,sizeof(line_positions));
+    uint32_t line_formats[16];uint32_t line_offsets[16]={0};
+    for(unsigned i=0;i<16;++i) line_formats[i]=i?0x602u:0x635u;
+    valid[0]=15;line_offsets[0]=0x001689D4u;fut_graphics_vertex_array_reset(&a);
+    CHECK(fut_graphics_vertex_array_begin_observed_lines(&a));
+    CHECK(!fut_graphics_vertex_array_begin_observed_lines(&a));
+    static const uint16_t sequence[32]={0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,
+        8,9,9,10,10,11,11,12,12,13,13,14,14,15,15,0};
+    for(unsigned i=0;i<32;i+=2)
+        CHECK(fut_graphics_vertex_array_indices(&a,sequence[i]|((uint32_t)sequence[i+1]<<16)));
+    CHECK(!fut_graphics_vertex_array_indices(&a,0));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    memset(&out,0xA5,sizeof(out));before=out;fail_read_at=0;read_calls=0;
+    CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(out.ready && out.primitive==2 && out.input_kind==4 && out.count==32);
+    CHECK(out.vertices[0][0][0]==0 && out.vertices[1][0][0]==10 &&
+        out.vertices[30][0][0]==150 && out.vertices[31][0][0]==0);
+    FutGraphicsImmediate line_before=out;
+    a.indices[5]=4;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(memcmp(&out,&line_before,sizeof(out))==0);a.indices[5]=sequence[5];
+    line_formats[1]=0x603u;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));line_formats[1]=0x602u;
+    line_offsets[0]=0;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));line_offsets[0]=0x001689D4u;
+    fail_read_at=3;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(memcmp(&out,&line_before,sizeof(out))==0);
+    fail_read_at=0;
     return 0;
 }

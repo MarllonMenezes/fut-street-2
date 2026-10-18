@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_draw.h"
 #include "graphics_sample_pattern.h"
+#include "graphics_experiment.h"
 
 static HRESULT draw_sample_passes(ID3D11Device *device,ID3D11DeviceContext *context,
     const FutGraphicsSurfacePlan *surface,unsigned vertices,HANDLE stop)
@@ -32,15 +33,19 @@ static HRESULT draw_immediate(FutNativeImmediate *native,FutGraphicsImmediate *b
     const FutGraphicsKelvinState *state,const FutGraphicsSoftwareState *software,
     ID3D11Device *device,ID3D11DeviceContext *context,
     ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
-    FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int aa2)
+    FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int aa2,int line_list)
 {
     if(!native || !batch || !surfaces || !pipeline || !state || !software || !device ||
         !context || !vertex || !pixel || !completion || !completion->buffer ||
         !completion->completion || completion->context!=context || !read || !write ||
         !native->buffer || !native->layout || !surfaces->valid || !surfaces->target ||
         !surfaces->depth_target || batch->active || !batch->ready || batch->pending_x ||
-        batch->primitive!=5 || !batch->count || batch->count>FUT_IMMEDIATE_DRAW_CAPACITY ||
-        batch->count%3 || native->count!=batch->count) return E_INVALIDARG;
+        native->count!=batch->count || native->primitive!=batch->primitive) return E_INVALIDARG;
+    if(line_list) {
+        if(!aa2 || !fut_graphics_lines_16segment_aa2_approximation_enabled() ||
+            batch->primitive!=2 || batch->count!=32 || batch->input_kind!=4) return E_INVALIDARG;
+    } else if(batch->primitive!=5 || !batch->count ||
+        batch->count>FUT_IMMEDIATE_DRAW_CAPACITY || batch->count%3) return E_INVALIDARG;
     if(native->submitted || surfaces->gpu_dirty) return E_PENDING;
     if(stop && WaitForSingleObject(stop,0)!=WAIT_TIMEOUT) return E_ABORT;
     if((state->program_mode&3u)!=2u || (aa2?
@@ -60,7 +65,8 @@ static HRESULT draw_immediate(FutNativeImmediate *native,FutGraphicsImmediate *b
     UINT stride=16*4*sizeof(float),offset=0;
     ID3D11DeviceContext_IASetInputLayout(context,native->layout);
     ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&native->buffer,&stride,&offset);
-    ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context,line_list?
+        D3D11_PRIMITIVE_TOPOLOGY_LINELIST:D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_VSSetShader(context,vertex,NULL,0);
     ID3D11DeviceContext_PSSetShader(context,pixel,NULL,0);
     ID3D11DeviceContext_OMSetRenderTargets(context,1,&surfaces->target,surfaces->depth_target);
@@ -109,7 +115,7 @@ HRESULT fut_native_draw_immediate(FutNativeImmediate *native,FutGraphicsImmediat
     FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop)
 {
     return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
-        vertex,pixel,completion,read,write,memory,stop,0);
+        vertex,pixel,completion,read,write,memory,stop,0,0);
 }
 HRESULT fut_native_draw_immediate_aa2(FutNativeImmediate *native,FutGraphicsImmediate *batch,
     FutNativeSurfaces *surfaces,FutNativePipeline *pipeline,
@@ -120,5 +126,17 @@ HRESULT fut_native_draw_immediate_aa2(FutNativeImmediate *native,FutGraphicsImme
 {
     if(unit_w_verified!=1) return E_NOTIMPL;
     return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
-        vertex,pixel,completion,read,write,memory,stop,1);
+        vertex,pixel,completion,read,write,memory,stop,1,0);
+}
+
+HRESULT fut_native_draw_immediate_aa2_lines(FutNativeImmediate *native,FutGraphicsImmediate *batch,
+    FutNativeSurfaces *surfaces,FutNativePipeline *pipeline,
+    const FutGraphicsKelvinState *state,const FutGraphicsSoftwareState *software,
+    ID3D11Device *device,ID3D11DeviceContext *context,
+    ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
+    FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int unit_w_verified)
+{
+    if(unit_w_verified!=1 || !fut_graphics_lines_16segment_aa2_approximation_enabled()) return E_NOTIMPL;
+    return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
+        vertex,pixel,completion,read,write,memory,stop,1,1);
 }

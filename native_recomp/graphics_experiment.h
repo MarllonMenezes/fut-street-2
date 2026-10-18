@@ -39,4 +39,10 @@ static inline int fut_graphics_bc2_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_BC2_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized 2026-10-18 for one captured 16-segment AA2 line-list packet. */
+static inline int fut_graphics_lines_16segment_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif

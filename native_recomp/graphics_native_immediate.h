@@ -5,7 +5,7 @@
 #include "graphics_immediate.h"
 #include "graphics_native_constants.h"
 typedef struct {
-    ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count,submitted;
+    ID3D11Buffer *buffer;ID3D11InputLayout *layout;unsigned count,submitted,primitive;
     uint64_t ia_vertices,ps_invocations; /* Last completed raster query, not NV2A fidelity. */
 } FutNativeImmediate;
 /* Upload/bind only: no Draw/consumption. Failure preserves old resources.

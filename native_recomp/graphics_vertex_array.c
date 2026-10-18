@@ -9,12 +9,19 @@ void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *a)
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *a,unsigned primitive)
 {
     if(!a || primitive!=6 || a->active || a->ready) return 0;
-    a->count=0;a->inline_count=0;a->input_mode=0;a->active=1;return 1;
+    a->count=0;a->inline_count=0;a->input_mode=0;a->primitive=primitive;a->active=1;return 1;
+}
+
+int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *a)
+{
+    if(!a || a->active || a->ready) return 0;
+    a->count=0;a->inline_count=0;a->input_mode=0;a->primitive=2;a->active=1;return 1;
 }
 
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *a,uint32_t packed)
 {
-    if(!a || !a->active || a->ready || a->input_mode==2 || a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY-2) return 0;
+    if(!a || !a->active || a->ready || a->input_mode==2 ||
+        (a->primitive==2 ? a->count>30u : a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY-2)) return 0;
     a->input_mode=1;
     a->indices[a->count++]=(uint16_t)packed;
     a->indices[a->count++]=(uint16_t)(packed>>16);
@@ -31,6 +38,11 @@ int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *a,uint32_t word)
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
 {
     if(!a || !a->active || a->ready) return 0;
+    if(a->primitive==2) {
+        if(a->input_mode!=1 || a->count!=32u) return 0;
+        a->active=0;a->ready=1;return 1;
+    }
+    if(a->primitive!=6) return 0;
     if((a->input_mode==1 && a->count<3) ||
         (a->input_mode==2 && (a->inline_count%6u || a->inline_count<18u)) ||
         !a->input_mode) return 0;
@@ -51,7 +63,7 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
     FutGraphicsImmediate next;
     uint64_t draw_count;
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
-        !attributes || !attribute_valid || a->active || !a->ready || a->input_mode!=1 || a->count<3 ||
+        !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 || a->input_mode!=1 || a->count<3 ||
         a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
         formats[0]!=0x635u ||
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
@@ -128,6 +140,61 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
     }
     next.count=(unsigned)draw_count;next.primitive=5;next.ready=1;next.input_kind=3;
     *out=next;return 1;
+}
+
+int fut_graphics_vertex_array_capture_observed_lines(FutGraphicsMemoryRead read,
+    void *ctx,const FutGraphicsDmaView *view_a,const FutGraphicsDmaView *view_b,
+    uint32_t format,uint32_t offset,uint8_t output[96])
+{
+    uint8_t captured[96];
+    const uint32_t address=0x80000000u+0x001689D4u;
+    if(!read || !view_equal(view_a,view_b) || !output || format!=0x635u ||
+        offset!=0x001689D4u || view_a->guest_address!=0x80000000u ||
+        view_a->size!=0x04000000u || offset>view_a->size ||
+        sizeof(captured)>view_a->size-offset || address<view_a->guest_address ||
+        address-view_a->guest_address!=offset) return 0;
+    for(unsigned i=0;i<16;++i)
+        if(!read(ctx,address+i*6u,captured+i*6u,6u)) return 0;
+    memcpy(output,captured,sizeof(captured));
+    return 1;
+}
+
+int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray *a,
+    FutGraphicsImmediate *out,FutGraphicsMemoryRead read,void *ctx,
+    const FutGraphicsDmaView *view_a,const FutGraphicsDmaView *view_b,
+    const uint32_t formats[16],const uint32_t offsets[16],
+    const float attributes[16][4],const uint8_t attribute_valid[16],uint16_t required)
+{
+    static const uint16_t expected[32]={0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,
+        8,9,9,10,10,11,11,12,12,13,13,14,14,15,15,0};
+    FutGraphicsImmediate next;
+    if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
+        !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=2 ||
+        a->input_mode!=1 || a->count!=32u || a->inline_count || formats[0]!=0x635u ||
+        offsets[0]!=0x001689D4u || required!=1u ||
+        view_a->guest_address!=0x80000000u || view_a->size!=0x04000000u ||
+        view_a->guest_address>UINT32_MAX-view_a->size || attribute_valid[0]!=15) return 0;
+    for(unsigned i=0;i<32;++i) if(a->indices[i]!=expected[i]) return 0;
+    for(unsigned slot=1;slot<16;++slot) if(formats[slot]!=0x602u) return 0;
+    memset(&next,0,sizeof(next));
+    for(unsigned i=0;i<32;++i) {
+        uint8_t raw[6];uint64_t rel=(uint64_t)offsets[0]+(uint64_t)a->indices[i]*6u;
+        if(rel>view_a->size || view_a->size-rel<sizeof(raw) ||
+            rel>UINT32_MAX-view_a->guest_address ||
+            !read(ctx,view_a->guest_address+(uint32_t)rel,raw,sizeof(raw))) return 0;
+        memcpy(next.vertices[i],attributes,sizeof(next.vertices[i]));
+        int16_t component[3];memcpy(component,raw,sizeof(component));
+        next.vertices[i][0][0]=(float)component[0];
+        next.vertices[i][0][1]=(float)component[1];
+        next.vertices[i][0][2]=(float)component[2];
+        next.vertices[i][0][3]=1.0f;
+        next.defined[i]=1u;
+        for(unsigned slot=1;slot<16;++slot) if(attribute_valid[slot]==15)
+            next.defined[i]|=(uint16_t)(1u<<slot);
+    }
+    next.count=32;next.primitive=2;next.ready=1;next.input_kind=4;
+    *out=next;
+    return 1;
 }
 
 int fut_graphics_vertex_array_consume(FutGraphicsVertexArray *a)

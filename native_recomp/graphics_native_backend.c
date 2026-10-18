@@ -764,6 +764,37 @@ static int object_memory_read(void *context, uint32_t address, void *data, size_
     return read_guest(address, data, size);
 }
 
+static void native_capture_observed_lines(NativeGraphicsState *state)
+{
+    if(!getenv("RECOMP_CAPTURE_OBSERVED_LINES")) return;
+    const unsigned refs=(1u<<7)|(1u<<8);
+    FutGraphicsDmaView view_a,view_b;
+    uint8_t bytes[96];
+    if((state->bindings.reference_masks[0]&refs)!=refs ||
+        state->kelvin.vertex_array_format_valid!=0xFFFFu ||
+        !fut_graphics_dma_surface_view(&state->bindings.references[0][7],&view_a) ||
+        !fut_graphics_dma_surface_view(&state->bindings.references[0][8],&view_b) ||
+        !fut_graphics_vertex_array_capture_observed_lines(object_memory_read,NULL,
+            &view_a,&view_b,state->kelvin.vertex_array_format[0],
+            state->kelvin.vertex_array_offset[0],bytes)) {
+        fputs("[GRAPHICS] observed LINES vertex capture rejected by exact read-only scope; draw remains unsupported\n",stderr);
+        return;
+    }
+    FILE *capture=fopen("graphics-line-vertices.bin","wb");
+    if(!capture) {
+        fputs("[GRAPHICS] cannot create isolated observed LINES vertex capture; draw remains unsupported\n",stderr);
+        return;
+    }
+    size_t written=fwrite(bytes,1,sizeof(bytes),capture);
+    int closed=fclose(capture)==0;
+    if(written!=sizeof(bytes) || !closed) {
+        fputs("[GRAPHICS] observed LINES vertex capture write incomplete; draw remains unsupported\n",stderr);
+        return;
+    }
+    fprintf(stderr,"[GRAPHICS] read-only observed LINES vertex capture: bytes=%zu base=%08X offset=%08X format=%08X vertices=16; no draw or completion\n",
+        sizeof(bytes),view_a.guest_address,state->kelvin.vertex_array_offset[0],state->kelvin.vertex_array_format[0]);
+}
+
 static int native_prepare_aa2_programs(NativeGraphicsState *state)
 {
     if(!state->constant_coordinates) return 0;
@@ -991,12 +1022,23 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         return 1;
     }
     if (class_id == 0x97u) {
+        if(subchannel==0 && method==0x17FCu && value==2u)
+            native_capture_observed_lines(state);
         if(subchannel==0 && method==0x17FCu && value==6u) {
             if(state->immediate.active || state->immediate.ready ||
                 !fut_graphics_vertex_array_begin(&state->vertex_array,value)) {
                 fputs("[GRAPHICS] indexed triangle-strip begin refused\n",stderr);return 0;
             }
             fputs("[GRAPHICS] triangle-strip begin captured; indexed and inline forms remain restricted to observed layouts\n",stderr);
+            return 1;
+        }
+        if(subchannel==0 && method==0x17FCu && value==2u) {
+            if(!fut_graphics_lines_16segment_aa2_approximation_enabled() ||
+                state->immediate.active || state->immediate.ready ||
+                !fut_graphics_vertex_array_begin_observed_lines(&state->vertex_array)) {
+                fputs("[GRAPHICS] observed 16-segment LINES begin refused; exact opt-in and idle state required\n",stderr);return 0;
+            }
+            fputs("[GRAPHICS] authorized exact 16-segment AA2 LINELIST experiment began; D3D11 coverage is approximate\n",stderr);
             return 1;
         }
         if(subchannel==0 && method==0x1818u && state->vertex_array.active) {
@@ -1013,8 +1055,46 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         }
         if(subchannel==0 && method==0x17FCu && value==0u && state->vertex_array.active) {
             if(!fut_graphics_vertex_array_end(&state->vertex_array)) {
-                fprintf(stderr,"[GRAPHICS] triangle-strip end refused: mode=%u indices=%u inline_words=%u\n",
+                fprintf(stderr,"[GRAPHICS] indexed primitive end refused: primitive=%u mode=%u indices=%u inline_words=%u\n",
+                    state->vertex_array.primitive,
                     state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count);return 0;
+            }
+            if(state->vertex_array.primitive==2u) {
+                unsigned first=state->kelvin.program_start,count=0;
+                while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
+                    ++count;if(state->kelvin.program[first+count-1][3]&1u) break;
+                }
+                uint16_t required=0;
+                int built=fut_vertex_program_input_mask(state->kelvin.program+first,count,&required);
+                FutGraphicsDmaView view_a,view_b;const unsigned refs=(1u<<7)|(1u<<8);
+                int has_refs=(state->bindings.reference_masks[0]&refs)==refs;
+                int has_a=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][7],&view_a);
+                int has_b=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][8],&view_b);
+                built=built && has_a && has_b && fut_graphics_vertex_array_build_observed_lines(
+                    &state->vertex_array,&state->immediate,state->bindings.read,state->bindings.memory_context,
+                    &view_a,&view_b,state->kelvin.vertex_array_format,state->kelvin.vertex_array_offset,
+                    state->kelvin.attributes,state->kelvin.attribute_valid,required);
+                if(!built) {
+                    fprintf(stderr,"[GRAPHICS] authorized LINES fetch refused: refs=%u/%u/%u required=%04X indices=%u; no draw/completion\n",
+                        has_refs,has_a,has_b,required,state->vertex_array.count);return 0;
+                }
+                if(state->native_surfaces.plan.samples!=2 || !native_prepare_immediate(state) || !native_prepare_draw(state)) {
+                    fputs("[GRAPHICS] exact LINES experiment requires prepared captured AA2/P8/depth state; no draw/completion\n",stderr);return 0;
+                }
+                unsigned drawn=state->immediate.count;
+                HRESULT hr=fut_native_draw_immediate_aa2_lines(&state->native_immediate,&state->immediate,
+                    &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                    state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
+                    &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,
+                    state->constant_coordinates!=0);
+                if(FAILED(hr)) {
+                    fprintf(stderr,"[GRAPHICS] authorized LINES LINELIST draw/completion refused: HRESULT=%08lX; no completion claimed\n",hr);return 0;
+                }
+                if(!fut_graphics_vertex_array_consume(&state->vertex_array)) return 0;
+                fprintf(stderr,"[GRAPHICS] AUTHORIZED_EXACT_16SEGMENT_AA2_LINELIST_APPROXIMATION: vertices=%u IA_vertices=%llu PS_invocations=%llu guest_surface_writeback=complete; D3D11 line coverage/depth compression not NV2A-validated; no present/VBlank\n",
+                    drawn,(unsigned long long)state->native_immediate.ia_vertices,
+                    (unsigned long long)state->native_immediate.ps_invocations);
+                return native_preview_original_draw(state);
             }
             unsigned first=state->kelvin.program_start,count=0;
             while(first+count<136 && state->kelvin.program_valid[first+count]==15) {

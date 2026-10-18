@@ -7,11 +7,12 @@
 typedef struct {
     uint16_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
     uint32_t inline_words[FUT_IMMEDIATE_CAPACITY*6u];
-    unsigned count, inline_count, input_mode, active, ready;
+    unsigned count, inline_count, input_mode, active, ready, primitive;
 } FutGraphicsVertexArray;
 
 void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned primitive);
+int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);
@@ -29,5 +30,18 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, const uint32_t formats[16],
     const float attributes[16][4], const uint8_t attribute_valid[16],
     uint16_t required_mask);
+/* Expands only the captured 16-segment closed line-list into 32 vertices. */
+int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray *array,
+    FutGraphicsImmediate *output, FutGraphicsMemoryRead read, void *memory_context,
+    const FutGraphicsDmaView *view_a, const FutGraphicsDmaView *view_b,
+    const uint32_t formats[16], const uint32_t offsets[16],
+    const float attributes[16][4], const uint8_t attribute_valid[16],
+    uint16_t required_mask);
+/* Read-only capture for the single observed LINES packet. This does not
+ * assemble or submit a primitive; it only snapshots its 16 S32K positions. */
+int fut_graphics_vertex_array_capture_observed_lines(FutGraphicsMemoryRead read,
+    void *memory_context, const FutGraphicsDmaView *view_a,
+    const FutGraphicsDmaView *view_b, uint32_t format, uint32_t offset,
+    uint8_t output[96]);
 int fut_graphics_vertex_array_consume(FutGraphicsVertexArray *array);
 #endif

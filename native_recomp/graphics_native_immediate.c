@@ -1,5 +1,6 @@
 #define COBJMACROS
 #include "graphics_native_immediate.h"
+#include "graphics_experiment.h"
 #include <string.h>
 #include <math.h>
 void fut_native_immediate_destroy(FutNativeImmediate *native)
@@ -11,8 +12,12 @@ void fut_native_immediate_destroy(FutNativeImmediate *native)
 HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *device,
     ID3D11DeviceContext *context,ID3DBlob *bytecode,const FutGraphicsImmediate *b,uint16_t required)
 {
-    if(!native || !device || !context || !bytecode || !b || b->active || !b->ready ||
-        b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_DRAW_CAPACITY || b->count%3) return E_INVALIDARG;
+    if(!native || !device || !context || !bytecode || !b || b->active || !b->ready) return E_INVALIDARG;
+    if(b->primitive==2) {
+        if(!fut_graphics_lines_16segment_aa2_approximation_enabled() || b->count!=32 || b->input_kind!=4)
+            return E_INVALIDARG;
+    } else if(b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_DRAW_CAPACITY || b->count%3)
+        return E_INVALIDARG;
     if(native->submitted) return E_PENDING;
     for(unsigned i=0;i<b->count;++i) if((b->defined[i]&required)!=required) return E_NOTIMPL;
     FutNativeImmediate next={0};
@@ -29,11 +34,12 @@ HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *dev
     if(SUCCEEDED(hr)) hr=ID3D11Device_CreateInputLayout(device,elements,16,
         ID3D10Blob_GetBufferPointer(bytecode),ID3D10Blob_GetBufferSize(bytecode),&next.layout);
     if(FAILED(hr)) {fut_native_immediate_destroy(&next);return hr;}
-    next.count=b->count;
+    next.count=b->count;next.primitive=b->primitive;
     UINT stride=sizeof(b->vertices[0]),offset=0;
     ID3D11DeviceContext_IASetInputLayout(context,next.layout);
     ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&next.buffer,&stride,&offset);
-    ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context,b->primitive==2?
+        D3D11_PRIMITIVE_TOPOLOGY_LINELIST:D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     fut_native_immediate_destroy(native);*native=next;return S_OK;
 }
 HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
@@ -42,7 +48,8 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
     DWORD timeout_ms,HANDLE stop_event)
 {
     if(!native || !native->buffer || !native->layout || !native->count ||
-        native->count>FUT_IMMEDIATE_DRAW_CAPACITY || native->count%3 || !device || !context || !shader || !bytecode ||
+        (native->primitive==2 ? (native->count!=32 || !fut_graphics_lines_16segment_aa2_approximation_enabled()) :
+            (native->primitive!=5 || native->count>FUT_IMMEDIATE_DRAW_CAPACITY || native->count%3)) || !device || !context || !shader || !bytecode ||
         !completion || !completion->buffer || !completion->completion || completion->context!=context || !positions || capacity<native->count ||
         !timeout_ms || timeout_ms>2000) return E_INVALIDARG;
     if(stop_event && WaitForSingleObject(stop_event,0)!=WAIT_TIMEOUT) return E_ABORT;
@@ -75,7 +82,8 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
     UINT input_stride=16*4*sizeof(float);
     ID3D11DeviceContext_IASetInputLayout(context,native->layout);
     ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&native->buffer,&input_stride,&offset);
-    ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_IASetPrimitiveTopology(context,native->primitive==2?
+        D3D11_PRIMITIVE_TOPOLOGY_LINELIST:D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     ID3D11DeviceContext_VSSetShader(context,shader,NULL,0);
     ID3D11DeviceContext_GSSetShader(context,stream,NULL,0);
     ID3D11DeviceContext_SOSetTargets(context,1,&output,&offset);
@@ -102,7 +110,8 @@ done:
 }
 unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
 {
-    if(!positions || !count || count>FUT_IMMEDIATE_DRAW_CAPACITY || count%3) return 0;
+    if(!positions || !count || count>FUT_IMMEDIATE_DRAW_CAPACITY ||
+        (count%3 && !(count==32 && fut_graphics_lines_16segment_aa2_approximation_enabled()))) return 0;
     unsigned mask=15;
     for(unsigned i=0;i<count;++i) {
         const FutNativePosition *p=&positions[i];
