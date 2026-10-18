@@ -20,6 +20,9 @@ int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 void sub_0024B547(void)
 {
 }
+void sub_0023D3A0(void)
+{
+}
 
 /* The standalone runtime-support test does not link the generated dispatch
  * table or the kernel bridge. Keep every indirect lookup unresolved so this
@@ -100,8 +103,12 @@ int main(int argc, char **argv)
 
     if (recomp_lookup_manual(0x0023A4C3u) != sub_0024B547)
         return 12;
+    if (recomp_lookup_manual(0x00240B00u) != sub_0023D3A0)
+        return 14;
     if (recomp_lookup_manual(0x0023A4C2u) != NULL ||
-        recomp_lookup_manual(0x0023A4C4u) != NULL)
+        recomp_lookup_manual(0x0023A4C4u) != NULL ||
+        recomp_lookup_manual(0x00240AFFu) != NULL ||
+        recomp_lookup_manual(0x00240B01u) != NULL)
         return 13;
 
     for (size_t i = 0; i < sizeof(guest_addresses) / sizeof(guest_addresses[0]); ++i) {
