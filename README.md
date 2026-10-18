@@ -14,19 +14,21 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 17 de outubro de 2026
+## Estado verificável — 18 de outubro de 2026
 
-**`NOT_READY` — ainda não jogável.** A build Release contém 15.610 entradas
-de dispatch. O último launch limitado superou a espera de flip, correlacionou
-13 recibos DXGI com aposentadoria pela ISR original e concluiu o strip P8
-128×32 autorizado. O próximo bloqueio é uma chamada original ainda sem
-tradução em `0x001D17BC`.
+**`NOT_READY` — ainda não jogável.** A build privada do host contém 15.611
+entradas de dispatch e 37/37 gates nativos passaram. O launch limitado
+executou draws experimentais com writeback para o guest, incluindo o strip
+P8 inline 128×32 (14.553 pixel-shader invocations). A chamada recompilada
+`0x001D17BC` está ligada, mas não foi observada em execução nesta captura.
+O primeiro bloqueio atual é `NV097_SET_BEGIN_END=2` (linhas), ainda sem
+caminho de rasterização no host.
 
 | Etapa | Evidência atual |
 | --- | --- |
-| Tradução e compilação | Build nativo Release com 15.610 entradas; 37/37 gates nativos passaram. As funções recuperadas foram regeneradas e ligadas no executável testado. O alvo `0x001D17BC` permanece sem tradução. |
-| Boot | Execução parcial da lógica original confirmada; o launch saiu com `exit 3` antes do timeout de 60 segundos no alvo ausente. Boot completo e menu ainda não comprovados. |
-| Rendering | 13 recibos DXGI correlacionados com a ISR original: três por estatísticas exatas e dez pelo evento real de latência. O strip P8 128×32 autorizado executou seis vértices expandidos, IA=12 e PS=14.553, com writeback da superfície no guest. Isso não comprova fidelidade NV2A ou imagem completa do jogo. |
+| Tradução e compilação | Build privado do host com 15.611 entradas de dispatch; 37/37 gates nativos passaram. O símbolo `0x001D17BC` foi gerado e ligado, mas sua chamada original não foi observada neste launch. |
+| Boot | Execução parcial da lógica original confirmada; o launch saiu com `exit 3` antes do timeout de 60 segundos, no início de um primitivo de linhas ainda não suportado. Boot completo e menu ainda não comprovados. |
+| Rendering | O strip P8 inline 128×32 autorizado executou seis vértices expandidos, IA=12 e PS=14.553, com writeback da superfície no guest. Também houve conclusão/writeback de outros strips experimentais, incluindo a gate BC2/AA2. Os casos BC2 e AA2 seguem aproximações sem fidelidade NV2A comprovada; isso não comprova uma imagem completa do jogo. |
 | Áudio | Não funcional nem validado. O experimento usa bypass explícito da espera de efeitos no host; DSP permanece isolado. |
 | Controles e gameplay | Menu navegável, comandos na lógica original e partida curta ainda não comprovados. |
 
@@ -44,15 +46,18 @@ aposentadoria pela ISR original, sob o modelo já existente de timing do host.
 
 O caso P8 128×32 foi exercitado com depth-write e a aproximação AA2 autorizada;
 compressão de depth e fidelidade NV2A continuam sem validação. A conversão
-S32K segue o modelo local S16-para-float. O armazenamento DXT23→BC2 passou
-nos testes de plano/upload e preservação dos blocos comprimidos, mas ainda
-precisa reaparecer em runtime para comprovar seu uso.
+S32K segue o modelo local S16-para-float. O draw BC2/DXT23 1280×480 autorizado
+passou pela gate, completou a chamada D3D e writeback do guest; filtragem BC2,
+compress-depth e fidelidade NV2A continuam sem validação. Os descritores
+vertex inline adicionais foram apenas retidos e testados contra o pacote
+observado.
 
 As aproximações gráficas continuam restritas aos casos observados e aceitos:
 dithering neutro em ARGB8 single-sample; AA2 com os baselines autorizados;
 quincunx no resolve 1280×480→640×480; BC1 sem o ruído DXT1 desconhecido na
 textura 512×512 e desenho aceito; P8 32×32 e P8 128×32 nas opções independentes.
-Esses experimentos não comprovam equivalência NV2A.
+BC2/DXT23 1280×480 no draw AA2 capturado tem opção própria desligada por
+padrão. Nenhuma dessas aproximações comprova equivalência NV2A.
 
 O bypass de áudio exige opção explícita. Sua conclusão artificial serve para
 investigar os bloqueios seguintes; não representa execução do DSP ou áudio
@@ -63,12 +68,13 @@ gerado proprietário ficam locais em D:.
 
 ### Próximos passos
 
-1. **Recuperar `0x001D17BC`:** confirmar limites e call sites originais, usar
-   o tradutor existente, regenerar o trecho e validar o executável resultante.
-2. **Retomar o boot limitado:** localizar o primeiro bloqueio seguinte,
-   preservando recibos reais, limites de execução e opções autorizadas.
-3. **Verificar rendering:** capturar e avaliar os quadros produzidos, além de
-   confirmar DXT23/BC2 em runtime quando esse estado reaparecer.
+1. **Implementar o primitivo de linhas observado:** `BEGIN_END=2` está definido
+   como `LINES` no mapa XDK local e é seguido por 34 índices; falta um caminho
+   de expansão e rasterização de linhas com gates e teste focais.
+2. **Retomar o boot limitado:** executar com limite finito para localizar o
+   primeiro bloqueio seguinte, preservando as aproximações opt-in e os logs.
+3. **Verificar rendering:** capturar e avaliar quadros produzidos e medir
+   cobertura/writeback; draws aceitos ainda não demonstram imagem fiel.
 4. **Chegar ao menu utilizável:** resolver dependências de tradução, serviços
    do host e carregamento encontradas pelo caminho original.
 5. **Validar controles e cenário:** comprovar entrada chegando à lógica
@@ -99,10 +105,10 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
 
-O gate da geração atual exige exatamente 15.610 entradas de dispatch,
-incluindo os dez pontos de entrada indiretos recuperados. Uma geração
-anterior não satisfaz esse contrato; confirme a regeneração e o executável
-realmente utilizado nos testes.
+O gate da geração privada validada exige exatamente 15.611 entradas de
+dispatch, incluindo os onze pontos de entrada indiretos recuperados. Uma
+geração anterior não satisfaz esse contrato; confirme a regeneração e o
+executável realmente utilizado nos testes.
 
 ```powershell
 cmake -S native_recomp -B artifacts/fut-street2-native/build -G Ninja `

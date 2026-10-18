@@ -94,10 +94,13 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
     FutGraphicsImmediate next;
     if(!a || !out || !formats || !attributes || !attribute_valid || a->active || !a->ready ||
         a->input_mode!=2 || a->inline_count<18u || a->inline_count%6u) return 0;
+    int legacy_profile=1, captured_stride6_profile=1;
     for(unsigned slot=0;slot<16;++slot) {
         uint32_t expected=slot==0?0x32u:slot==3?0x40u:slot==9?0x22u:0x02u;
-        if(formats[slot]!=expected) return 0;
+        if(formats[slot]!=expected) legacy_profile=0;
+        if(formats[slot]!=(expected|0x600u)) captured_stride6_profile=0;
     }
+    if(!legacy_profile && !captured_stride6_profile) return 0;
     unsigned vertices=a->inline_count/6u;
     uint64_t draw_count=(uint64_t)(vertices-2)*3u;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY) return 0;

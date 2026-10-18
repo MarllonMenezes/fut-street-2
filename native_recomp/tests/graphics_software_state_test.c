@@ -8,6 +8,7 @@ int main(void)
     _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
     FutGraphicsSoftwareState state = {0};
     if (!fut_graphics_software_draw_ready(&state)) return 1;
     if (!fut_graphics_software_state(&state, 0x28, 0, 0, 0) || state.dxt1_noise != 1 ||
@@ -195,8 +196,56 @@ int main(void)
     _putenv_s("RECOMP_AA2_APPROXIMATION","1");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 55;
+    state=baseline;kelvin=(FutGraphicsKelvinState){0};
+    kelvin.anti_aliasing_control=0xFFFF0001;kelvin.depth_test=1;
+    kelvin.draw.depth_write=1;kelvin.compress_depth=1;kelvin.control0=0x00100001;
+    kelvin.textures[0]=(FutGraphicsTextureState){.offset=0x00D1F980,.format=0x06610E29,
+        .address=0x10303,.control0=0x4003FFC0,.control1=0x14000000,
+        .filter=0x02062000,.image_rect=0x050001E0,.valid=0x3BF};
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 56;
+    _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 57;
+    _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 58;
+    FutGraphicsKelvinState bc2=kelvin;
+    for(unsigned i=0;i<15;++i) {
+        kelvin=bc2;surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,
+            .logical_width=640,.logical_height=480,.samples=2};
+        switch(i) {
+        case 0:kelvin.textures[0].format^=0x100000;break;
+        case 1:kelvin.textures[0].offset^=16;break;
+        case 2:kelvin.textures[0].image_rect^=0x10000;break;
+        case 3:kelvin.textures[0].control1^=0x10000;break;
+        case 4:kelvin.textures[0].filter^=0x10000;break;
+        case 5:kelvin.textures[0].address^=1;break;
+        case 6:kelvin.textures[0].control0^=0x40;break;
+        case 7:kelvin.textures[0].valid=0;break;
+        case 8:kelvin.draw.depth_write=0;break;
+        case 9:kelvin.depth_test=0;break;
+        case 10:kelvin.stencil_test=1;break;
+        case 11:kelvin.compress_depth=0;break;
+        case 12:kelvin.control0^=1;break;
+        case 13:kelvin.textures[1].control0=0x40000000;break;
+        case 14:surface.width=640;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 59;
+    }
+    kelvin=bc2;surface=(FutGraphicsSurfacePlan){.width=1280,.height=481,
+        .logical_width=640,.logical_height=480,.samples=2};
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 60;
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 61;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 62;
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
-    puts("Software controls: independent opt-ins, exact BC1/P8 32x32/P8 128x32 scopes and negative variants verified");
+    _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
+    puts("Software controls: independent opt-ins, exact BC1/P8/BC2 AA2 scopes and negative variants verified");
     return 0;
 }

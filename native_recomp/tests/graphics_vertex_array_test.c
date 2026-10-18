@@ -57,7 +57,11 @@ int main(void)
     CHECK(out.vertices[0][0][0]==-1 && out.vertices[1][0][0]==0 && out.vertices[2][0][0]==1);
     CHECK(out.vertices[3][0][0]==1 && out.vertices[4][0][0]==0 && out.vertices[5][0][0]==0);
     CHECK(out.vertices[0][3][0]==128.0f/255.0f && out.vertices[0][9][1]==0.0f);
-    FutGraphicsImmediate inline_before=out;inline_formats[3]=0x41;
+    FutGraphicsImmediate legacy_inline=out;
+    for(unsigned i=0;i<16;++i) inline_formats[i]|=0x600u;
+    CHECK(fut_graphics_vertex_array_build_inline(&a,&out,inline_formats,attrs,valid,0x201));
+    CHECK(memcmp(&out,&legacy_inline,sizeof(out))==0);
+    FutGraphicsImmediate inline_before=out;inline_formats[3]=0x740u;
     CHECK(!fut_graphics_vertex_array_build_inline(&a,&out,inline_formats,attrs,valid,0x201));
     CHECK(memcmp(&out,&inline_before,sizeof(out))==0);
     return 0;

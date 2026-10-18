@@ -811,6 +811,13 @@ static int native_prepare_draw(NativeGraphicsState *state)
             state->kelvin.depth_test,state->kelvin.stencil_test,state->kelvin.draw.depth_write,
             state->kelvin.compress_depth,state->native_surfaces.plan.samples,state->surfaces.format,
             state->kelvin.control0,state->kelvin.draw.dither,state->kelvin.anti_aliasing_control);
+        const FutGraphicsTextureState *blocked_texture=&state->kelvin.textures[0];
+        fprintf(stderr,"[GRAPHICS] blocked texture0 state: valid=%X offset=%08X format=%08X address=%08X control0=%08X control1=%08X filter=%08X image_rect=%08X surface=%ux%u logical=%ux%u\n",
+            blocked_texture->valid,blocked_texture->offset,blocked_texture->format,
+            blocked_texture->address,blocked_texture->control0,blocked_texture->control1,
+            blocked_texture->filter,blocked_texture->image_rect,
+            state->native_surfaces.plan.width,state->native_surfaces.plan.height,
+            state->native_surfaces.plan.logical_width,state->native_surfaces.plan.logical_height);
         FutGraphicsRopControls rop;
         if(fut_graphics_software_rop_controls(&state->software,&rop))
             fprintf(stderr,"[GRAPHICS] decoded XDK ROP controls: compare_always_read=%u depth_read=%u dont_cull_uncompressed=%u baseline=%08X/%08X; other baseline effects unmodeled\n",
@@ -826,6 +833,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x05710B29u &&
         fut_graphics_p8_128x32_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_P8_128X32_AA2_APPROXIMATION: lossless palette expansion, existing AA2 and depth-write mappings; exact 128x32/640x480 captured state; compressed-depth and NV2A AA2 fidelity unverified; NOT_READY\n",stderr);
+    if(aa2 && state->kelvin.textures[0].format==0x06610E29u &&
+        fut_graphics_bc2_aa2_approximation_enabled())
+        fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode; exact 1280x480 offset/pitch and 640x480 AA2 captured state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
     if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
         "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");

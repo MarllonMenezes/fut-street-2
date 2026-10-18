@@ -98,10 +98,18 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int p8_128x32=format==0x05710B29u &&
                     fut_graphics_p8_128x32_aa2_approximation_enabled() &&
                     (t->valid&0x100u) && !(t->palette&0x3Fu);
-                int depth_write_matches=p8_128x32 ? k->draw.depth_write==1 : !k->draw.depth_write;
-                if((!bc1 && !p8_32 && !p8_128x32) || stage!=0 || (t->valid&0x2Fu)!=0x2Fu ||
-                    t->control0!=0x4003FFC0u || t->address!=0x30303u ||
-                    t->filter!=0x02062000u || k->depth_test!=1 || k->stencil_test ||
+                int bc2=format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
+                    t->offset==0x00D1F980u && t->image_rect==0x050001E0u &&
+                    t->control1==0x14000000u;
+                int depth_write_matches=(p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;
+                unsigned valid_mask=bc2?0x9Bu:0x2Fu;
+                int texture_state_matches=bc2 ?
+                    (t->valid&valid_mask)==valid_mask && t->control0==0x4003FFC0u &&
+                    t->address==0x10303u && t->filter==0x02062000u :
+                    (t->valid&valid_mask)==valid_mask && t->control0==0x4003FFC0u &&
+                    t->address==0x30303u && t->filter==0x02062000u;
+                if((!bc1 && !p8_32 && !p8_128x32 && !bc2) || stage!=0 || !texture_state_matches ||
+                    k->depth_test!=1 || k->stencil_test ||
                     !depth_write_matches || k->compress_depth!=1 || k->control0!=0x00100001u)
                     return 0;
                 for(unsigned other=1;other<4;++other)

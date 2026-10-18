@@ -50,6 +50,19 @@ int main(void)
             observed_array_formats.vertex_array_format[i]!=format ||
             observed_array_formats.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 66;
     }
+    const uint32_t captured_formats[16]={0x632u,0x602u,0x602u,0x640u,
+        0x602u,0x602u,0x602u,0x602u,0x602u,0x622u,0x602u,0x602u,
+        0x602u,0x602u,0x602u,0x602u};
+    FutGraphicsKelvinState captured_array_formats={0};
+    for(unsigned i=0;i<16;++i)
+        if(fut_graphics_kelvin_state(&captured_array_formats,0x1760+i*4,captured_formats[i])!=FUT_KELVIN_APPLIED ||
+            captured_array_formats.vertex_array_format[i]!=captured_formats[i] ||
+            captured_array_formats.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 70;
+    FutGraphicsKelvinState captured_formats_before=captured_array_formats;
+    const uint32_t captured_near_misses[]={0x631u,0x633u,0x641u,0x63Fu,0x621u,0x623u};
+    for(unsigned i=0;i<sizeof(captured_near_misses)/sizeof(captured_near_misses[0]);++i)
+        if(fut_graphics_kelvin_state(&captured_array_formats,0x1760,captured_near_misses[i])!=FUT_KELVIN_REJECTED ||
+            memcmp(&captured_formats_before,&captured_array_formats,sizeof(captured_array_formats))) return 71;
     FutGraphicsKelvinState observed_formats_before = observed_array_formats;
     const uint32_t unobserved_formats[] = {0x634u, 0x636u, 0x603u};
     for (unsigned i=0;i<sizeof(unobserved_formats)/sizeof(unobserved_formats[0]);++i)
