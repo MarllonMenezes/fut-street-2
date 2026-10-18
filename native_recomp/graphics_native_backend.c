@@ -791,7 +791,9 @@ static void native_capture_observed_yuy2(NativeGraphicsState *state,
         fputs("[GRAPHICS] observed YUY2 capture rejected by exact read-only scope; draw remains unsupported\n",stderr);
         HeapFree(GetProcessHeap(),0,bytes);return;
     }
-    FILE *capture=fopen("graphics-lc-yuy2.bin","wb");
+    const char *capture_path=texture->offset==0x02487680u?
+        "graphics-lc-yuy2-02487680.bin":"graphics-lc-yuy2.bin";
+    FILE *capture=fopen(capture_path,"wb");
     if(!capture) {
         fputs("[GRAPHICS] cannot create isolated YUY2 capture; draw remains unsupported\n",stderr);
         HeapFree(GetProcessHeap(),0,bytes);return;
@@ -800,10 +802,12 @@ static void native_capture_observed_yuy2(NativeGraphicsState *state,
     int closed=fclose(capture)==0;
     if(written!=FUT_GRAPHICS_OBSERVED_YUY2_BYTES || !closed)
         fputs("[GRAPHICS] observed YUY2 capture write incomplete; draw remains unsupported\n",stderr);
-    else fprintf(stderr,"[GRAPHICS] read-only observed YUY2 texture capture: bytes=%u offset=%08X width=640 height=480 pitch=1280; no format translation or draw\n",
-        FUT_GRAPHICS_OBSERVED_YUY2_BYTES,texture->offset);
+    else fprintf(stderr,"[GRAPHICS] read-only observed YUY2 texture capture: bytes=%u offset=%08X width=640 height=480 pitch=1280 file=%s; no format translation or draw\n",
+        FUT_GRAPHICS_OBSERVED_YUY2_BYTES,texture->offset,capture_path);
     if(written==FUT_GRAPHICS_OBSERVED_YUY2_BYTES && closed) {
-        FILE *diagnostic=fopen("graphics-lc-yuy2-combiner.txt","wb");
+        const char *diagnostic_path=texture->offset==0x02487680u?
+            "graphics-lc-yuy2-02487680-combiner.txt":"graphics-lc-yuy2-combiner.txt";
+        FILE *diagnostic=fopen(diagnostic_path,"wb");
         if(!diagnostic) {
             fputs("[GRAPHICS] cannot create isolated combiner diagnostic; draw remains unsupported\n",stderr);
         } else {

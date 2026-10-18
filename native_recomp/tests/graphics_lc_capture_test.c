@@ -7,10 +7,12 @@ static uint8_t source[FUT_GRAPHICS_OBSERVED_YUY2_BYTES];
 static uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES];
 static uint8_t decoded[640u*480u*4u];
 static unsigned reads,fail_read;
+static uint32_t last_address;
 static int read_memory(void *context,uint32_t address,void *data,size_t size)
 {
     (void)context;++reads;
-    if(fail_read || address!=0x823F1580u || size!=sizeof(source)) return 0;
+    if(fail_read || (address!=0x823F1580u && address!=0x82487680u) || size!=sizeof(source)) return 0;
+    last_address=address;
     memcpy(data,source,size);return 1;
 }
 static int rejected_without_read(FutGraphicsTextureState state,FutGraphicsDmaView dma)
@@ -61,7 +63,11 @@ int main(void)
     for(unsigned i=0;i<sizeof(source);++i) source[i]=(uint8_t)(i*29u+7u);
     memset(output,0xA5,sizeof(output));reads=0;fail_read=0;
     CHECK(fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&state,&dma,output),1);
-    CHECK(reads==1 && !memcmp(source,output,sizeof(source)),2);
+    CHECK(reads==1 && last_address==0x823F1580u && !memcmp(source,output,sizeof(source)),2);
+    FutGraphicsTextureState second_capture=state;second_capture.offset=0x02487680u;
+    reads=0;
+    CHECK(fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&second_capture,&dma,output),28);
+    CHECK(reads==1 && last_address==0x82487680u && !memcmp(source,output,sizeof(source)),29);
     memset(output,0xA5,sizeof(output));reads=0;fail_read=1;
     CHECK(!fut_graphics_texture_capture_observed_yuy2(read_memory,NULL,&state,&dma,output),3);
     CHECK(reads==1 && output[0]==0xA5 && output[sizeof(output)-1]==0xA5,4);
@@ -76,6 +82,8 @@ int main(void)
     CHECK(rejected_without_read(state,short_dma),11);
     FutGraphicsDmaView other=dma;other.guest_address+=4;
     CHECK(rejected_without_read(state,other),12);
-    puts("Exact LC_IMAGE gate, default-off opt-in, transactional capture and approximate BT.601 vector verified");
+    FutGraphicsTextureState third_capture=state;third_capture.offset=0x02487684u;
+    CHECK(rejected_without_read(third_capture,dma),30);
+    puts("Exact LC_IMAGE captures, transactional reads, default-off opt-ins and BT.601 vector verified");
     return 0;
 }

@@ -91,10 +91,10 @@ int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
     void *ctx,const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
     uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES])
 {
-    const uint32_t offset=0x023F1580u;
+    const uint32_t offset=s?s->offset:0;
     uint8_t *captured;
     if(!read || !s || !dma || !output || s->format!=0x00012429u ||
-        s->offset!=offset || s->image_rect!=0x028001E0u ||
+        (offset!=0x023F1580u && offset!=0x02487680u) || s->image_rect!=0x028001E0u ||
         s->control0!=0x4003FFC0u || s->control1!=0x05000000u || s->valid!=0x3BFu ||
         (s->format&3u)!=1u || dma->guest_address!=0x80000000u ||
         dma->size!=0x04000000u || (dma->guest_address&0xFC000000u)!=0x80000000u ||

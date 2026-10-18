@@ -17,6 +17,7 @@ param(
     [switch]$Bc2Aa2Approximation,
     [switch]$Yuy2Bt601Approximation,
     [switch]$Yuy2Aa2Approximation,
+    [switch]$CaptureLcImage,
     [switch]$Lines16segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
@@ -64,6 +65,7 @@ $variables = @{
     RECOMP_BC2_AA2_APPROXIMATION = '0'
     RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '0'
     RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '0'
+    RECOMP_CAPTURE_LC_IMAGE = '0'
     RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
@@ -81,6 +83,7 @@ if ($P8_128x32Aa2Approximation) { $variables.RECOMP_P8_128X32_AA2_APPROXIMATION 
 if ($Bc2Aa2Approximation) { $variables.RECOMP_BC2_AA2_APPROXIMATION = '1' }
 if ($Yuy2Bt601Approximation) { $variables.RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '1' }
 if ($Yuy2Aa2Approximation) { $variables.RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '1' }
+if ($CaptureLcImage) { $variables.RECOMP_CAPTURE_LC_IMAGE = '1' }
 if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
@@ -136,6 +139,7 @@ try {
         bc2_aa2_approximation = [bool]$Bc2Aa2Approximation
         yuy2_bt601_approximation = [bool]$Yuy2Bt601Approximation
         yuy2_aa2_approximation = [bool]$Yuy2Aa2Approximation
+        capture_lc_image = [bool]$CaptureLcImage
         lines_16segment_aa2_approximation = [bool]$Lines16segmentAa2Approximation
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
