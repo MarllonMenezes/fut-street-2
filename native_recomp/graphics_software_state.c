@@ -76,6 +76,17 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
         !surface->logical_height || surface->logical_height>16384 ||
         surface->width!=2*surface->logical_width ||
         surface->height!=surface->logical_height) return 0;
+    const FutGraphicsTextureState *t0=&k->textures[0];
+    int bc2_c9df00=t0->format==0x09A10E29u &&
+        fut_graphics_bc2_c9df00_aa2_approximation_enabled() &&
+        t0->offset==0x00C9DF00u && t0->valid==0x3BFu &&
+        t0->control0==0x4003FFC0u && t0->control1==0x14000000u &&
+        t0->image_rect==0x050001E0u && t0->address==0x10303u &&
+        t0->filter==0x02062000u && k->draw.dither==1;
+    /* The new scope requires the captured baseline and enabled texture too;
+     * empty software controls or a disabled texture cannot bypass its gate. */
+    if(t0->format==0x09A10E29u &&
+        (!bc2_c9df00 || fut_graphics_software_draw_ready(s))) return 0;
     if(!fut_graphics_software_draw_ready(s)) {
         /* User-approved experiment, ONLY the observed ARGB8 AA2 baseline.
          * Ordinary texture/shader/Z/S validation remains mandatory. */
@@ -98,9 +109,9 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int p8_128x32=format==0x05710B29u &&
                     fut_graphics_p8_128x32_aa2_approximation_enabled() &&
                     (t->valid&0x100u) && !(t->palette&0x3Fu);
-                int bc2=format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
+                int bc2=(format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
                     t->offset==0x00D1F980u && t->image_rect==0x050001E0u &&
-                    t->control1==0x14000000u;
+                    t->control1==0x14000000u) || (stage==0 && bc2_c9df00);
                 int yuy2_first=format==0x00012429u &&
                     fut_graphics_yuy2_aa2_approximation_enabled() &&
                     fut_graphics_yuy2_bt601_approximation_enabled() &&

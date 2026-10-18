@@ -920,6 +920,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
     int software_ready=aa2?
         fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
         fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan);
+    if(aa2 && state->kelvin.textures[0].format==0x09A10E29u &&
+        state->surfaces.format!=0x00001128u) software_ready=0;
     const FutGraphicsTextureState *yuy2_texture=&state->kelvin.textures[0];
     int yuy2_second=yuy2_texture->offset==0x02487680u;
     int yuy2_aa2_enabled=yuy2_second?
@@ -966,6 +968,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x06610E29u &&
         fut_graphics_bc2_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode, FORMAT dimensions 64x64; exact captured offset/retained pitch/rectangle and 640x480 AA2 state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
+    if(aa2 && state->kelvin.textures[0].format==0x09A10E29u &&
+        fut_graphics_bc2_c9df00_aa2_approximation_enabled())
+        fputs("[GRAPHICS] AUTHORIZED_BC2_C9DF00_AA2_APPROXIMATION: exact offset=00C9DF00 FORMAT=09A10E29 1024x512 BC2, pitch=4096; existing 640x480 AA2 and depth-write mappings; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_%sAA2_APPROXIMATION: exact captured 640x480 state using existing host AA2 mapping and BT.601 candidate; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",
             yuy2_second?"02487680_":"");

@@ -9,6 +9,7 @@ int main(void)
     _putenv_s("RECOMP_P8_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_BC2_C9DF00_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
@@ -219,6 +220,7 @@ int main(void)
      * AA2 register tuple to the newly observed 1024x512 texture. */
     kelvin.textures[0].format=0x09A10E29u;
     kelvin.textures[0].offset=0x00C9DF00u;
+    kelvin.draw.dither=1;
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 77;
     for(unsigned i=0;i<15;++i) {
         kelvin=bc2;surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,
@@ -320,7 +322,59 @@ int main(void)
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 76;
     _putenv_s("RECOMP_YUY2_02487680_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
+    state=baseline;kelvin=bc2;kelvin.draw.dither=1;
+    kelvin.textures[0].format=0x09A10E29u;kelvin.textures[0].offset=0x00C9DF00u;
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 78;
+    _putenv_s("RECOMP_BC2_C9DF00_AA2_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 79;
+    _putenv_s("RECOMP_BC2_C9DF00_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 80;
+    FutGraphicsKelvinState bc2_c9df00=kelvin;
+    kelvin=bc2; /* The new flag must not admit the independently gated old draw. */
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 81;
+    for(unsigned i=0;i<25;++i) {
+        state=baseline;kelvin=bc2_c9df00;
+        surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+            .logical_height=480,.samples=2};
+        switch(i) {
+        case 0:kelvin.textures[0].format^=0x100000;break;
+        case 1:kelvin.textures[0].offset+=16;break;
+        case 2:kelvin.textures[0].valid^=1;break;
+        case 3:kelvin.textures[0].valid|=0x400;break;
+        case 4:kelvin.textures[0].control0^=0x40;break;
+        case 5:kelvin.textures[0].control0=0;break;
+        case 6:kelvin.textures[0].control1^=0x10000;break;
+        case 7:kelvin.textures[0].image_rect^=0x10000;break;
+        case 8:kelvin.textures[0].address^=1;break;
+        case 9:kelvin.textures[0].filter^=0x10000;break;
+        case 10:kelvin.depth_test=0;break;
+        case 11:kelvin.draw.depth_write=0;break;
+        case 12:kelvin.stencil_test=1;break;
+        case 13:kelvin.compress_depth=0;break;
+        case 14:kelvin.control0^=1;break;
+        case 15:kelvin.draw.dither=0;break;
+        case 16:kelvin.textures[1].control0=0x40000000;break;
+        case 17:kelvin.anti_aliasing_control^=1;break;
+        case 18:surface.width=640;break;
+        case 19:surface.logical_width=320;break;
+        case 20:surface.height++;break;
+        case 21:surface.samples=1;break;
+        case 22:state=(FutGraphicsSoftwareState){0};break;
+        case 23:state.register_words[0]^=1;break;
+        case 24:state.rdi_value[1]^=1;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) {
+            fprintf(stderr,"BC2 C9DF00 negative state admitted: %u\n",i);return 82;
+        }
+    }
+    state=baseline;kelvin=bc2_c9df00;
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 83;
+    _putenv_s("RECOMP_BC2_C9DF00_AA2_APPROXIMATION","0");
     puts("Software controls: exact BC1/P8/BC2 and both YUY2 AA2 scopes, independent opt-ins and negative variants verified");
     return 0;
 }
