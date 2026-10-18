@@ -82,7 +82,9 @@ int main(void)
         CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL && !native.quincunx_experiment,13);
         _putenv("RECOMP_QUINCUNX_APPROXIMATION=1");
         CHECK(fut_native_texture_quincunx_experiment(&native,&state,0)==E_NOTIMPL,14);
-        state.address=0x10303;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,15);state.address=0x30303;
+        state.address=0x10303;CHECK(SUCCEEDED(fut_native_texture_quincunx_experiment(&native,&state,1)),15);
+        state.address=0x30301;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,37);
+        state.address=0x30103;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,38);state.address=0x30303;
         native.plan.width=1278;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,16);native.plan.width=1280;
         state.filter=0x04074000;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,32);state.filter=0x04072000;
         state.format=0x11F29;CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,33);state.format=0x11229;
@@ -91,6 +93,7 @@ int main(void)
         _putenv("RECOMP_QUINCUNX_APPROXIMATION=true");
         CHECK(fut_native_texture_quincunx_experiment(&native,&state,1)==E_NOTIMPL,36);
         _putenv("RECOMP_QUINCUNX_APPROXIMATION=1");
+        state.address=(pattern&1)?0x10303:0x30303;
         CHECK(SUCCEEDED(fut_native_texture_quincunx_experiment(&native,&state,1)) && native.quincunx_experiment && !native.sampling_ready,17);
         ID3D11DeviceContext_CSSetShader(context,cs,NULL,0);
         ID3D11DeviceContext_CSSetShaderResources(context,0,1,&native.view);
