@@ -12,6 +12,11 @@ void sub_0024B547(void)
     fputs("kernel_file_contract: unexpected title callback\n", stderr);
     abort();
 }
+void sub_0023D3A0(void)
+{
+    fputs("kernel_file_contract: unexpected title callback\n", stderr);
+    abort();
+}
 
 /* The file contract is a host-service test.  Keep every guest callback
  * unresolved so this executable cannot enter generated game code. */

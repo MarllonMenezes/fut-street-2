@@ -15,6 +15,11 @@ extern recomp_func_t recomp_lookup_kernel(uint32_t address);
 void sub_0024B547(void)
 {
 }
+void sub_0023D3A0(void)
+{
+    fputs("native_dpc_gate: unexpected title callback\n",stderr);
+    ExitProcess(99);
+}
 static HANDLE started,entered,release_callback;
 static uint32_t dpc,thunks,interrupt_object;
 static LONG calls,callback_bad;
