@@ -519,6 +519,9 @@ static int native_prepare_vertex(NativeGraphicsState *state)
     return 1;
 }
 
+static void native_capture_observed_yuy2(NativeGraphicsState *state,
+    const FutGraphicsTextureState *texture,const FutGraphicsDmaView *dma);
+
 static int native_prepare_textures(NativeGraphicsState *state)
 {
     /* Texture uploads read authoritative guest data, including any earlier
@@ -548,6 +551,8 @@ static int native_prepare_textures(NativeGraphicsState *state)
         FutGraphicsTexturePlan plan;
         FutGraphicsTextureStatus status=fut_graphics_texture_plan(texture,&dma,&plan);
         if (status != FUT_TEXTURE_READY) {
+            if(status==FUT_TEXTURE_UNSUPPORTED)
+                native_capture_observed_yuy2(state,texture,&dma);
             fprintf(stderr,"[GRAPHICS] texture storage unsupported/invalid: stage=%u status=%d format=%08X offset=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X dma=%08X/%08X\n",
                 stage,status,texture->format,texture->offset,texture->image_rect,
                 texture->control0,texture->control1,texture->valid,dma.guest_address,dma.size);
@@ -762,6 +767,68 @@ static int object_memory_read(void *context, uint32_t address, void *data, size_
 {
     (void)context;
     return read_guest(address, data, size);
+}
+
+static void native_capture_observed_yuy2(NativeGraphicsState *state,
+    const FutGraphicsTextureState *texture,const FutGraphicsDmaView *dma)
+{
+    const char *enabled=getenv("RECOMP_CAPTURE_LC_IMAGE");
+    if(!enabled || strcmp(enabled,"1")) return;
+    uint8_t *bytes=HeapAlloc(GetProcessHeap(),0,FUT_GRAPHICS_OBSERVED_YUY2_BYTES);
+    if(!bytes) {
+        fputs("[GRAPHICS] cannot allocate isolated YUY2 capture buffer; draw remains unsupported\n",stderr);return;
+    }
+    if(!fut_graphics_texture_capture_observed_yuy2(object_memory_read,NULL,texture,dma,bytes)) {
+        fputs("[GRAPHICS] observed YUY2 capture rejected by exact read-only scope; draw remains unsupported\n",stderr);
+        HeapFree(GetProcessHeap(),0,bytes);return;
+    }
+    FILE *capture=fopen("graphics-lc-yuy2.bin","wb");
+    if(!capture) {
+        fputs("[GRAPHICS] cannot create isolated YUY2 capture; draw remains unsupported\n",stderr);
+        HeapFree(GetProcessHeap(),0,bytes);return;
+    }
+    size_t written=fwrite(bytes,1,FUT_GRAPHICS_OBSERVED_YUY2_BYTES,capture);
+    int closed=fclose(capture)==0;
+    if(written!=FUT_GRAPHICS_OBSERVED_YUY2_BYTES || !closed)
+        fputs("[GRAPHICS] observed YUY2 capture write incomplete; draw remains unsupported\n",stderr);
+    else fprintf(stderr,"[GRAPHICS] read-only observed YUY2 texture capture: bytes=%u offset=%08X width=640 height=480 pitch=1280; no format translation or draw\n",
+        FUT_GRAPHICS_OBSERVED_YUY2_BYTES,texture->offset);
+    if(written==FUT_GRAPHICS_OBSERVED_YUY2_BYTES && closed) {
+        FILE *diagnostic=fopen("graphics-lc-yuy2-combiner.txt","wb");
+        if(!diagnostic) {
+            fputs("[GRAPHICS] cannot create isolated combiner diagnostic; draw remains unsupported\n",stderr);
+        } else {
+            const FutGraphicsFragmentState *f=&state->kelvin.fragment;
+            fprintf(diagnostic,"scope=observed-lc-yuy2-read-only\n"
+                "texture format=%08X offset=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X\n"
+                "fragment valid=%X control=%08X stage_program=%08X dot_rgbmapping=%08X dirty=%d\n"
+                "final_words=%08X/%08X final_factor_valid=%X final_factor=%08X/%08X\n"
+                "color_input_valid=%02X alpha_input_valid=%02X color_output_valid=%02X alpha_output_valid=%02X\n"
+                "factor_valid=%02X/%02X\n",
+                texture->format,texture->offset,texture->image_rect,texture->control0,texture->control1,
+                texture->valid,f->valid,f->control,f->stage_program,f->dot_rgbmapping,f->dirty,
+                f->final_words[0],f->final_words[1],f->final_factor_valid,f->final_factor[0],f->final_factor[1],
+                f->color_input_valid,f->alpha_input_valid,f->color_output_valid,f->alpha_output_valid,
+                f->factor_valid[0],f->factor_valid[1]);
+            for(unsigned i=0;i<8;++i)
+                fprintf(diagnostic,"stage[%u] color_input=%08X alpha_input=%08X color_output=%08X alpha_output=%08X factor0=%08X factor1=%08X\n",
+                    i,f->color_input[i],f->alpha_input[i],f->color_output[i],f->alpha_output[i],f->factors[0][i],f->factors[1][i]);
+            char *hlsl=HeapAlloc(GetProcessHeap(),0,65536);
+            size_t hlsl_length=0;
+            int translated=hlsl && fut_fragment_program_hlsl(f,hlsl,65536,&hlsl_length);
+            fprintf(diagnostic,"hlsl_translation=%s length=%zu\n",translated?"accepted":"declined",translated?hlsl_length:0);
+            if(translated) fwrite(hlsl,1,hlsl_length,diagnostic);
+            if(hlsl) HeapFree(GetProcessHeap(),0,hlsl);
+            int diagnostic_error=ferror(diagnostic);
+            int diagnostic_close=fclose(diagnostic);
+            int diagnostic_ok=diagnostic_error==0 && diagnostic_close==0;
+            if(diagnostic_ok)
+                fputs("[GRAPHICS] read-only combiner/HLSL diagnostic captured; shader not compiled or submitted, draw remains unsupported\n",stderr);
+            else
+                fputs("[GRAPHICS] combiner diagnostic write incomplete; draw remains unsupported\n",stderr);
+        }
+    }
+    HeapFree(GetProcessHeap(),0,bytes);
 }
 
 static void native_capture_observed_lines(NativeGraphicsState *state)

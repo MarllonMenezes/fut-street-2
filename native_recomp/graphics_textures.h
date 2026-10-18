@@ -20,4 +20,11 @@ typedef enum {
  * Failed/disabled plans never modify output. DMA is the selected context. */
 FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState *state,
     const FutGraphicsDmaView *dma, FutGraphicsTexturePlan *plan);
+
+/* Passive capture for one observed YUY2 linear texture state. This reads the
+ * guest bytes transactionally and does not translate or sample the format. */
+#define FUT_GRAPHICS_OBSERVED_YUY2_BYTES 614400u
+int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
+    void *memory_context, const FutGraphicsTextureState *state,
+    const FutGraphicsDmaView *dma, uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES]);
 #endif

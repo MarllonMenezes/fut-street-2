@@ -1,4 +1,6 @@
 #include "graphics_textures.h"
+#include <stdlib.h>
+#include <string.h>
 
 FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState *state,
     const FutGraphicsDmaView *dma, FutGraphicsTexturePlan *plan)
@@ -83,4 +85,26 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
     next.address = dma->guest_address + state->offset; next.span = (uint32_t)bytes;
     *plan = next;
     return FUT_TEXTURE_READY;
+}
+
+int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
+    void *ctx,const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
+    uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES])
+{
+    const uint32_t offset=0x023F1580u;
+    uint8_t *captured;
+    if(!read || !s || !dma || !output || s->format!=0x00012429u ||
+        s->offset!=offset || s->image_rect!=0x028001E0u ||
+        s->control0!=0x4003FFC0u || s->control1!=0x05000000u || s->valid!=0x3BFu ||
+        (s->format&3u)!=1u || dma->guest_address!=0x80000000u ||
+        dma->size!=0x04000000u || (dma->guest_address&0xFC000000u)!=0x80000000u ||
+        offset>dma->size || FUT_GRAPHICS_OBSERVED_YUY2_BYTES>dma->size-offset ||
+        offset>UINT32_MAX-dma->guest_address) return 0;
+    captured=malloc(FUT_GRAPHICS_OBSERVED_YUY2_BYTES);
+    if(!captured) return 0;
+    if(!read(ctx,dma->guest_address+offset,captured,FUT_GRAPHICS_OBSERVED_YUY2_BYTES)) {
+        free(captured);return 0;
+    }
+    memcpy(output,captured,FUT_GRAPHICS_OBSERVED_YUY2_BYTES);
+    free(captured);return 1;
 }
