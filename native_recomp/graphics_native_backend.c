@@ -813,13 +813,14 @@ static void native_capture_observed_yuy2(NativeGraphicsState *state,
         } else {
             const FutGraphicsFragmentState *f=&state->kelvin.fragment;
             fprintf(diagnostic,"scope=observed-lc-yuy2-read-only\n"
-                "texture format=%08X offset=%08X image_rect=%08X control0=%08X control1=%08X valid=%03X\n"
+                "texture format=%08X offset=%08X address=%08X control0=%08X control1=%08X filter=%08X image_rect=%08X valid=%03X\n"
                 "fragment valid=%X control=%08X stage_program=%08X dot_rgbmapping=%08X dirty=%d\n"
                 "final_words=%08X/%08X final_factor_valid=%X final_factor=%08X/%08X\n"
                 "color_input_valid=%02X alpha_input_valid=%02X color_output_valid=%02X alpha_output_valid=%02X\n"
                 "factor_valid=%02X/%02X\n",
-                texture->format,texture->offset,texture->image_rect,texture->control0,texture->control1,
-                texture->valid,f->valid,f->control,f->stage_program,f->dot_rgbmapping,f->dirty,
+                texture->format,texture->offset,texture->address,texture->control0,texture->control1,
+                texture->filter,texture->image_rect,texture->valid,
+                f->valid,f->control,f->stage_program,f->dot_rgbmapping,f->dirty,
                 f->final_words[0],f->final_words[1],f->final_factor_valid,f->final_factor[0],f->final_factor[1],
                 f->color_input_valid,f->alpha_input_valid,f->color_output_valid,f->alpha_output_valid,
                 f->factor_valid[0],f->factor_valid[1]);
