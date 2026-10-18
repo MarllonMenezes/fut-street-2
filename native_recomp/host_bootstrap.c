@@ -159,7 +159,9 @@ typedef struct {
 static DWORD WINAPI graphics_snapshot_thread(void *opaque)
 {
     const GraphicsSnapshotContext *snapshot=opaque;
-    for (unsigned sample = 0; sample < 30; ++sample) {
+    const ULONGLONG started=GetTickCount64();
+    /* Cover the runner's complete 60-second ceiling, including late waits. */
+    for (unsigned sample = 0; sample < 60; ++sample) {
         uint32_t device = 0, start = 0, end = 0, submitted = 0;
         uint32_t consumer_ptr = 0, consumed = 0, channel = 0, put = 0, get = 0;
         uint32_t write_ptr = 0, fence_tag = 0, fence_end = 0;
@@ -180,8 +182,9 @@ static DWORD WINAPI graphics_snapshot_thread(void *opaque)
                 regs_valid=0;
         }
         if(regs_valid) {
-            fprintf(stderr,"[MAIN-SNAPSHOT] sample=%u eax=%08X ecx=%08X edx=%08X esp=%08X ebx=%08X esi=%08X edi=%08X ebp=%08X (read-only, non-atomic)\n",
-                sample,regs[0],regs[1],regs[2],regs[3],regs[4],regs[5],regs[6],regs[7]);
+            fprintf(stderr,"[MAIN-SNAPSHOT] sample=%u eax=%08X ecx=%08X edx=%08X esp=%08X ebx=%08X esi=%08X edi=%08X ebp=%08X elapsed_ms=%llu (read-only, non-atomic)\n",
+                sample,regs[0],regs[1],regs[2],regs[3],regs[4],regs[5],regs[6],regs[7],
+                (unsigned long long)(GetTickCount64()-started));
             if(regs[3] && regs[3]<=UINT32_MAX-64u) {
                 char line[256];size_t used=(size_t)snprintf(line,sizeof(line),"[MAIN-STACK] esp=%08X",regs[3]);
                 for(unsigned i=0;i<16;++i) {
