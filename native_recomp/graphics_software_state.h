@@ -44,6 +44,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * for only the captured 128x32 P8 state with depth test/write enabled. */
 /* RECOMP_BC2_AA2_APPROXIMATION is only the authorized BC2 1280x480 capture,
  * including exact offset, pitch, address, sampler and image rectangle. */
+/* RECOMP_YUY2_023F1580_AA2_APPROXIMATION additionally requires the separately
+ * authorized BT.601 conversion opt-in and admits only the exact 640x480 draw. */
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *state,
     const FutGraphicsKelvinState *kelvin,const FutGraphicsSurfacePlan *surface);
 #endif

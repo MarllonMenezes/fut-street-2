@@ -52,4 +52,10 @@ static inline int fut_graphics_yuy2_bt601_approximation_enabled(void)
     const char *value=getenv("RECOMP_YUY2_023F1580_BT601_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Separately authorized 2026-10-18 for only the captured YUY2 AA2 draw. */
+static inline int fut_graphics_yuy2_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_023F1580_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif

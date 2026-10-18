@@ -9,6 +9,8 @@ int main(void)
     _putenv_s("RECOMP_P8_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
     FutGraphicsSoftwareState state = {0};
     if (!fut_graphics_software_draw_ready(&state)) return 1;
     if (!fut_graphics_software_state(&state, 0x28, 0, 0, 0) || state.dxt1_noise != 1 ||
@@ -246,6 +248,56 @@ int main(void)
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_P8_128X32_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
-    puts("Software controls: independent opt-ins, exact BC1/P8/BC2 AA2 scopes and negative variants verified");
+    state=baseline;kelvin=(FutGraphicsKelvinState){0};
+    kelvin.anti_aliasing_control=0xFFFF0001;kelvin.depth_test=1;
+    kelvin.draw.depth_write=0;kelvin.compress_depth=1;kelvin.control0=0x10100001;
+    kelvin.textures[0]=(FutGraphicsTextureState){.offset=0x023F1580,.format=0x00012429,
+        .address=0x00030303,.control0=0x4003FFC0,.control1=0x05000000,
+        .filter=0x02062000,.image_rect=0x028001E0,.valid=0x3BF};
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","1");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 63;
+    _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 64;
+    FutGraphicsKelvinState yuy2=kelvin;
+    for(unsigned i=0;i<15;++i) {
+        kelvin=yuy2;surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,
+            .logical_width=640,.logical_height=480,.samples=2};
+        switch(i) {
+        case 0:kelvin.textures[0].format^=1;break;
+        case 1:kelvin.textures[0].offset++;break;
+        case 2:kelvin.textures[0].image_rect++;break;
+        case 3:kelvin.textures[0].control1++;break;
+        case 4:kelvin.textures[0].filter^=0x10000;break;
+        case 5:kelvin.textures[0].address^=1;break;
+        case 6:kelvin.textures[0].control0^=0x40;break;
+        case 7:kelvin.textures[0].valid^=1;break;
+        case 8:kelvin.draw.depth_write=1;break;
+        case 9:kelvin.depth_test=0;break;
+        case 10:kelvin.stencil_test=1;break;
+        case 11:kelvin.compress_depth=0;break;
+        case 12:kelvin.control0=0x00100001;break;
+        case 13:kelvin.textures[1].control0=0x40000000;break;
+        case 14:surface.width=640;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 65;
+    }
+    kelvin=yuy2;surface.width=640;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 66;
+    surface.width=1280;surface.logical_width=320;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 67;
+    surface.logical_width=640;kelvin.control0^=1;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 68;
+    kelvin=yuy2;_putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 69;
+    _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","1");
+    _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 70;
+    _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
+    _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    puts("Software controls: exact BC1/P8/BC2/YUY2 AA2 scopes, independent opt-ins and negative variants verified");
     return 0;
 }

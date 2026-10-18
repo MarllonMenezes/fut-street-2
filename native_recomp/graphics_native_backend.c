@@ -908,8 +908,14 @@ static int native_prepare_draw(NativeGraphicsState *state)
         if(!native_prepare_fragment(state)) return 0;
         fprintf(stderr,"[GRAPHICS] zero-RGB specialization compiled: stages=%X; no candidate texture/alpha resources remain; generic quincunx unsupported\n",candidates);
     }
-    if (!(aa2?fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
-        fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan))) {
+    int software_ready=aa2?
+        fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
+        fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan);
+    if(aa2 && state->kelvin.textures[0].format==0x00012429u &&
+        fut_graphics_yuy2_aa2_approximation_enabled() &&
+        fut_graphics_yuy2_bt601_approximation_enabled() && state->surfaces.format!=0x00001128u)
+        software_ready=0;
+    if (!software_ready) {
         fprintf(stderr,"[GRAPHICS] original draw blocked: software graphics controls outside restricted translated domain; noise_valid=%u dxt1_noise=%08X RDI=%08X:%08X,%08X:%08X pgraph_registers_valid=%X reg400094=%08X reg400B80=%08X\n",
             state->software.noise_valid,state->software.dxt1_noise,state->software.rdi_index[0],state->software.rdi_value[0],
             state->software.rdi_index[1],state->software.rdi_value[1],state->software.register_valid,
@@ -943,6 +949,10 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x06610E29u &&
         fut_graphics_bc2_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_BC2_AA2_APPROXIMATION: standard BC2 decode; exact 1280x480 offset/pitch and 640x480 AA2 captured state; BC2 filtering, compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
+    if(aa2 && state->kelvin.textures[0].format==0x00012429u &&
+        fut_graphics_yuy2_aa2_approximation_enabled() &&
+        fut_graphics_yuy2_bt601_approximation_enabled())
+        fputs("[GRAPHICS] AUTHORIZED_YUY2_AA2_APPROXIMATION: exact captured 640x480 state using existing host AA2 mapping and BT.601 candidate; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",stderr);
     if(state->software.noise_valid || state->software.register_valid) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: observed selector8/9 baseline treated as default; no NV2A equivalence claimed\n":
         "[GRAPHICS] recognized selector-8/9 controls admitted only in the restricted single-sample/no-depth/no-stencil domain; no NV2A equivalence claimed\n");
