@@ -26,8 +26,8 @@ HRESULT fut_native_draw_immediate_aa2(FutNativeImmediate *native,FutGraphicsImme
     ID3D11Device *device,ID3D11DeviceContext *context,
     ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
     FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int unit_w_verified);
-/* User-authorized approximation for only the captured 32-vertex/16-segment
- * AA2 case. D3D11 LINELIST rasterization is not claimed equivalent to NV2A. */
+/* Separate opt-ins for captured 32/8-endpoint AA2 line packets.
+ * D3D11 LINELIST rasterization is not claimed equivalent to NV2A. */
 HRESULT fut_native_draw_immediate_aa2_lines(FutNativeImmediate *native,FutGraphicsImmediate *batch,
     FutNativeSurfaces *surfaces,FutNativePipeline *pipeline,
     const FutGraphicsKelvinState *state,const FutGraphicsSoftwareState *software,

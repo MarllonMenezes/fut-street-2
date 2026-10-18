@@ -14,7 +14,7 @@ HRESULT fut_native_immediate_upload(FutNativeImmediate *native,ID3D11Device *dev
 {
     if(!native || !device || !context || !bytecode || !b || b->active || !b->ready) return E_INVALIDARG;
     if(b->primitive==2) {
-        if(!fut_graphics_lines_16segment_aa2_approximation_enabled() || b->count!=32 || b->input_kind!=4)
+        if(!fut_graphics_lines_aa2_count_enabled(b->count) || b->input_kind!=4)
             return E_INVALIDARG;
     } else if(b->primitive!=5 || !b->count || b->count>FUT_IMMEDIATE_DRAW_CAPACITY || b->count%3)
         return E_INVALIDARG;
@@ -48,7 +48,7 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
     DWORD timeout_ms,HANDLE stop_event)
 {
     if(!native || !native->buffer || !native->layout || !native->count ||
-        (native->primitive==2 ? (native->count!=32 || !fut_graphics_lines_16segment_aa2_approximation_enabled()) :
+        (native->primitive==2 ? !fut_graphics_lines_aa2_count_enabled(native->count) :
             (native->primitive!=5 || native->count>FUT_IMMEDIATE_DRAW_CAPACITY || native->count%3)) || !device || !context || !shader || !bytecode ||
         !completion || !completion->buffer || !completion->completion || completion->context!=context || !positions || capacity<native->count ||
         !timeout_ms || timeout_ms>2000) return E_INVALIDARG;
@@ -111,7 +111,7 @@ done:
 unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
 {
     if(!positions || !count || count>FUT_IMMEDIATE_DRAW_CAPACITY ||
-        (count%3 && !(count==32 && fut_graphics_lines_16segment_aa2_approximation_enabled()))) return 0;
+        (count%3 && !fut_graphics_lines_aa2_count_enabled(count))) return 0;
     unsigned mask=15;
     for(unsigned i=0;i<count;++i) {
         const FutNativePosition *p=&positions[i];

@@ -1158,12 +1158,13 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             return 1;
         }
         if(subchannel==0 && method==0x17FCu && value==2u) {
-            if(!fut_graphics_lines_16segment_aa2_approximation_enabled() ||
+            if((!fut_graphics_lines_16segment_aa2_approximation_enabled() &&
+                !fut_graphics_lines_4segment_aa2_approximation_enabled()) ||
                 state->immediate.active || state->immediate.ready ||
                 !fut_graphics_vertex_array_begin_observed_lines(&state->vertex_array)) {
-                fputs("[GRAPHICS] observed 16-segment LINES begin refused; exact opt-in and idle state required\n",stderr);return 0;
+                fputs("[GRAPHICS] observed LINES begin refused; exact opt-in and idle state required\n",stderr);return 0;
             }
-            fputs("[GRAPHICS] authorized exact 16-segment AA2 LINELIST experiment began; D3D11 coverage is approximate\n",stderr);
+            fputs("[GRAPHICS] authorized captured AA2 LINELIST experiment began; endpoint count checked at END; D3D11 coverage is approximate\n",stderr);
             return 1;
         }
         if(subchannel==0 && method==0x1818u && state->vertex_array.active) {
@@ -1190,7 +1191,8 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     ++count;if(state->kelvin.program[first+count-1][3]&1u) break;
                 }
                 uint16_t required=0;
-                int built=fut_vertex_program_input_mask(state->kelvin.program+first,count,&required);
+                int built=fut_graphics_lines_aa2_count_enabled(state->vertex_array.count) &&
+                    fut_vertex_program_input_mask(state->kelvin.program+first,count,&required);
                 FutGraphicsDmaView view_a,view_b;const unsigned refs=(1u<<7)|(1u<<8);
                 int has_refs=(state->bindings.reference_masks[0]&refs)==refs;
                 int has_a=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][7],&view_a);
@@ -1216,7 +1218,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     fprintf(stderr,"[GRAPHICS] authorized LINES LINELIST draw/completion refused: HRESULT=%08lX; no completion claimed\n",hr);return 0;
                 }
                 if(!fut_graphics_vertex_array_consume(&state->vertex_array)) return 0;
-                fprintf(stderr,"[GRAPHICS] AUTHORIZED_EXACT_16SEGMENT_AA2_LINELIST_APPROXIMATION: vertices=%u IA_vertices=%llu PS_invocations=%llu guest_surface_writeback=complete; D3D11 line coverage/depth compression not NV2A-validated; no present/VBlank\n",
+                fprintf(stderr,"[GRAPHICS] AUTHORIZED_CAPTURED_AA2_LINELIST_APPROXIMATION: vertices=%u IA_vertices=%llu PS_invocations=%llu guest_surface_writeback=complete; D3D11 line coverage/depth compression not NV2A-validated; no present/VBlank\n",
                     drawn,(unsigned long long)state->native_immediate.ia_vertices,
                     (unsigned long long)state->native_immediate.ps_invocations);
                 return native_preview_original_draw(state);

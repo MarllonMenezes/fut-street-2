@@ -24,12 +24,16 @@ param(
     [switch]$Yuy2SecondAa2Approximation,
     [switch]$CaptureLcImage,
     [switch]$Lines16segmentAa2Approximation,
+    [switch]$Lines4segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
     [switch]$AudioEffectsBypass
 )
 
 $ErrorActionPreference = 'Stop'
+if ($Lines4segmentAa2Approximation -and -not $Aa2Approximation) {
+    throw 'Four-segment LINES requires -Aa2Approximation.'
+}
 if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Bc2C9df00Aa2Approximation -or $Bc2Aa2FamilyApproximation -or $P8Aa2FamilyApproximation -or $Yuy2Bt601Approximation -or $Yuy2SecondBt601Approximation) -and -not $Aa2Approximation) {
     throw 'Restricted texture experiments require -Aa2Approximation.'
 }
@@ -80,6 +84,7 @@ $variables = @{
     RECOMP_YUY2_02487680_AA2_APPROXIMATION = '0'
     RECOMP_CAPTURE_LC_IMAGE = '0'
     RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '0'
+    RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
@@ -103,6 +108,7 @@ if ($Yuy2SecondBt601Approximation) { $variables.RECOMP_YUY2_02487680_BT601_APPRO
 if ($Yuy2SecondAa2Approximation) { $variables.RECOMP_YUY2_02487680_AA2_APPROXIMATION = '1' }
 if ($CaptureLcImage) { $variables.RECOMP_CAPTURE_LC_IMAGE = '1' }
 if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '1' }
+if ($Lines4segmentAa2Approximation) { $variables.RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
 $previous = @{}
@@ -164,6 +170,7 @@ try {
         yuy2_second_aa2_approximation = [bool]$Yuy2SecondAa2Approximation
         capture_lc_image = [bool]$CaptureLcImage
         lines_16segment_aa2_approximation = [bool]$Lines16segmentAa2Approximation
+        lines_4segment_aa2_approximation = [bool]$Lines4segmentAa2Approximation
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass

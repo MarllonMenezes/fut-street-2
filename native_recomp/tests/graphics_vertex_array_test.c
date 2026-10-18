@@ -8,6 +8,10 @@ static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
     (void)ctx;
     ++read_calls;
     if(fail_read_at && read_calls==fail_read_at) return 0;
+    if(address>=0x801688B4u && address-0x801688B4u<24 &&
+        size<=24-(address-0x801688B4u)) {
+        memcpy(data,memory+(address-0x801688B4u),size);return 1;
+    }
     if(address>=0x801689D4u && address-0x801689D4u<=sizeof(memory) &&
         size<=sizeof(memory)-(address-0x801689D4u)) {
         memcpy(data,memory+(address-0x801689D4u),size);return 1;
@@ -135,5 +139,30 @@ int main(void)
         &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
     CHECK(memcmp(&out,&line_before,sizeof(out))==0);
     fail_read_at=0;
+    fut_graphics_vertex_array_reset(&a);
+    CHECK(fut_graphics_vertex_array_begin_observed_lines(&a));
+    const uint32_t rectangle[4]={0x00010000u,0x00020001u,0x00030002u,0x00000003u};
+    for(unsigned i=0;i<4;++i) CHECK(fut_graphics_vertex_array_indices(&a,rectangle[i]));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    line_offsets[0]=0x001688B4u;
+    CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(out.count==8 && out.vertices[6][0][0]==30 && out.vertices[7][0][0]==0);
+    line_before=out;
+    a.indices[7]=1;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));a.indices[7]=0;
+    line_offsets[0]=0x001689D4u;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    line_offsets[0]=0x001688B4u;fail_read_at=4;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));fail_read_at=0;
+    for(unsigned n=0;n<=32;n+=2) if(n!=8 && n!=32) {
+        a.active=1;a.ready=0;a.count=n;
+        CHECK(!fut_graphics_vertex_array_end(&a));
+    }
     return 0;
 }

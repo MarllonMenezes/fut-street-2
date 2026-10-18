@@ -64,6 +64,17 @@ static inline int fut_graphics_lines_16segment_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized under the 2026-10-18 continuation, only captured offset1688B4. */
+static inline int fut_graphics_lines_4segment_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
+static inline int fut_graphics_lines_aa2_count_enabled(unsigned count)
+{
+    return (count==32 && fut_graphics_lines_16segment_aa2_approximation_enabled()) ||
+        (count==8 && fut_graphics_lines_4segment_aa2_approximation_enabled());
+}
 /* Authorized 2026-10-18 for only the captured LC_IMAGE YUY2 640x480 draw.
  * BT.601 is a host approximation; it is not measured NV2A fetch behavior. */
 static inline int fut_graphics_yuy2_bt601_approximation_enabled(void)

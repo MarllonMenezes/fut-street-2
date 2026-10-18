@@ -39,7 +39,7 @@ int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
 {
     if(!a || !a->active || a->ready) return 0;
     if(a->primitive==2) {
-        if(a->input_mode!=1 || a->count!=32u) return 0;
+        if(a->input_mode!=1 || (a->count!=32u && a->count!=8u)) return 0;
         a->active=0;a->ready=1;return 1;
     }
     if(a->primitive!=6) return 0;
@@ -167,17 +167,18 @@ int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray 
 {
     static const uint16_t expected[32]={0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,
         8,9,9,10,10,11,11,12,12,13,13,14,14,15,15,0};
+    static const uint16_t rectangle[8]={0,1,1,2,2,3,3,0};
     FutGraphicsImmediate next;
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
         !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=2 ||
-        a->input_mode!=1 || a->count!=32u || a->inline_count || formats[0]!=0x635u ||
-        offsets[0]!=0x001689D4u || required!=1u ||
+        a->input_mode!=1 || (a->count!=32u && a->count!=8u) || a->inline_count || formats[0]!=0x635u ||
+        offsets[0]!=(a->count==8u?0x001688B4u:0x001689D4u) || required!=1u ||
         view_a->guest_address!=0x80000000u || view_a->size!=0x04000000u ||
         view_a->guest_address>UINT32_MAX-view_a->size || attribute_valid[0]!=15) return 0;
-    for(unsigned i=0;i<32;++i) if(a->indices[i]!=expected[i]) return 0;
+    for(unsigned i=0;i<a->count;++i) if(a->indices[i]!=(a->count==8u?rectangle[i]:expected[i])) return 0;
     for(unsigned slot=1;slot<16;++slot) if(formats[slot]!=0x602u) return 0;
     memset(&next,0,sizeof(next));
-    for(unsigned i=0;i<32;++i) {
+    for(unsigned i=0;i<a->count;++i) {
         uint8_t raw[6];uint64_t rel=(uint64_t)offsets[0]+(uint64_t)a->indices[i]*6u;
         if(rel>view_a->size || view_a->size-rel<sizeof(raw) ||
             rel>UINT32_MAX-view_a->guest_address ||
@@ -192,7 +193,7 @@ int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray 
         for(unsigned slot=1;slot<16;++slot) if(attribute_valid[slot]==15)
             next.defined[i]|=(uint16_t)(1u<<slot);
     }
-    next.count=32;next.primitive=2;next.ready=1;next.input_kind=4;
+    next.count=a->count;next.primitive=2;next.ready=1;next.input_kind=4;
     *out=next;
     return 1;
 }

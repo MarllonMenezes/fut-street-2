@@ -42,8 +42,8 @@ static HRESULT draw_immediate(FutNativeImmediate *native,FutGraphicsImmediate *b
         !surfaces->depth_target || batch->active || !batch->ready || batch->pending_x ||
         native->count!=batch->count || native->primitive!=batch->primitive) return E_INVALIDARG;
     if(line_list) {
-        if(!aa2 || !fut_graphics_lines_16segment_aa2_approximation_enabled() ||
-            batch->primitive!=2 || batch->count!=32 || batch->input_kind!=4) return E_INVALIDARG;
+        if(!aa2 || !fut_graphics_lines_aa2_count_enabled(batch->count) ||
+            batch->primitive!=2 || batch->input_kind!=4) return E_INVALIDARG;
     } else if(batch->primitive!=5 || !batch->count ||
         batch->count>FUT_IMMEDIATE_DRAW_CAPACITY || batch->count%3) return E_INVALIDARG;
     if(native->submitted || surfaces->gpu_dirty) return E_PENDING;
@@ -136,7 +136,7 @@ HRESULT fut_native_draw_immediate_aa2_lines(FutNativeImmediate *native,FutGraphi
     ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
     FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int unit_w_verified)
 {
-    if(unit_w_verified!=1 || !fut_graphics_lines_16segment_aa2_approximation_enabled()) return E_NOTIMPL;
+    if(unit_w_verified!=1 || !batch || !fut_graphics_lines_aa2_count_enabled(batch->count)) return E_NOTIMPL;
     return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
         vertex,pixel,completion,read,write,memory,stop,1,1);
 }

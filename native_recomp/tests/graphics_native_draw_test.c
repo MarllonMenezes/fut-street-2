@@ -25,8 +25,7 @@ static int write_memory(void *opaque,uint32_t address,const void *data,size_t si
 {
     Memory *m=opaque;++m->writes;
     unsigned supported_count=m->batch->count==3 ||
-        (m->batch->count==32 && m->batch->primitive==2 &&
-            fut_graphics_lines_16segment_aa2_approximation_enabled());
+        (m->batch->primitive==2 && fut_graphics_lines_aa2_count_enabled(m->batch->count));
     if(!m->batch->ready || !supported_count || !m->native->submitted) m->bad_order=1;
     if(address==m->fail_address || size>96) return 0;
     if(address==0x80001000) memcpy(m->color,data,size);
@@ -188,6 +187,22 @@ int main(void)
     D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
     ID3D11DeviceContext_IAGetPrimitiveTopology(context,&topology);
     CHECK(topology==D3D11_PRIMITIVE_TOPOLOGY_LINELIST,52);
+    batch.ready=1;batch.count=8;batch.primitive=2;batch.input_kind=4;
+    _putenv_s("RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION","0");
+    CHECK(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)==E_INVALIDARG,53);
+    _putenv_s("RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION","true");
+    CHECK(!fut_graphics_lines_aa2_count_enabled(8),54);
+    _putenv_s("RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION","1");
+    _putenv_s("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION","0");
+    CHECK(fut_graphics_lines_aa2_count_enabled(8) && !fut_graphics_lines_aa2_count_enabled(32) &&
+        !fut_graphics_lines_aa2_count_enabled(6),55);
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,aa_vs,&batch,1)),56);
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&surfaces,device,&aa_plan,read_memory,&m)),57);
+    CHECK(SUCCEEDED(AA_LINES(1)) && !batch.ready && !native.submitted &&
+        !surfaces.gpu_dirty && m.writes==7 && !m.bad_order && native.ia_vertices==16 && native.ps_invocations>0,58);
+    /* Preserve the write-count expectations of the subsequent failure case. */
+    m.writes=5;
+    _putenv_s("RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION","0");
 #undef AA_LINES
     ID3D11Buffer *pass_bound=NULL;ID3D11DeviceContext_PSGetConstantBuffers(context,4,1,&pass_bound);
     CHECK(!pass_bound,42);

@@ -30,7 +30,7 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, const uint32_t formats[16],
     const float attributes[16][4], const uint8_t attribute_valid[16],
     uint16_t required_mask);
-/* Expands only the captured 16-segment closed line-list into 32 vertices. */
+/* Expands only captured 16/4-segment line lists with exact indices/offsets. */
 int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, FutGraphicsMemoryRead read, void *memory_context,
     const FutGraphicsDmaView *view_a, const FutGraphicsDmaView *view_b,
