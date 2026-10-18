@@ -9,7 +9,9 @@ typedef enum {
     FUT_GRAPHICS_TRUNCATED,
     FUT_GRAPHICS_UNSUPPORTED_CONTROL,
     FUT_GRAPHICS_INVALID_METHOD_RANGE,
-    FUT_GRAPHICS_HANDLER_REJECTED
+    FUT_GRAPHICS_HANDLER_REJECTED,
+    FUT_GRAPHICS_READ_FAILED,
+    FUT_GRAPHICS_PACKET_CHANGED
 } FutGraphicsDecodeStatus;
 
 typedef struct {
@@ -28,6 +30,15 @@ typedef int (*FutGraphicsMethodReceiver)(void *context, unsigned subchannel,
     uint32_t method, uint32_t value, size_t word_offset);
 
 FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
+    FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result);
+
+/* Fetch each packet when reached, so CPU patches made during earlier GPU
+ * work remain visible. Reads are bounded by size; a changed header fails
+ * before dispatch. This does not establish GPU completion or atomicity. */
+typedef int (*FutGraphicsCommandReader)(void *context, size_t offset,
+    uint8_t *bytes, size_t size);
+FutGraphicsDecodeStatus fut_graphics_decode_live(size_t size,
+    FutGraphicsCommandReader reader, void *reader_context,
     FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result);
 
 /* An initial cursor may be established only when the title's queue is empty,

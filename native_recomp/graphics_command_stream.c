@@ -15,14 +15,15 @@ static uint32_t read_le32(const uint8_t *bytes)
            ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
 }
 
-FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
+FutGraphicsDecodeStatus fut_graphics_decode_live(size_t size,
+    FutGraphicsCommandReader reader, void *reader_context,
     FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result)
 {
     FutGraphicsDecodeResult local;
     if (!result)
         result = &local;
     memset(result, 0, sizeof(*result));
-    if ((!bytes && size) || !receiver)
+    if (!reader || !receiver)
         return FUT_GRAPHICS_HANDLER_REJECTED;
 
     size_t cursor = 0;
@@ -30,7 +31,10 @@ FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
         result->blocked_offset = cursor;
         if (size - cursor < 4)
             return FUT_GRAPHICS_TRUNCATED;
-        const uint32_t header = read_le32(bytes + cursor);
+        uint8_t packet[8192]; /* Header plus at most 2047 parameters. */
+        if (!reader(reader_context, cursor, packet, 4))
+            return FUT_GRAPHICS_READ_FAILED;
+        const uint32_t header = read_le32(packet);
         const uint32_t kind = header & 0xE0030003u;
         result->blocked_header = header;
         /* Incrementing/non-incrementing packets are the forms observed in
@@ -45,11 +49,15 @@ FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
         if (kind == 0u && count && method + (count - 1u) * 4u > 0x1FFCu)
             return FUT_GRAPHICS_INVALID_METHOD_RANGE;
         const size_t end = cursor + 4 + (size_t)count * 4;
+        if (!reader(reader_context, cursor, packet, end - cursor))
+            return FUT_GRAPHICS_READ_FAILED;
+        if (read_le32(packet) != header)
+            return FUT_GRAPHICS_PACKET_CHANGED;
         for (uint32_t i = 0; i < count; ++i) {
             const size_t offset = cursor + 4 + (size_t)i * 4;
             const uint32_t target = method + (kind == 0u ? i * 4u : 0u);
             if (!receiver(context, subchannel, target,
-                    read_le32(bytes + offset), offset)) {
+                    read_le32(packet + 4 + (size_t)i * 4), offset)) {
                 result->blocked_offset = offset;
                 return FUT_GRAPHICS_HANDLER_REJECTED;
             }
@@ -62,4 +70,21 @@ FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
     result->blocked_offset = size;
     result->blocked_header = 0;
     return FUT_GRAPHICS_DECODED;
+}
+
+static int snapshot_read(void *context, size_t offset, uint8_t *bytes, size_t size)
+{
+    memcpy(bytes, (const uint8_t *)context + offset, size);
+    return 1;
+}
+
+FutGraphicsDecodeStatus fut_graphics_decode(const uint8_t *bytes, size_t size,
+    FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result)
+{
+    if (!bytes && size) {
+        if (result) memset(result, 0, sizeof(*result));
+        return FUT_GRAPHICS_HANDLER_REJECTED;
+    }
+    return fut_graphics_decode_live(size, snapshot_read, (void *)bytes,
+        receiver, context, result);
 }

@@ -1451,6 +1451,42 @@ static int native_traced_finish(NativeGraphicsState *state)
     return result;
 }
 
+static void native_snapshot_command_changes(uint32_t start,const uint8_t *captured,size_t size)
+{
+    const char *enabled=getenv("RECOMP_GRAPHICS_SNAPSHOT");
+    if(!enabled || strcmp(enabled,"1") || size>65536u || (size&3u)) return;
+    uint8_t live[65536];
+    if(!read_guest(start,live,size)) return;
+    unsigned changed=0;
+    for(size_t offset=0;offset<size;offset+=4) {
+        uint32_t before,after;
+        memcpy(&before,captured+offset,4);memcpy(&after,live+offset,4);
+        if(before==after) continue;
+        if(changed<16) fprintf(stderr,"[GRAPHICS-COMMAND-OBSERVATION] address=%08X snapshot=%08X live=%08X (read-only, non-atomic)\n",
+            start+(uint32_t)offset,before,after);
+        ++changed;
+    }
+    if(!changed) return;
+    fprintf(stderr,"[GRAPHICS-COMMAND-OBSERVATION] batch=%08X bytes=%zu changed_words=%u; prefetch comparison only, execution fetched packets live\n",start,size,changed);
+    char path[80];
+    snprintf(path,sizeof(path),"graphics-mutated-%08X-snapshot.bin",start);
+    FILE *file=fopen(path,"wb");
+    if(file) {fwrite(captured,1,size,file);fclose(file);}
+    snprintf(path,sizeof(path),"graphics-mutated-%08X-live.bin",start);
+    file=fopen(path,"wb");
+    if(file) {fwrite(live,1,size,file);fclose(file);}
+}
+
+typedef struct { uint32_t start; size_t size; } NativeCommandRange;
+
+static int native_command_read(void *context, size_t offset, uint8_t *bytes, size_t size)
+{
+    const NativeCommandRange *range = context;
+    if (offset > range->size || size > range->size - offset)
+        return 0;
+    return read_guest(range->start + (uint32_t)offset, bytes, size);
+}
+
 static DWORD WINAPI native_worker(void *unused)
 {
     (void)unused;
@@ -1533,7 +1569,8 @@ static DWORD WINAPI native_worker(void *unused)
         if (size > sizeof(bytes) || !read_guest(cursor, bytes, size))
             fail_backend("submission capture exceeds native decoder bounds");
         FutGraphicsDecodeResult decoded;
-        FutGraphicsDecodeStatus status = fut_graphics_decode(bytes, size,
+        NativeCommandRange range = {cursor, size};
+        FutGraphicsDecodeStatus status = fut_graphics_decode_live(size, native_command_read, &range,
             native_traced_method, &state, &decoded);
         if (status != FUT_GRAPHICS_DECODED) {
             FILE *capture = fopen("graphics-rejected.bin", "wb");
@@ -1543,7 +1580,10 @@ static DWORD WINAPI native_worker(void *unused)
                     cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size);
             fail_backend("implement the reported native graphics method before continuing");
         }
-        if (!native_traced_finish(&state) || !write32(channel + 0x44u, put))
+        if (!native_traced_finish(&state))
+            fail_backend("native completion failed");
+        native_snapshot_command_changes(cursor,bytes,size);
+        if (!write32(channel + 0x44u, put))
             fail_backend("native completion or submission cursor update failed");
         fprintf(stderr, "[GRAPHICS] submission completed: start=%08X end=%08X methods=%zu\n",
                 cursor, submitted, decoded.methods);

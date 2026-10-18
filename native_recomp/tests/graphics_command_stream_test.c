@@ -38,6 +38,75 @@ static int inspect(void *context, unsigned channel, uint32_t method,
     return 1; /* Decoding a supplied capture, not executing its methods. */
 }
 
+typedef struct {
+    uint8_t bytes[24];
+    Recording record;
+    unsigned reads, fail_read, change_header;
+} LiveCommands;
+
+static int live_read(void *context, size_t offset, uint8_t *bytes, size_t size)
+{
+    LiveCommands *live = context;
+    if (++live->reads == live->fail_read || offset > sizeof(live->bytes) ||
+        size > sizeof(live->bytes) - offset) return 0;
+    memcpy(bytes, live->bytes + offset, size);
+    if (live->change_header && live->reads == 2) bytes[0] ^= 4;
+    return 1;
+}
+
+static int patch_later_packets(void *context, unsigned channel, uint32_t method,
+                              uint32_t value, size_t offset)
+{
+    LiveCommands *live = context;
+    if (!receive(&live->record, channel, method, value, offset)) return 0;
+    if (live->record.count == 1) {
+        /* CPU arms the observed WAIT_IDLE / software notification5 packets
+         * while an earlier method executes. Header and parameter both change. */
+        live->bytes[8] = 0x10; live->bytes[9] = 0x01;
+        live->bytes[16] = 0x00; live->bytes[17] = 0x01;
+        live->bytes[20] = 5;
+    }
+    return 1;
+}
+
+static int test_live(void)
+{
+    const uint8_t initial[24] = {
+        0x70,0x1D,4,0, 0x73,0,0,0,
+        0x90,0x1D,4,0, 0,0,0,0,
+        0x90,0x1D,4,0, 0,0,0,0
+    };
+    LiveCommands live = {.record.reject_at=99};
+    memcpy(live.bytes, initial, sizeof(initial));
+    FutGraphicsDecodeResult result;
+    if (fut_graphics_decode_live(sizeof(initial), live_read, &live,
+            patch_later_packets, &live, &result) != FUT_GRAPHICS_DECODED ||
+        result.packets != 3 || live.record.count != 3 ||
+        live.record.methods[1] != 0x110 || live.record.methods[2] != 0x100 ||
+        live.record.values[2] != 5) return 0;
+    Recording snapshot = {.reject_at=99};
+    if (fut_graphics_decode(initial,sizeof(initial),receive,&snapshot,&result) != FUT_GRAPHICS_DECODED ||
+        snapshot.methods[1] != 0x1D90 || snapshot.methods[2] != 0x1D90 || snapshot.values[2]) return 0;
+    for (unsigned fail=1; fail<=6; ++fail) {
+        memset(&live,0,sizeof(live)); memcpy(live.bytes,initial,sizeof(initial));
+        live.record.reject_at=99; live.fail_read=fail;
+        if (fut_graphics_decode_live(sizeof(initial),live_read,&live,receive,&live.record,&result)
+                != FUT_GRAPHICS_READ_FAILED || result.decoded_bytes != ((fail-1)/2)*8 ||
+            live.record.count != (fail-1)/2) return 0;
+    }
+    memset(&live,0,sizeof(live)); memcpy(live.bytes,initial,sizeof(initial));
+    live.record.reject_at=99; live.change_header=1;
+    if (fut_graphics_decode_live(24,live_read,&live,receive,&live.record,&result)
+            != FUT_GRAPHICS_PACKET_CHANGED || live.record.count || result.decoded_bytes) return 0;
+    live.change_header=0; live.reads=0;
+    if (fut_graphics_decode_live(7,live_read,&live,receive,&live.record,&result)
+            != FUT_GRAPHICS_TRUNCATED || live.record.count || live.reads != 1) return 0;
+    live.reads=0; live.record.reject_at=1;
+    if (fut_graphics_decode_live(24,live_read,&live,receive,&live.record,&result)
+            != FUT_GRAPHICS_HANDLER_REJECTED || result.decoded_bytes != 8 || result.blocked_offset != 12) return 0;
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     if (argc == 2) {
@@ -107,6 +176,7 @@ int main(int argc, char **argv)
         fut_graphics_empty_queue(base, base, base, put) ||
         fut_graphics_empty_queue(base + 1, limit, base + 1, put + 1) ||
         fut_graphics_empty_queue(base, 0x84000004u, base, put)) return 8;
-    puts("graphics command decoding, rejection and input preservation OK");
+    if (!test_live()) return 9;
+    puts("graphics command decoding, live CPU patches, rejection and input preservation OK");
     return 0;
 }
