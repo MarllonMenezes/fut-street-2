@@ -13,14 +13,17 @@ param(
     [switch]$Aa2Approximation,
     [switch]$Dxt1NoiseApproximation,
     [switch]$P8Aa2Approximation,
+    [switch]$P8_128x32Aa2Approximation,
     [switch]$Bc2Aa2Approximation,
+    [switch]$Yuy2Bt601Approximation,
+    [switch]$Lines16segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
     [switch]$AudioEffectsBypass
 )
 
 $ErrorActionPreference = 'Stop'
-if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $Bc2Aa2Approximation) -and -not $Aa2Approximation) {
+if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Yuy2Bt601Approximation) -and -not $Aa2Approximation) {
     throw 'Restricted texture experiments require -Aa2Approximation.'
 }
 foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory)) {
@@ -53,7 +56,10 @@ $variables = @{
     RECOMP_AA2_APPROXIMATION = '0'
     RECOMP_DXT1_NOISE_APPROXIMATION = '0'
     RECOMP_P8_AA2_APPROXIMATION = '0'
+    RECOMP_P8_128X32_AA2_APPROXIMATION = '0'
     RECOMP_BC2_AA2_APPROXIMATION = '0'
+    RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '0'
+    RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
@@ -66,7 +72,10 @@ if ($GraphicsTrace) { $variables.RECOMP_GRAPHICS_TRACE = '1' }
 if ($Aa2Approximation) { $variables.RECOMP_AA2_APPROXIMATION = '1' }
 if ($Dxt1NoiseApproximation) { $variables.RECOMP_DXT1_NOISE_APPROXIMATION = '1' }
 if ($P8Aa2Approximation) { $variables.RECOMP_P8_AA2_APPROXIMATION = '1' }
+if ($P8_128x32Aa2Approximation) { $variables.RECOMP_P8_128X32_AA2_APPROXIMATION = '1' }
 if ($Bc2Aa2Approximation) { $variables.RECOMP_BC2_AA2_APPROXIMATION = '1' }
+if ($Yuy2Bt601Approximation) { $variables.RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '1' }
+if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
 $previous = @{}
@@ -117,7 +126,10 @@ try {
         aa2_approximation = [bool]$Aa2Approximation
         dxt1_noise_approximation = [bool]$Dxt1NoiseApproximation
         p8_aa2_approximation = [bool]$P8Aa2Approximation
+        p8_128x32_aa2_approximation = [bool]$P8_128x32Aa2Approximation
         bc2_aa2_approximation = [bool]$Bc2Aa2Approximation
+        yuy2_bt601_approximation = [bool]$Yuy2Bt601Approximation
+        lines_16segment_aa2_approximation = [bool]$Lines16segmentAa2Approximation
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass

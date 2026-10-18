@@ -108,3 +108,48 @@ int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
     memcpy(output,captured,FUT_GRAPHICS_OBSERVED_YUY2_BYTES);
     free(captured);return 1;
 }
+
+int fut_graphics_texture_plan_observed_yuy2_approximation(
+    const FutGraphicsTextureState *s,const FutGraphicsDmaView *dma,
+    FutGraphicsTexturePlan *plan)
+{
+    if(!s || !dma || !plan || s->format!=0x00012429u || s->offset!=0x023F1580u ||
+        s->image_rect!=0x028001E0u || s->control0!=0x4003FFC0u ||
+        s->control1!=0x05000000u || s->valid!=0x3BFu ||
+        dma->guest_address!=0x80000000u || dma->size!=0x04000000u)
+        return 0;
+    FutGraphicsTexturePlan next={0};
+    next.address=dma->guest_address+s->offset;next.span=FUT_GRAPHICS_OBSERVED_YUY2_BYTES;
+    next.pitch=1280;next.width=640;next.height=480;next.bytes_per_pixel=2;
+    next.dma_context=1;next.storage=4;
+    *plan=next;return 1;
+}
+
+static uint8_t yuy2_clip(int value)
+{
+    return (uint8_t)(value<0?0:value>255?255:value);
+}
+
+int fut_graphics_texture_yuy2_bt601_to_bgra(const uint8_t *source,size_t source_size,
+    uint8_t *output,size_t output_size)
+{
+    const size_t input_bytes=FUT_GRAPHICS_OBSERVED_YUY2_BYTES;
+    const size_t decoded_bytes=640u*480u*4u;
+    if(!source || !output || source_size!=input_bytes || output_size!=decoded_bytes)
+        return 0;
+    uint8_t *decoded=malloc(decoded_bytes);
+    if(!decoded) return 0;
+    for(size_t i=0,j=0;i<input_bytes;i+=4,j+=8) {
+        int y0=(int)source[i]-16,d=(int)source[i+1]-128;
+        int y1=(int)source[i+2]-16,e=(int)source[i+3]-128;
+        int c0=y0<0?0:y0,c1=y1<0?0:y1;
+        uint8_t *p0=decoded+j,*p1=decoded+j+4;
+        p0[0]=yuy2_clip((298*c0+516*d+128)>>8);
+        p0[1]=yuy2_clip((298*c0-100*d-208*e+128)>>8);
+        p0[2]=yuy2_clip((298*c0+409*e+128)>>8);p0[3]=255;
+        p1[0]=yuy2_clip((298*c1+516*d+128)>>8);
+        p1[1]=yuy2_clip((298*c1-100*d-208*e+128)>>8);
+        p1[2]=yuy2_clip((298*c1+409*e+128)>>8);p1[3]=255;
+    }
+    memcpy(output,decoded,decoded_bytes);free(decoded);return 1;
+}

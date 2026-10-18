@@ -45,4 +45,11 @@ static inline int fut_graphics_lines_16segment_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized 2026-10-18 for only the captured LC_IMAGE YUY2 640x480 draw.
+ * BT.601 is a host approximation; it is not measured NV2A fetch behavior. */
+static inline int fut_graphics_yuy2_bt601_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_YUY2_023F1580_BT601_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 #endif

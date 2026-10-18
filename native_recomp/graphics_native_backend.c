@@ -550,6 +550,15 @@ static int native_prepare_textures(NativeGraphicsState *state)
         }
         FutGraphicsTexturePlan plan;
         FutGraphicsTextureStatus status=fut_graphics_texture_plan(texture,&dma,&plan);
+        if(status!=FUT_TEXTURE_READY && stage==0 &&
+            fut_graphics_yuy2_bt601_approximation_enabled() &&
+            state->native_surfaces.plan.samples==2 &&
+            state->native_surfaces.plan.logical_width==640 &&
+            state->native_surfaces.plan.logical_height==480 &&
+            fut_graphics_texture_plan_observed_yuy2_approximation(texture,&dma,&plan)) {
+            status=FUT_TEXTURE_READY;
+            fputs("[GRAPHICS] AUTHORIZED_YUY2_BT601_APPROXIMATION: exact captured LC_IMAGE 640x480 state; limited-range BT.601 to BGRA8; matrix/range/rounding not NV2A-verified\n",stderr);
+        }
         if (status != FUT_TEXTURE_READY) {
             if(status==FUT_TEXTURE_UNSUPPORTED)
                 native_capture_observed_yuy2(state,texture,&dma);

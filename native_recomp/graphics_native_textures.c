@@ -16,9 +16,12 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     int bc1=plan && plan->storage==1;
     int p8=plan && plan->storage==2;
     int bc2=plan && plan->storage==3;
+    int yuy2=plan && plan->storage==4;
     if (!native || !device || !read || !plan || !plan->width || !plan->height ||
         plan->width > 8191 || plan->height > 8191 ||
-        plan->storage>3 || (p8 && (plan->bytes_per_pixel!=1 || plan->palette_span!=1024 ||
+        plan->storage>4 || (yuy2 && (plan->bytes_per_pixel!=2 || plan->width!=640 ||
+            plan->height!=480 || plan->pitch!=1280 || plan->span!=614400 || plan->dma_context!=1)) ||
+        (p8 && (plan->bytes_per_pixel!=1 || plan->palette_span!=1024 ||
             (plan->palette_address&0xFC00003Fu)!=0x80000000u ||
             plan->palette_span>0x84000000u-plan->palette_address || plan->pitch!=plan->width ||
             plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
@@ -28,12 +31,13 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
                 (plan->width&3u) || (plan->height&3u) || plan->pitch<plan->width/4*16 || (plan->pitch&15u))) ||
             plan->width>4096 || plan->height>4096 || plan->width<4 || plan->height<4 ||
             (bc1 && ((plan->width&(plan->width-1)) || (plan->height&(plan->height-1)) ||
-                plan->pitch!=plan->width/4*8))) : (plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
+                plan->pitch!=plan->width/4*8))) :
+            (!yuy2 && plan->bytes_per_pixel!=1 && plan->bytes_per_pixel!=4)) ||
         (plan->dma_context != 1 && plan->dma_context != 2) ||
         plan->pitch < (uint64_t)plan->width * plan->bytes_per_pixel || plan->pitch > 65535 ||
         ((plan->pitch | plan->address) & 3) ||
         (plan->address & 0xFC000000u) != 0x80000000u ||
-        (bc1 ? (uint64_t)(plan->height/4)*plan->pitch : bc2 ?
+        (yuy2 ? (uint64_t)plan->height*plan->pitch : bc1 ? (uint64_t)(plan->height/4)*plan->pitch : bc2 ?
             (uint64_t)(plan->height/4-1)*plan->pitch+(uint64_t)(plan->width/4)*16 :
             (uint64_t)(plan->height-1)*plan->pitch + (uint64_t)plan->width*plan->bytes_per_pixel) != plan->span ||
         plan->span > 0x84000000u - plan->address) return E_INVALIDARG;
@@ -46,6 +50,14 @@ HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device
     uint8_t *expanded=NULL;
     uint32_t palette[256];
     if (!read(context, plan->address, bytes, plan->span)) goto done;
+    if(yuy2) {
+        uint64_t expanded_size=(uint64_t)plan->width*4*plan->height;
+        if(expanded_size>SIZE_MAX) {hr=E_OUTOFMEMORY;goto done;}
+        expanded=HeapAlloc(GetProcessHeap(),0,(SIZE_T)expanded_size);
+        if(!expanded) {hr=E_OUTOFMEMORY;goto done;}
+        if(!fut_graphics_texture_yuy2_bt601_to_bgra(bytes,plan->span,expanded,(size_t)expanded_size)) goto done;
+        upload=expanded;upload_pitch=plan->width*4;
+    }
     if (p8 && !read(context,plan->palette_address,palette,sizeof(palette))) goto done;
     if(plan->bytes_per_pixel==1) {
         uint64_t expanded_size=(uint64_t)plan->width*4*plan->height;

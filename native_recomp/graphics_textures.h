@@ -7,7 +7,7 @@ typedef struct {
     uint32_t address, span, pitch, width, height;
     unsigned bytes_per_pixel; /* A8=1, A8R8G8B8=4; zero for BC1/BC2 block storage. */
     unsigned dma_context; /* Texture context A=1 (method184), B=2 (method188). */
-    unsigned storage; /* 0=linear texels, 1=BC1, 2=swizzled P8, 3=linear BC2. BC1/P8 use normalized UV. */
+    unsigned storage; /* 0=linear texels, 1=BC1, 2=swizzled P8, 3=linear BC2, 4=experimental exact YUY2. */
     uint32_t palette_address, palette_span; /* P8 only, 256 A8R8G8B8 entries. */
 } FutGraphicsTexturePlan;
 typedef enum {
@@ -27,4 +27,10 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
 int fut_graphics_texture_capture_observed_yuy2(FutGraphicsMemoryRead read,
     void *memory_context, const FutGraphicsTextureState *state,
     const FutGraphicsDmaView *dma, uint8_t output[FUT_GRAPHICS_OBSERVED_YUY2_BYTES]);
+/* Exact captured state gate and explicitly approximate BT.601-limited decode. */
+int fut_graphics_texture_plan_observed_yuy2_approximation(
+    const FutGraphicsTextureState *state,const FutGraphicsDmaView *dma,
+    FutGraphicsTexturePlan *plan);
+int fut_graphics_texture_yuy2_bt601_to_bgra(const uint8_t *source,size_t source_size,
+    uint8_t *output,size_t output_size);
 #endif
