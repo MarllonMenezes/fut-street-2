@@ -77,15 +77,26 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
         surface->width!=2*surface->logical_width ||
         surface->height!=surface->logical_height) return 0;
     const FutGraphicsTextureState *t0=&k->textures[0];
-    unsigned bc2_u=(t0->format>>20)&15u,bc2_v=(t0->format>>24)&15u;
+    unsigned texture_u=(t0->format>>20)&15u,texture_v=(t0->format>>24)&15u;
+    int family_dimensions=texture_u>=2 && texture_u<=12 && texture_v>=2 && texture_v<=12;
+    int family_baseline=t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
+        t0->filter==0x02062000u && k->draw.dither==1;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int bc2_family=bc2_format && fut_graphics_bc2_aa2_family_approximation_enabled() &&
-        bc2_u>=2 && bc2_u<=12 && bc2_v>=2 && bc2_v<=12 &&
+        family_dimensions &&
         !(t0->offset&15u) && t0->offset<=0x04000000u &&
-        (1u<<bc2_u)*(1u<<bc2_v)<=0x04000000u-t0->offset &&
-        t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
-        t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
-        t0->address==0x10303u && t0->filter==0x02062000u && k->draw.dither==1;
+        (1u<<texture_u)*(1u<<texture_v)<=0x04000000u-t0->offset &&
+        family_baseline && t0->address==0x10303u;
+    int p8_format=(t0->format&~0x0FF00000u)==0x00010B29u;
+    int p8_family=p8_format && fut_graphics_p8_aa2_family_approximation_enabled() &&
+        family_dimensions && family_baseline && k->draw.depth_write==1 &&
+        t0->address==0x30303u &&
+        !(t0->offset&3u) && t0->offset<=0x04000000u &&
+        (1u<<texture_u)*(1u<<texture_v)<=0x04000000u-t0->offset &&
+        !(t0->palette&0x3Fu) && t0->palette<=0x04000000u-1024u;
+    if(p8_format && t0->format!=0x05510B29u && t0->format!=0x05710B29u &&
+        (!p8_family || fut_graphics_software_draw_ready(s))) return 0;
     if(bc2_format && (!(t0->control0&0x40000000u) ||
         fut_graphics_software_draw_ready(s))) return 0;
     int bc2_c9df00=t0->format==0x09A10E29u &&
@@ -119,9 +130,9 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int bc1=format==0x09910C29u && fut_graphics_dxt1_noise_approximation_enabled();
                 int p8_32=format==0x05510B29u && fut_graphics_p8_aa2_approximation_enabled() &&
                     (t->valid&0x100u) && !(t->palette&0x3Fu);
-                int p8_128x32=format==0x05710B29u &&
+                int p8_128x32=(format==0x05710B29u &&
                     fut_graphics_p8_128x32_aa2_approximation_enabled() &&
-                    (t->valid&0x100u) && !(t->palette&0x3Fu);
+                    (t->valid&0x100u) && !(t->palette&0x3Fu)) || (stage==0 && p8_family);
                 int bc2=(format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
                     t->offset==0x00D1F980u && t->image_rect==0x050001E0u &&
                     t->control1==0x14000000u) || (stage==0 && (bc2_c9df00 || bc2_family));

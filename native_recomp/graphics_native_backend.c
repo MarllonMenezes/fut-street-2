@@ -924,6 +924,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
         (fut_graphics_bc2_aa2_family_approximation_enabled() &&
          (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u)) &&
         state->surfaces.format!=0x00001128u) software_ready=0;
+    if(aa2 && fut_graphics_p8_aa2_family_approximation_enabled() &&
+        (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010B29u &&
+        state->surfaces.format!=0x00001128u) software_ready=0;
     const FutGraphicsTextureState *yuy2_texture=&state->kelvin.textures[0];
     int yuy2_second=yuy2_texture->offset==0x02487680u;
     int yuy2_aa2_enabled=yuy2_second?
@@ -977,6 +980,13 @@ static int native_prepare_draw(NativeGraphicsState *state)
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u &&
         state->kelvin.textures[0].valid==0x3BFu && state->kelvin.draw.dither==1)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_BC2_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; one-mip BC2 under observed 640x480 AA2/depth-write/sampler baseline; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",
+            state->kelvin.textures[0].format,state->kelvin.textures[0].offset,
+            state->textures[0].plan.width,state->textures[0].plan.height);
+    if(aa2 && fut_graphics_p8_aa2_family_approximation_enabled() &&
+        (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010B29u &&
+        state->kelvin.draw.depth_write==1 && state->kelvin.draw.dither==1 &&
+        state->kelvin.textures[0].valid==0x3BFu)
+        fprintf(stderr,"[GRAPHICS] AUTHORIZED_P8_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; lossless palette expansion under observed AA2/depth-write baseline; NV2A fidelity unverified; NOT_READY\n",
             state->kelvin.textures[0].format,state->kelvin.textures[0].offset,
             state->textures[0].plan.width,state->textures[0].plan.height);
     if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled)

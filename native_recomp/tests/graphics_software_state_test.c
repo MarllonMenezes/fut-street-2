@@ -11,6 +11,7 @@ int main(void)
     _putenv_s("RECOMP_BC2_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_BC2_C9DF00_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","0");
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_BT601_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_023F1580_AA2_APPROXIMATION","0");
     _putenv_s("RECOMP_YUY2_02487680_BT601_APPROXIMATION","0");
@@ -426,6 +427,66 @@ int main(void)
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 89;
     _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","0");
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    state=baseline;kelvin=bc2_family;
+    kelvin.textures[0].format=0x08810B29u;kelvin.textures[0].offset=0x001AE180u;
+    kelvin.textures[0].address=0x30303u;kelvin.textures[0].palette=0x001BE180u;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 90;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 91;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 92;
+    FutGraphicsKelvinState p8_family=kelvin;
+    kelvin.textures[0].format=0x05510B29;kelvin.textures[0].offset=0x15080;
+    kelvin.draw.depth_write=0;
+    _putenv_s("RECOMP_P8_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 96;
+    _putenv_s("RECOMP_P8_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 97;
+    kelvin=p8_family;
+    kelvin.textures[0].format=0x06710B29u;kelvin.textures[0].offset=0x20000;
+    kelvin.textures[0].palette=0x30000;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 93;
+    for(unsigned i=0;i<24;++i) {
+        state=baseline;kelvin=p8_family;
+        surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+            .logical_height=480,.samples=2};
+        switch(i) {
+        case 0:kelvin.textures[0].format^=0x10000;break;
+        case 1:kelvin.textures[0].format|=4;break;
+        case 2:kelvin.textures[0].format^=3;break;
+        case 3:kelvin.textures[0].format=0x08110B29;break;
+        case 4:kelvin.textures[0].format=0x0D810B29;break;
+        case 5:kelvin.textures[0].offset++;break;
+        case 6:kelvin.textures[0].offset=0x03FFFFFC;break;
+        case 7:kelvin.textures[0].palette++;break;
+        case 8:kelvin.textures[0].palette=0x03FFFFC0;break;
+        case 9:kelvin.textures[0].address^=1;break;
+        case 10:kelvin.textures[0].filter^=0x10000;break;
+        case 11:kelvin.textures[0].control1^=0x10000;break;
+        case 12:kelvin.textures[0].image_rect^=0x10000;break;
+        case 13:kelvin.textures[0].valid^=0x100;break;
+        case 14:kelvin.draw.dither=0;break;
+        case 15:kelvin.draw.depth_write=0;break;
+        case 16:kelvin.depth_test=0;break;
+        case 17:kelvin.stencil_test=1;break;
+        case 18:kelvin.compress_depth=0;break;
+        case 19:kelvin.textures[1].control0=0x40000000;break;
+        case 20:kelvin.textures[0].control0=0;break;
+        case 21:state=(FutGraphicsSoftwareState){0};break;
+        case 22:state.register_words[1]^=1;break;
+        case 23:surface.logical_width=320;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) {
+            fprintf(stderr,"P8 family negative admitted: %u\n",i);return 94;
+        }
+    }
+    state=baseline;kelvin=p8_family;
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 95;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","0");
     puts("Software controls: exact BC1/P8/BC2 and both YUY2 AA2 scopes, independent opt-ins and negative variants verified");
     return 0;
 }
