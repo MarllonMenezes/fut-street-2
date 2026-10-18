@@ -46,6 +46,13 @@ static inline int fut_graphics_bc2_c9df00_aa2_approximation_enabled(void)
     const char *value=getenv("RECOMP_BC2_C9DF00_AA2_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+/* Authorized 2026-10-18 for continued bring-up: one-mip BC2 textures under
+ * the observed AA2/depth/sampler baseline. Other state remains fail-fast. */
+static inline int fut_graphics_bc2_aa2_family_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_BC2_AA2_FAMILY_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 /* Authorized 2026-10-18 for one captured 16-segment AA2 line-list packet. */
 static inline int fut_graphics_lines_16segment_aa2_approximation_enabled(void)
 {

@@ -46,6 +46,8 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *stat
  * including exact offset, retained pitch/rectangle, address and sampler. */
 /* RECOMP_BC2_C9DF00_AA2_APPROXIMATION independently admits only the captured
  * 1024x512 BC2 tuple at offset C9DF00, with its exact baseline and dithering. */
+/* RECOMP_BC2_AA2_FAMILY_APPROXIMATION admits bounded one-mip BC2 textures
+ * under the same captured sampler/depth/AA2 baseline, with variable sizes/offsets. */
 /* RECOMP_YUY2_023F1580_AA2_APPROXIMATION additionally requires the separately
  * authorized BT.601 conversion opt-in and admits only the exact 640x480 draw. */
 /* The separate RECOMP_YUY2_02487680_* opt-ins admit only the second captured

@@ -16,6 +16,7 @@ param(
     [switch]$P8_128x32Aa2Approximation,
     [switch]$Bc2Aa2Approximation,
     [switch]$Bc2C9df00Aa2Approximation,
+    [switch]$Bc2Aa2FamilyApproximation,
     [switch]$Yuy2Bt601Approximation,
     [switch]$Yuy2Aa2Approximation,
     [switch]$Yuy2SecondBt601Approximation,
@@ -28,7 +29,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Bc2C9df00Aa2Approximation -or $Yuy2Bt601Approximation -or $Yuy2SecondBt601Approximation) -and -not $Aa2Approximation) {
+if (($Dxt1NoiseApproximation -or $P8Aa2Approximation -or $P8_128x32Aa2Approximation -or $Bc2Aa2Approximation -or $Bc2C9df00Aa2Approximation -or $Bc2Aa2FamilyApproximation -or $Yuy2Bt601Approximation -or $Yuy2SecondBt601Approximation) -and -not $Aa2Approximation) {
     throw 'Restricted texture experiments require -Aa2Approximation.'
 }
 if ($Yuy2Aa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2Bt601Approximation)) {
@@ -70,6 +71,7 @@ $variables = @{
     RECOMP_P8_128X32_AA2_APPROXIMATION = '0'
     RECOMP_BC2_AA2_APPROXIMATION = '0'
     RECOMP_BC2_C9DF00_AA2_APPROXIMATION = '0'
+    RECOMP_BC2_AA2_FAMILY_APPROXIMATION = '0'
     RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '0'
     RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '0'
     RECOMP_YUY2_02487680_BT601_APPROXIMATION = '0'
@@ -91,6 +93,7 @@ if ($P8Aa2Approximation) { $variables.RECOMP_P8_AA2_APPROXIMATION = '1' }
 if ($P8_128x32Aa2Approximation) { $variables.RECOMP_P8_128X32_AA2_APPROXIMATION = '1' }
 if ($Bc2Aa2Approximation) { $variables.RECOMP_BC2_AA2_APPROXIMATION = '1' }
 if ($Bc2C9df00Aa2Approximation) { $variables.RECOMP_BC2_C9DF00_AA2_APPROXIMATION = '1' }
+if ($Bc2Aa2FamilyApproximation) { $variables.RECOMP_BC2_AA2_FAMILY_APPROXIMATION = '1' }
 if ($Yuy2Bt601Approximation) { $variables.RECOMP_YUY2_023F1580_BT601_APPROXIMATION = '1' }
 if ($Yuy2Aa2Approximation) { $variables.RECOMP_YUY2_023F1580_AA2_APPROXIMATION = '1' }
 if ($Yuy2SecondBt601Approximation) { $variables.RECOMP_YUY2_02487680_BT601_APPROXIMATION = '1' }
@@ -150,6 +153,7 @@ try {
         p8_128x32_aa2_approximation = [bool]$P8_128x32Aa2Approximation
         bc2_aa2_approximation = [bool]$Bc2Aa2Approximation
         bc2_c9df00_aa2_approximation = [bool]$Bc2C9df00Aa2Approximation
+        bc2_aa2_family_approximation = [bool]$Bc2Aa2FamilyApproximation
         yuy2_bt601_approximation = [bool]$Yuy2Bt601Approximation
         yuy2_aa2_approximation = [bool]$Yuy2Aa2Approximation
         yuy2_second_bt601_approximation = [bool]$Yuy2SecondBt601Approximation
