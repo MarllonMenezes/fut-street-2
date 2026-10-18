@@ -69,7 +69,7 @@ gerado proprietário ficam locais em D:.
 ### Próximos passos
 
 1. **Implementar o primitivo de linhas observado:** `BEGIN_END=2` está definido
-   como `LINES` no mapa XDK local e é seguido por 34 índices; falta um caminho
+   como `LINES` no mapa XDK local e é seguido por 32 índices (16 pares); falta um caminho
    de expansão e rasterização de linhas com gates e teste focais.
 2. **Retomar o boot limitado:** executar com limite finito para localizar o
    primeiro bloqueio seguinte, preservando as aproximações opt-in e os logs.
