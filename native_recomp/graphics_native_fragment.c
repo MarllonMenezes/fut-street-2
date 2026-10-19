@@ -5,6 +5,7 @@
 #include "graphics_sample_pattern.h"
 #include "graphics_experiment.h"
 #include <d3d11shader.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -65,8 +66,10 @@ static HRESULT no_candidate_resource(ID3DBlob *bytecode,unsigned candidates)
 }
 
 static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinState *state,
-    const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode,int aa2)
+    const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode,int aa2,
+    FutNativeFragmentCache *cache,int *cache_hit)
 {
+    if(cache_hit) *cache_hit=0;
     if(!shader || !bytecode) return E_INVALIDARG;
     *shader=NULL;*bytecode=NULL;
     if(!device || !state || !textures) return E_INVALIDARG;
@@ -156,6 +159,15 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
     size_t prefix_length=strlen(prefix);
     if(used+prefix_length>=sizeof(source)) return E_OUTOFMEMORY;
     memmove(source+prefix_length,source,used+1);memcpy(source,prefix,prefix_length);used+=prefix_length;
+    if(cache && cache->device==device && cache->candidates==candidates && cache->aa2==aa2 &&
+        cache->source && cache->source_length==used && cache->shader && cache->bytecode &&
+        memcmp(cache->source,source,used)==0) {
+        ID3D11PixelShader_AddRef(cache->shader);
+        ID3D10Blob_AddRef(cache->bytecode);
+        *shader=cache->shader;*bytecode=cache->bytecode;
+        if(cache_hit) *cache_hit=1;
+        return S_OK;
+    }
     ID3DBlob *errors=NULL;
     HRESULT hr=D3DCompile(source,used,"recompiled_fragment_program",NULL,NULL,"main","ps_5_0",
         D3DCOMPILE_IEEE_STRICTNESS,0,bytecode,&errors);
@@ -166,12 +178,25 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
     if(SUCCEEDED(hr) && candidates) hr=no_candidate_resource(*bytecode,candidates);
     if(SUCCEEDED(hr)) hr=ID3D11Device_CreatePixelShader(device,ID3D10Blob_GetBufferPointer(*bytecode),ID3D10Blob_GetBufferSize(*bytecode),NULL,shader);
     if(FAILED(hr) && *bytecode) {ID3D10Blob_Release(*bytecode);*bytecode=NULL;}
+    if(SUCCEEDED(hr) && cache && *shader && *bytecode) {
+        char *source_copy=(char *)malloc(used);
+        if(source_copy) {
+            memcpy(source_copy,source,used);
+            if(cache->shader) ID3D11PixelShader_Release(cache->shader);
+            if(cache->bytecode) ID3D10Blob_Release(cache->bytecode);
+            free(cache->source);
+            cache->device=device;cache->source=source_copy;cache->source_length=used;
+            cache->candidates=candidates;cache->aa2=aa2;
+            cache->shader=*shader;ID3D11PixelShader_AddRef(cache->shader);
+            cache->bytecode=*bytecode;ID3D10Blob_AddRef(cache->bytecode);
+        }
+    }
     return hr;
 }
 HRESULT fut_native_fragment_compile(ID3D11Device *device,const FutGraphicsKelvinState *state,
     const FutNativeTexture textures[4],ID3D11PixelShader **shader,ID3DBlob **bytecode)
 {
-    return compile_fragment(device,state,textures,shader,bytecode,0);
+    return compile_fragment(device,state,textures,shader,bytecode,0,NULL,NULL);
 }
 HRESULT fut_native_fragment_compile_aa2_affine(ID3D11Device *device,const FutGraphicsKelvinState *state,
     const FutNativeTexture textures[4],int unit_w_verified,ID3D11PixelShader **shader,ID3DBlob **bytecode)
@@ -179,5 +204,22 @@ HRESULT fut_native_fragment_compile_aa2_affine(ID3D11Device *device,const FutGra
     if(!shader || !bytecode) return E_INVALIDARG;
     *shader=NULL;*bytecode=NULL;
     if(unit_w_verified!=1) return E_NOTIMPL;
-    return compile_fragment(device,state,textures,shader,bytecode,1);
+    return compile_fragment(device,state,textures,shader,bytecode,1,NULL,NULL);
+}
+HRESULT fut_native_fragment_compile_aa2_affine_cached(ID3D11Device *device,
+    const FutGraphicsKelvinState *state,const FutNativeTexture textures[4],int unit_w_verified,
+    FutNativeFragmentCache *cache,ID3D11PixelShader **shader,ID3DBlob **bytecode,int *cache_hit)
+{
+    if(!shader || !bytecode) return E_INVALIDARG;
+    *shader=NULL;*bytecode=NULL;if(cache_hit) *cache_hit=0;
+    if(unit_w_verified!=1) return E_NOTIMPL;
+    return compile_fragment(device,state,textures,shader,bytecode,1,cache,cache_hit);
+}
+void fut_native_fragment_cache_destroy(FutNativeFragmentCache *cache)
+{
+    if(!cache) return;
+    if(cache->shader) ID3D11PixelShader_Release(cache->shader);
+    if(cache->bytecode) ID3D10Blob_Release(cache->bytecode);
+    free(cache->source);
+    memset(cache,0,sizeof(*cache));
 }

@@ -153,6 +153,7 @@ static int snapshot_method(void *context, unsigned subchannel,
 
 typedef struct {
     HANDLE stop;
+    DWORD main_host_thread_id;
     const uint32_t *main_regs[8];
 } GraphicsSnapshotContext;
 
@@ -182,17 +183,49 @@ static DWORD WINAPI graphics_snapshot_thread(void *opaque)
                 regs_valid=0;
         }
         if(regs_valid) {
-            fprintf(stderr,"[MAIN-SNAPSHOT] sample=%u eax=%08X ecx=%08X edx=%08X esp=%08X ebx=%08X esi=%08X edi=%08X ebp=%08X elapsed_ms=%llu (read-only, non-atomic)\n",
-                sample,regs[0],regs[1],regs[2],regs[3],regs[4],regs[5],regs[6],regs[7],
+            fprintf(stderr,"[MAIN-SNAPSHOT] sample=%u main_host_thread=%lu eax=%08X ecx=%08X edx=%08X esp=%08X ebx=%08X esi=%08X edi=%08X ebp=%08X elapsed_ms=%llu (read-only, non-atomic)\n",
+                sample,(unsigned long)snapshot->main_host_thread_id,regs[0],regs[1],regs[2],regs[3],regs[4],regs[5],regs[6],regs[7],
                 (unsigned long long)(GetTickCount64()-started));
-            if(regs[3] && regs[3]<=UINT32_MAX-64u) {
-                char line[256];size_t used=(size_t)snprintf(line,sizeof(line),"[MAIN-STACK] esp=%08X",regs[3]);
-                for(unsigned i=0;i<16;++i) {
-                    uint32_t word=0;
-                    if(!snapshot_read32(regs[3]+i*4,&word)) break;
-                    used+=(size_t)snprintf(line+used,sizeof(line)-used," %08X",word);
+            if(regs[3] && regs[3]<=UINT32_MAX-128u) {
+                uint32_t stack_words[32]={0};
+                unsigned stack_count=0;
+                char line[512];size_t used=(size_t)snprintf(line,sizeof(line),"[MAIN-STACK] esp=%08X",regs[3]);
+                for(unsigned i=0;i<32;++i) {
+                    if(!snapshot_read32(regs[3]+i*4,&stack_words[i])) break;
+                    ++stack_count;
+                    used+=(size_t)snprintf(line+used,sizeof(line)-used," %08X",stack_words[i]);
                 }
                 fprintf(stderr,"%s\n",line);
+
+                /* In the observed parser callback stack, 0x001C28C2 is the
+                 * return into sub_001C28B7. The following stack word is its
+                 * saved ESI, the parent object used for counters +0x1C/+0x20
+                 * and descriptor +0x34. Sample these values read-only. */
+                for(unsigned i=0;i+1<stack_count;++i) {
+                    if(stack_words[i]!=0x001C28C2u)
+                        continue;
+                    int callback_seen=0;
+                    for(unsigned j=0;j<i;++j)
+                        if(stack_words[j]==0x001C274Au) callback_seen=1;
+                    if(!callback_seen)
+                        continue;
+                    const uint32_t parent=stack_words[i+1];
+                    uint32_t count_1c=0,count_20=0,descriptor=0;
+                    uint32_t desc_state=0,desc_arg=0,desc_callback=0;
+                    const int parent_valid=parent && parent<=UINT32_MAX-0x34u;
+                    const int count_1c_valid=parent_valid && snapshot_read32(parent+0x1Cu,&count_1c);
+                    const int count_20_valid=parent_valid && snapshot_read32(parent+0x20u,&count_20);
+                    const int descriptor_valid=parent_valid && snapshot_read32(parent+0x34u,&descriptor);
+                    const int descriptor_fields_valid=descriptor && descriptor<=UINT32_MAX-0xCu;
+                    const int desc_state_valid=descriptor_fields_valid && snapshot_read32(descriptor+4u,&desc_state);
+                    const int desc_arg_valid=descriptor_fields_valid && snapshot_read32(descriptor+8u,&desc_arg);
+                    const int desc_callback_valid=descriptor_fields_valid && snapshot_read32(descriptor+0xCu,&desc_callback);
+                    fprintf(stderr,"[TITLE-DISPATCH-SNAPSHOT] sample=%u stack_index=%u parent=%08X parent_valid=%u count_1c=%08X valid=%u count_20=%08X valid=%u descriptor=%08X valid=%u desc_state=%08X valid=%u desc_arg=%08X valid=%u desc_callback=%08X valid=%u (read-only, non-atomic)\n",
+                        sample,i,parent,parent_valid,count_1c,count_1c_valid,count_20,count_20_valid,
+                        descriptor,descriptor_valid,desc_state,desc_state_valid,desc_arg,desc_arg_valid,
+                        desc_callback,desc_callback_valid);
+                    break;
+                }
             }
         }
         /* Optional read-only samples, including device handshakes while a
@@ -470,6 +503,7 @@ int main(int argc, char **argv)
     if (environment_variable_is_set("RECOMP_GRAPHICS_SNAPSHOT")) {
         snapshot_stop = CreateEventA(NULL, TRUE, FALSE, NULL);
         snapshot_context.stop=snapshot_stop;
+        snapshot_context.main_host_thread_id=GetCurrentThreadId();
         snapshot_context.main_regs[0]=&g_eax;snapshot_context.main_regs[1]=&g_ecx;
         snapshot_context.main_regs[2]=&g_edx;snapshot_context.main_regs[3]=&g_esp;
         snapshot_context.main_regs[4]=&g_ebx;snapshot_context.main_regs[5]=&g_esi;

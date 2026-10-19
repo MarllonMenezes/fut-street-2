@@ -30,6 +30,15 @@ option(FUT_STREET2_BUILD_MCPX_DSP_ADAPTER
 option(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK
     "Build the explicit bounded audio-wait diagnostic overlay (NOT_READY)"
     OFF)
+option(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK
+    "Build read-only STRM callback lifecycle diagnostics (default-off at runtime)"
+    OFF)
+option(FUT_STREET2_STREAM_SCHEDULER_TRACE_HOOK
+    "Build read-only STRM slot and manager diagnostics (default-off at runtime)"
+    OFF)
+option(FUT_STREET2_STREAM_WAIT_CLOCK_TRACE_HOOK
+    "Build read-only trace for the game thread-clock timeout path (default-off at runtime)"
+    OFF)
 
 if(RECOMP_ARCHIVER)
     # Some compiler distributions (including Zig's Windows Clang driver) do
@@ -79,6 +88,103 @@ if(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${audio_original}" "${audio_overlay_script}")
     message(WARNING "Audio-wait overlay built; runtime opt-in still required. NOT_READY.")
+endif()
+
+if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "STRM callback trace requires the Windows host app")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(stream_trace_script
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-stream-callback-trace.ps1")
+    set(stream_trace_output "${CMAKE_CURRENT_BINARY_DIR}/stream-callback-trace")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
+        -ExecutionPolicy Bypass -File "${stream_trace_script}"
+        -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${stream_trace_output}"
+        RESULT_VARIABLE stream_trace_result
+        OUTPUT_VARIABLE stream_trace_source
+        ERROR_VARIABLE stream_trace_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT stream_trace_result EQUAL 0)
+        message(FATAL_ERROR "STRM callback trace overlay refused: ${stream_trace_error}")
+    endif()
+    foreach(stream_trace_name recomp_0046.c recomp_0047.c recomp_callback_00239C1A.c)
+        set(stream_trace_original "${RECOMP_GENERATED_DIR}/${stream_trace_name}")
+        list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${stream_trace_original}")
+        list(APPEND RECOMP_GENERATED_SOURCES
+            "${stream_trace_output}/${stream_trace_name}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${stream_trace_original}" "${stream_trace_script}")
+    endforeach()
+    message(WARNING
+        "Read-only STRM callback trace overlay compiled; runtime opt-in required. NOT_READY.")
+endif()
+
+if(FUT_STREET2_STREAM_SCHEDULER_TRACE_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "STRM scheduler trace requires the Windows host app")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(stream_scheduler_trace_script
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-stream-scheduler-trace.ps1")
+    set(stream_scheduler_trace_output
+        "${CMAKE_CURRENT_BINARY_DIR}/stream-scheduler-trace")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
+        -ExecutionPolicy Bypass -File "${stream_scheduler_trace_script}"
+        -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${stream_scheduler_trace_output}"
+        RESULT_VARIABLE stream_scheduler_trace_result
+        OUTPUT_VARIABLE stream_scheduler_trace_source
+        ERROR_VARIABLE stream_scheduler_trace_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT stream_scheduler_trace_result EQUAL 0)
+        message(FATAL_ERROR
+            "STRM scheduler trace overlay refused: ${stream_scheduler_trace_error}")
+    endif()
+    set(stream_scheduler_trace_original
+        "${RECOMP_GENERATED_DIR}/recomp_0045.c")
+    list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${stream_scheduler_trace_original}")
+    list(APPEND RECOMP_GENERATED_SOURCES
+        "${stream_scheduler_trace_output}/recomp_0045.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${stream_scheduler_trace_original}" "${stream_scheduler_trace_script}")
+    message(WARNING
+        "Read-only STRM scheduler trace overlay compiled; runtime opt-in required. NOT_READY.")
+endif()
+
+if(FUT_STREET2_STREAM_WAIT_CLOCK_TRACE_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "Stream wait-clock trace requires the Windows host app")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(stream_wait_clock_trace_script
+        "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-stream-wait-clock-trace.ps1")
+    set(stream_wait_clock_trace_output
+        "${CMAKE_CURRENT_BINARY_DIR}/stream-wait-clock-trace")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile
+        -ExecutionPolicy Bypass -File "${stream_wait_clock_trace_script}"
+        -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${stream_wait_clock_trace_output}"
+        RESULT_VARIABLE stream_wait_clock_trace_result
+        OUTPUT_VARIABLE stream_wait_clock_trace_source
+        ERROR_VARIABLE stream_wait_clock_trace_error
+        OUTPUT_STRIP_TRAILING_WHITESPACE)
+    if(NOT stream_wait_clock_trace_result EQUAL 0)
+        message(FATAL_ERROR
+            "Stream wait-clock trace overlay refused: ${stream_wait_clock_trace_error}")
+    endif()
+    set(stream_wait_clock_trace_original
+        "${RECOMP_GENERATED_DIR}/recomp_0048.c")
+    list(REMOVE_ITEM RECOMP_GENERATED_SOURCES
+        "${stream_wait_clock_trace_original}")
+    list(APPEND RECOMP_GENERATED_SOURCES
+        "${stream_wait_clock_trace_output}/recomp_0048.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${stream_wait_clock_trace_original}"
+        "${stream_wait_clock_trace_script}")
+    message(WARNING
+        "Read-only stream wait-clock trace overlay compiled; runtime opt-in required. NOT_READY.")
 endif()
 
 list(LENGTH RECOMP_GENERATED_SOURCES RECOMP_SOURCE_COUNT)

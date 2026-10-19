@@ -29,7 +29,24 @@ param(
     [switch]$Lines4segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
-    [switch]$AudioEffectsBypass
+    [switch]$AudioEffectsBypass,
+    [switch]$StreamCallbackTrace,
+    [ValidateRange(1, 10000)][int]$StreamCallbackTraceLimit = 128,
+    [switch]$TraceStreamWait,
+    [switch]$TraceStreamCompletion,
+    [switch]$TraceStreamSpace,
+    [switch]$TraceStreamResume,
+    [switch]$TraceStreamRead,
+    [switch]$TraceStreamEvent,
+    [switch]$TraceStreamBufferCallback,
+    [switch]$TraceStreamBufferCallbackDetail,
+    [switch]$StreamSchedulerTrace,
+    [switch]$TraceStreamPump,
+    [switch]$TraceTargetStreamRelease,
+    [switch]$TraceTargetEventTable,
+    [switch]$TraceEventWait,
+    [switch]$TraceStreamWaitClock,
+    [switch]$ExperimentalTargetStreamPumpAfterStatus2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +64,30 @@ if ($Yuy2SecondAa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2Secon
 }
 if ($Yuy2FamilyAa2Approximation -and (-not $Aa2Approximation -or -not $Yuy2FamilyBt601Approximation)) {
     throw 'YUY2 family AA2 requires -Aa2Approximation and -Yuy2FamilyBt601Approximation.'
+}
+if ($TraceStreamBufferCallbackDetail -and -not $TraceStreamBufferCallback) {
+    throw '-TraceStreamBufferCallbackDetail requires -TraceStreamBufferCallback.'
+}
+if ($ExperimentalTargetStreamPumpAfterStatus2 -and
+    (-not $AudioEffectsBypass -or -not $StreamCallbackTrace -or
+     -not $TraceStreamSpace -or -not $TraceStreamPump)) {
+    throw 'The target status2 pump experiment requires -AudioEffectsBypass, -StreamCallbackTrace, -TraceStreamSpace, and -TraceStreamPump.'
+}
+if ($TraceTargetStreamRelease -and
+    (-not $ExperimentalTargetStreamPumpAfterStatus2 -or -not $TraceStreamPump)) {
+    throw '-TraceTargetStreamRelease requires -ExperimentalTargetStreamPumpAfterStatus2 and -TraceStreamPump.'
+}
+if ($TraceTargetEventTable -and
+    (-not $ExperimentalTargetStreamPumpAfterStatus2 -or -not $TraceTargetStreamRelease)) {
+    throw '-TraceTargetEventTable requires -ExperimentalTargetStreamPumpAfterStatus2 and -TraceTargetStreamRelease.'
+}
+if ($TraceEventWait -and
+    (-not $ExperimentalTargetStreamPumpAfterStatus2 -or -not $TraceTargetEventTable)) {
+    throw '-TraceEventWait requires -ExperimentalTargetStreamPumpAfterStatus2 and -TraceTargetEventTable.'
+}
+if ($TraceStreamWaitClock -and
+    (-not $ExperimentalTargetStreamPumpAfterStatus2 -or -not $TraceTargetStreamRelease)) {
+    throw '-TraceStreamWaitClock requires -ExperimentalTargetStreamPumpAfterStatus2 and -TraceTargetStreamRelease.'
 }
 foreach ($path in @($ExecutablePath, $XbePath, $GameDataDirectory)) {
     if (-not (Test-Path -LiteralPath $path)) { throw "Input missing: $path" }
@@ -67,7 +108,7 @@ foreach ($name in @('RECOMP_AC97_READY', 'RECOMP_AC97_RESET_ONLY', 'RECOMP_PB_EX
 }
 $runDirectory = Join-Path $OutputRoot ((Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $saveDirectory = Join-Path $runDirectory 'saves'
-$tempDirectory = Join-Path $runDirectory 'tmp'
+$tempDirectory = 'D:\projeto zeta\artifacts\tmp'
 New-Item -ItemType Directory -Path $saveDirectory, $tempDirectory -Force | Out-Null
 $stdout = Join-Path $runDirectory 'stdout.log'
 $stderr = Join-Path $runDirectory 'stderr.log'
@@ -95,8 +136,60 @@ $variables = @{
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
+    RECOMP_STREAM_CALLBACK_TRACE = '0'
+    RECOMP_STREAM_CALLBACK_TRACE_LIMIT = [string]$StreamCallbackTraceLimit
+    RECOMP_TRACE_TARGET_STREAM_EVENTS = $null
+    RECOMP_TRACE_TARGET_STREAM_ROUTES = $null
+    RECOMP_TRACE_STREAM_UPDATER = $null
+    RECOMP_TRACE_TARGET_STREAM_MANAGER = $null
+    RECOMP_TRACE_TARGET_STREAM_REGISTRATION = $null
+    RECOMP_TRACE_STREAM_WAIT = $null
+    RECOMP_TRACE_STREAM_COMPLETION = $null
+    RECOMP_TRACE_STREAM_SPACE = $null
+    RECOMP_TRACE_STREAM_RESUME = $null
+    RECOMP_TRACE_STREAM_READ = $null
+    RECOMP_TRACE_STREAM_EVENT = $null
+    RECOMP_TRACE_STREAM_CALLBACK = $null
+    RECOMP_TRACE_STREAM_CALLBACK_DETAIL = $null
+    RECOMP_TRACE_STREAM_SCHEDULER = $null
+    RECOMP_TRACE_STREAM_PUMP = $null
+    RECOMP_TRACE_TARGET_STREAM_PUMP_PROGRESS = $null
+    RECOMP_TRACE_TARGET_STREAM_RELEASE = $null
+    RECOMP_TRACE_TARGET_EVENT_TABLE = $null
+    RECOMP_TRACE_EVENT_WAIT = $null
+    RECOMP_TRACE_STREAM_WAIT_CLOCK = $null
+    RECOMP_EXPERIMENT_TARGET_STREAM_PUMP = $null
+    RECOMP_EXPERIMENT_TARGET_STREAM_PUMP_AFTER_STATUS2 = $null
 }
 if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
+if ($StreamCallbackTrace) {
+    $variables.RECOMP_STREAM_CALLBACK_TRACE = '1'
+    $variables.RECOMP_TRACE_TARGET_STREAM_EVENTS = '1'
+    $variables.RECOMP_TRACE_TARGET_STREAM_ROUTES = '1'
+    $variables.RECOMP_TRACE_STREAM_UPDATER = '1'
+    $variables.RECOMP_TRACE_TARGET_STREAM_MANAGER = '1'
+    $variables.RECOMP_TRACE_TARGET_STREAM_REGISTRATION = '1'
+}
+if ($TraceStreamWait) { $variables.RECOMP_TRACE_STREAM_WAIT = '1' }
+if ($TraceStreamCompletion) { $variables.RECOMP_TRACE_STREAM_COMPLETION = '1' }
+if ($TraceStreamSpace) { $variables.RECOMP_TRACE_STREAM_SPACE = '1' }
+if ($TraceStreamResume) { $variables.RECOMP_TRACE_STREAM_RESUME = '1' }
+if ($TraceStreamRead) { $variables.RECOMP_TRACE_STREAM_READ = '1' }
+if ($TraceStreamEvent) { $variables.RECOMP_TRACE_STREAM_EVENT = '1' }
+if ($TraceStreamBufferCallback) { $variables.RECOMP_TRACE_STREAM_CALLBACK = '1' }
+if ($TraceStreamBufferCallbackDetail) { $variables.RECOMP_TRACE_STREAM_CALLBACK_DETAIL = '1' }
+if ($StreamSchedulerTrace) { $variables.RECOMP_TRACE_STREAM_SCHEDULER = '1' }
+if ($TraceStreamPump) {
+    $variables.RECOMP_TRACE_STREAM_PUMP = '1'
+    $variables.RECOMP_TRACE_TARGET_STREAM_PUMP_PROGRESS = '1'
+}
+if ($TraceTargetStreamRelease) { $variables.RECOMP_TRACE_TARGET_STREAM_RELEASE = '1' }
+if ($TraceTargetEventTable) { $variables.RECOMP_TRACE_TARGET_EVENT_TABLE = '1' }
+if ($TraceEventWait) { $variables.RECOMP_TRACE_EVENT_WAIT = '1' }
+if ($TraceStreamWaitClock) { $variables.RECOMP_TRACE_STREAM_WAIT_CLOCK = '1' }
+if ($ExperimentalTargetStreamPumpAfterStatus2) {
+    $variables.RECOMP_EXPERIMENT_TARGET_STREAM_PUMP_AFTER_STATUS2 = '1'
+}
 if ($GraphicsSnapshot) { $variables.RECOMP_GRAPHICS_SNAPSHOT = '1' }
 if ($HostOutputVblank) { $variables.RECOMP_HOST_OUTPUT_VBLANK = '1' }
 if ($NativeDisplayOrigin) { $variables.RECOMP_NATIVE_DISPLAY_ORIGIN = '1' }
@@ -120,16 +213,11 @@ if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APP
 if ($Lines4segmentAa2Approximation) { $variables.RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
-$previous = @{}
 $process = $null
 $stdoutFile = $null
 $stderrFile = $null
 $timedOut = $false
 try {
-    foreach ($name in $variables.Keys) {
-        $previous[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
-        [Environment]::SetEnvironmentVariable($name, $variables[$name], 'Process')
-    }
     $arguments = '--launch "{0}" "{1}" "{2}"' -f $XbePath, $GameDataDirectory, $saveDirectory
     # Drain both streams on .NET tasks, independently of the PowerShell runspace.
     # A verbose native trace must not stall behind a full redirected pipe.
@@ -139,6 +227,14 @@ try {
     $startInfo.WorkingDirectory = $runDirectory
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
+    $childEnvironment = $startInfo.EnvironmentVariables
+    foreach ($name in $variables.Keys) {
+        if ($null -eq $variables[$name]) {
+            [void]$childEnvironment.Remove($name)
+        } else {
+            $childEnvironment[$name] = [string]$variables[$name]
+        }
+    }
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
     $process = New-Object System.Diagnostics.Process
@@ -163,6 +259,7 @@ try {
         trace_budget = $TraceBudget
         exit_code = $process.ExitCode; diagnostic_trap = $true
         graphics_snapshot = [bool]$GraphicsSnapshot
+        host_output_vblank = [bool]$HostOutputVblank
         native_display_origin = [bool]$NativeDisplayOrigin
         graphics_trace = [bool]$GraphicsTrace
         aa2_approximation = [bool]$Aa2Approximation
@@ -186,6 +283,31 @@ try {
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass
         audio_effects_bypass_max_completions = $(if ($AudioEffectsBypass) { 4096 } else { 0 })
+        stream_callback_trace = [bool]$StreamCallbackTrace
+        stream_callback_trace_local_limit_per_event = $(if ($StreamCallbackTrace) { $StreamCallbackTraceLimit } else { 0 })
+        stream_wait_trace = [bool]$TraceStreamWait
+        stream_completion_trace = [bool]$TraceStreamCompletion
+        stream_space_trace = [bool]$TraceStreamSpace
+        stream_resume_trace = [bool]$TraceStreamResume
+        stream_read_trace = [bool]$TraceStreamRead
+        stream_event_trace = [bool]$TraceStreamEvent
+        stream_buffer_callback_trace = [bool]$TraceStreamBufferCallback
+        stream_buffer_callback_detail_trace = [bool]$TraceStreamBufferCallbackDetail
+        stream_scheduler_trace = [bool]$StreamSchedulerTrace
+        stream_pump_trace = [bool]$TraceStreamPump
+        target_stream_pump_progress_trace = [bool]$TraceStreamPump
+        target_stream_release_trace = [bool]$TraceTargetStreamRelease
+        target_event_table_trace = [bool]$TraceTargetEventTable
+        event_wait_trace = [bool]$TraceEventWait
+        stream_wait_clock_trace = [bool]$TraceStreamWaitClock
+        experimental_target_stream_pump_after_status2 = [bool]$ExperimentalTargetStreamPumpAfterStatus2
+        target_stream_diagnostics = [bool]$StreamCallbackTrace
+        target_stream_events = [bool]$StreamCallbackTrace
+        target_stream_routes = [bool]$StreamCallbackTrace
+        stream_updater_diagnostics = [bool]$StreamCallbackTrace
+        target_stream_manager_diagnostics = [bool]$StreamCallbackTrace
+        target_stream_registration_diagnostics = [bool]$StreamCallbackTrace
+        temporary_directory = $tempDirectory
         functional_status = 'NOT_READY'
         stdout = $stdout; stderr = $stderr
     }
@@ -194,9 +316,6 @@ try {
     Get-Content -LiteralPath $stderr -Tail 60
 } finally {
     if ($null -ne $process -and -not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
-    foreach ($name in $previous.Keys) {
-        [Environment]::SetEnvironmentVariable($name, $previous[$name], 'Process')
-    }
     if ($null -ne $process) { $process.Dispose() }
     if ($null -ne $stdoutFile) { $stdoutFile.Dispose() }
     if ($null -ne $stderrFile) { $stderrFile.Dispose() }

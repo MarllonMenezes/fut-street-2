@@ -176,11 +176,20 @@ typedef struct {
     FutNativeConstants native_constants;
     ID3D11VertexShader *vertex_shader;
     ID3DBlob *vertex_bytecode;
+    uint32_t vertex_program_cache[136][4];
+    unsigned vertex_program_cache_first;
+    unsigned vertex_program_cache_count;
+    int vertex_program_cache_valid;
     ID3D11VertexShader *aa2_vertex_shader;
     ID3DBlob *aa2_vertex_bytecode;
+    uint32_t aa2_vertex_program_cache[136][4];
+    unsigned aa2_vertex_program_cache_first;
+    unsigned aa2_vertex_program_cache_count;
+    int aa2_vertex_program_cache_valid;
     FutNativeVertexSurface vertex_surface;
     ID3D11PixelShader *pixel_shader;
     ID3DBlob *pixel_bytecode;
+    FutNativeFragmentCache aa2_fragment_cache;
     FutGraphicsBindings bindings;
     FutGraphicsKelvinState kelvin;
     FutGraphicsSurfaceState surfaces;
@@ -212,6 +221,34 @@ typedef struct {
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
+
+static void native_scanout_trace_failure(NativeGraphicsState *state,uint32_t notification,
+    const char *reason,uint32_t address,const uint32_t words[119])
+{
+    static unsigned samples;
+    if(!getenv("RECOMP_TRACE_SCANOUT_FAILURE") || (notification&31u)!=1u || samples>=64u) return;
+    ++samples;
+    const uint32_t data=notification>>5;
+    fprintf(stderr,"[SCANOUT-FAILURE] sample=%u reason=%s notification=%08X physical=%08X interval=%u flags=%X "
+        "host_vblank=%p pending=%u received=%u callback_pending=%u surfaces=%u size=%ux%u samples=%u color=%08X pitch=%u "
+        "context=%08X regs=%08X context_pitch=%u mode=%08X disabled=%u callback=%08X completed=%u scheduled=%u last=%u enqueue=%u retire=%u "
+        "slot0=%u/%u/%08X slot1=%u/%u/%08X\n",
+        samples,reason,notification,data&0xFFFFFFF0u,data&7u,data&8u,
+        state->host_vblank.state,state->scanout_pending,state->scanout_received,
+        state->scanout_callback_pending,state->native_surfaces.valid,
+        state->native_surfaces.plan.width,state->native_surfaces.plan.height,
+        state->native_surfaces.plan.samples,state->native_surfaces.plan.color_address,
+        state->native_surfaces.plan.color_pitch,address,
+        words?words[0]:0,words?words[1]:0,words?words[2]:0,
+        words?words[0x1B8/4]:0,words?words[0x18C/4]:0,
+        words?words[0x1C0/4]:0,words?words[0x1C4/4]:0,
+        words?words[0x1C8/4]:0,words?words[0x1CC/4]:0,
+        words?words[0x1BC/4]:0,words?words[0x174/4]:0,
+        words?words[0x178/4]:0,words?words[0x17C/4]:0,
+        words?words[0x180/4]:0,words?words[0x184/4]:0,
+        words?words[0x188/4]:0);
+    fflush(stderr);
+}
 
 static int native_observe_vblank(NativeGraphicsState *state)
 {
@@ -495,6 +532,18 @@ static int native_prepare_vertex(NativeGraphicsState *state)
             ++count;
             if (state->kelvin.program[first + count - 1][3] & 1u) break;
         }
+        const char *cache_option = getenv("RECOMP_VERTEX_SHADER_CACHE");
+        int cache_enabled = !(cache_option && cache_option[0] == '0' && cache_option[1] == '\0');
+        if (cache_enabled && state->vertex_shader && state->vertex_bytecode && state->vertex_program_cache_valid &&
+            state->vertex_program_cache_first == first && state->vertex_program_cache_count == count &&
+            memcmp(state->vertex_program_cache, state->kelvin.program + first,
+                count * sizeof(state->vertex_program_cache[0])) == 0) {
+            ID3D11DeviceContext_VSSetShader(state->context, state->vertex_shader, NULL, 0);
+            state->kelvin.program_dirty = 0;
+            fprintf(stderr, "[GRAPHICS] original vertex program reused from exact instruction cache: start=%u instructions=%u\n",
+                first, count);
+            return 1;
+        }
         ID3D11VertexShader *shader = NULL; ID3DBlob *bytecode = NULL;
         HRESULT hr = fut_native_vertex_compile_screen(state->device, state->kelvin.program + first,
             count, &shader, &bytecode);
@@ -511,6 +560,15 @@ static int native_prepare_vertex(NativeGraphicsState *state)
         if (state->vertex_shader) ID3D11VertexShader_Release(state->vertex_shader);
         if (state->vertex_bytecode) ID3D10Blob_Release(state->vertex_bytecode);
         state->vertex_shader = shader; state->vertex_bytecode = bytecode;
+        if (cache_enabled) {
+            memcpy(state->vertex_program_cache, state->kelvin.program + first,
+                count * sizeof(state->vertex_program_cache[0]));
+            state->vertex_program_cache_first = first;
+            state->vertex_program_cache_count = count;
+            state->vertex_program_cache_valid = 1;
+        } else {
+            state->vertex_program_cache_valid = 0;
+        }
         ID3D11DeviceContext_VSSetShader(state->context, shader, NULL, 0);
         state->kelvin.program_dirty = 0;
         fprintf(stderr, "[GRAPHICS] original vertex program recompiled to native shader: start=%u instructions=%u\n",
@@ -632,14 +690,35 @@ static int native_finish(NativeGraphicsState *state)
 
 static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t notification)
 {
-    uint32_t address=0,w[FUT_SCANOUT_CONTEXT_WORDS],again[FUT_SCANOUT_CONTEXT_WORDS],checked=0;
+    uint32_t address=0,w[FUT_SCANOUT_CONTEXT_WORDS]={0},again[FUT_SCANOUT_CONTEXT_WORDS]={0},checked=0;
     uint32_t callback;
     FutGraphicsScanoutEnqueue plan;
-    if(!state->native_surfaces.valid ||
-        state->native_surfaces.plan.samples!=1 || !native_scanout_context(&address,w) ||
-        !fut_graphics_scanout_enqueue_plan(w,notification,&plan) || w[0]!=0xFD000000u ||
-        w[1]!=state->native_surfaces.plan.color_pitch ||
-        (plan.physical_address|0x80000000u)!=state->native_surfaces.plan.color_address) {
+    if(!state->native_surfaces.valid) {
+        native_scanout_trace_failure(state,notification,"surface-invalid",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if(state->native_surfaces.plan.samples!=1) {
+        native_scanout_trace_failure(state,notification,"surface-samples",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if(!native_scanout_context(&address,w)) {
+        native_scanout_trace_failure(state,notification,"context-read",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if(!fut_graphics_scanout_enqueue_plan(w,notification,&plan)) {
+        native_scanout_trace_failure(state,notification,"enqueue-plan",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if(w[0]!=0xFD000000u) {
+        native_scanout_trace_failure(state,notification,"context-registers",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if(w[1]!=state->native_surfaces.plan.color_pitch) {
+        native_scanout_trace_failure(state,notification,"context-pitch",address,w);
+        native_scanout_diagnostic(notification);return 0;
+    }
+    if((plan.physical_address|0x80000000u)!=state->native_surfaces.plan.color_address) {
+        native_scanout_trace_failure(state,notification,"physical-address",address,w);
         native_scanout_diagnostic(notification);return 0;
     }
     callback=w[0x18C/4];
@@ -650,28 +729,39 @@ static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t not
             !read32(address+0x7DC+plan.slot*4,&gamma_pending) || gamma_pending>1) {
             fprintf(stderr,"[GRAPHICS] scanout presentation domain refused: pending=%d enqueue=%u retire=%u disabled=%u gamma_pending=%u\n",
                 state->scanout_pending,w[0x1CC/4],w[0x1BC/4],w[0x1B8/4],gamma_pending);
+            native_scanout_trace_failure(state,notification,"presentation-domain",address,w);
             return 0;
         }
         /* sub_0029613D uploads three 256-byte DAC ramps, not an overlay.
          * Only identity is representable by the current pixel-copy display. */
         uint8_t ramp[768];
-        if(!read_guest(address+0x1DC+plan.slot*768,ramp,sizeof(ramp))) return 0;
+        if(!read_guest(address+0x1DC+plan.slot*768,ramp,sizeof(ramp))) {
+            native_scanout_trace_failure(state,notification,"gamma-read",address,w);return 0;
+        }
         for(unsigned i=0;i<sizeof(ramp);++i) if(ramp[i]!=(uint8_t)i) {
             fprintf(stderr,"[GRAPHICS] nonidentity scanout gamma unsupported: offset=%u value=%u\n",i,ramp[i]);
+            native_scanout_trace_failure(state,notification,"nonidentity-gamma",address,w);
             return 0;
         }
     }
     /* Gate excludes concurrent CLI-protected guest work and future host
      * interrupt delivery. Re-read also detects changes from nonparticipants;
      * it does not make unprotected guest writes safe. */
-    if(!native_scanout_context(&checked,again) || checked!=address || memcmp(w,again,sizeof(w))) return 0;
+    if(!native_scanout_context(&checked,again)) {
+        native_scanout_trace_failure(state,notification,"context-reread-failed",address,w);return 0;
+    }
+    if(checked!=address || memcmp(w,again,sizeof(w))) {
+        native_scanout_trace_failure(state,notification,"context-changed-before-enqueue",checked,again);return 0;
+    }
     if(!callback) {
         /* Keep the already exercised callback-free black-surface path. */
         unsigned slot_offset=0x174+plan.slot*12;
         if(!write32(address+0x1C4,plan.next_deadline) || !write32(address+0x1C8,plan.deadline) ||
             !write32(address+slot_offset,1) || !write32(address+slot_offset+4,plan.deadline) ||
             !write32(address+slot_offset+8,plan.physical_address) ||
-            !write32(address+0x1CC,plan.next_enqueue)) return 0;
+            !write32(address+0x1CC,plan.next_enqueue)) {
+            native_scanout_trace_failure(state,notification,"callback-free-write",address,w);return 0;
+        }
         if(!native_scanout_context(&checked,again) || checked!=address ||
             again[0x1CC/4]!=plan.next_enqueue || again[0x1BC/4]!=w[0x1BC/4] ||
             again[0x1C4/4]!=plan.next_deadline || again[0x1C8/4]!=plan.deadline ||
@@ -679,6 +769,7 @@ static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t not
             again[0x178/4+plan.slot*3u]!=plan.deadline ||
             again[0x17C/4+plan.slot*3u]!=plan.physical_address) {
             fputs("[GRAPHICS] callback-free scanout enqueue diverged from its plan\n",stderr);
+            native_scanout_trace_failure(state,notification,"callback-free-reread",checked,again);
             return 0;
         }
         fprintf(stderr,"[GRAPHICS] callback-free original scanout enqueued: slot=%u physical=%08X deadline=%u; awaiting original ISR retirement\n",
@@ -686,12 +777,14 @@ static int native_scanout_enqueue_locked(NativeGraphicsState *state,uint32_t not
     } else {
         if(fut_trace_file && fut_trace_active) {
             fputs("[GRAPHICS] original callback dispatch is unavailable during graphics trace/replay\n",stderr);
+            native_scanout_trace_failure(state,notification,"trace-replay-active",address,w);
             return 0;
         }
         FutNativeScanoutDispatchResult dispatched=fut_native_scanout_dispatch_preflight(
             &state->scanout_dispatch,address,notification,0x00191340u);
         if(dispatched!=FUT_SCANOUT_DISPATCH_OK) {
             fprintf(stderr,"[GRAPHICS] original scanout callback dispatch refused: result=%d; queue mutation not accepted\n",dispatched);
+            native_scanout_trace_failure(state,notification,"callback-preflight",address,w);
             return 0;
         }
         fprintf(stderr,"[GRAPHICS] original callback 00191340 validated; waiting for DXGI receipt before executing its enqueue/retirement handler\n");
@@ -713,15 +806,19 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
     /* Never wait for GPU completion while holding the guest interrupt gate. */
     if(!state->host_vblank.state) {
         fputs("[GRAPHICS] callback scanout requires the observed host-output receipt path\n",stderr);
+        native_scanout_trace_failure(state,notification,"host-vblank-unavailable",0,NULL);
         return 0;
     }
-    if(!native_finish(state)) return 0;
+    if(!native_finish(state)) {
+        native_scanout_trace_failure(state,notification,"native-finish",0,NULL);return 0;
+    }
     if(state->host_vblank.state) {
         unsigned interval=(notification>>5)&7u;
         if(state->scanout_pending || !interval || interval>4 ||
             !state->native_surfaces.valid || state->native_surfaces.plan.samples!=1) {
             fprintf(stderr,"[GRAPHICS] scanout stage domain refused: notification=%08X interval=%u pending=%d samples=%u\n",
-                notification,interval,state->scanout_pending,state->native_surfaces.plan.samples);return 0;
+                notification,interval,state->scanout_pending,state->native_surfaces.plan.samples);
+            native_scanout_trace_failure(state,notification,"stage-domain",0,NULL);return 0;
         }
         HRESULT hr=S_OK;
         if(!state->scanout_display.swap)
@@ -730,7 +827,8 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
         if(hr==S_OK) hr=fut_native_display_stage(&state->scanout_display,state->context,
             state->native_surfaces.color,2000,backend_stop);
         if(hr!=S_OK) {
-            fprintf(stderr,"[GRAPHICS] scanout staging failed: HRESULT=%08lX\n",hr);return 0;
+            fprintf(stderr,"[GRAPHICS] scanout staging failed: HRESULT=%08lX\n",hr);
+            native_scanout_trace_failure(state,notification,"display-stage",0,NULL);return 0;
         }
     }
     uint32_t observed_context,observed_words[FUT_SCANOUT_CONTEXT_WORDS];
@@ -738,6 +836,7 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
         observed_words[0x18C/4]==0x00191340u &&
         !fut_native_scanout_dispatch_init(&state->scanout_dispatch)) {
         fputs("[GRAPHICS] original scanout guest context unavailable (private stack/TIB)\n",stderr);
+        native_scanout_trace_failure(state,notification,"dispatch-init",observed_context,observed_words);
         return 0;
     }
     ULONGLONG deadline=GetTickCount64()+2000;
@@ -746,16 +845,19 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
         if(fut_guest_interrupt_try_enter()) break;
         if(GetTickCount64()>=deadline) {
             fputs("[GRAPHICS] scanout interrupt gate timed out; no queue mutation\n",stderr);
+            native_scanout_trace_failure(state,notification,"interrupt-gate-timeout",0,NULL);
             return 0;
         }
         Sleep(1);
     }
     int result=native_scanout_enqueue_locked(state,notification);
     fut_guest_interrupt_leave();
+    if(!result) native_scanout_trace_failure(state,notification,"locked-enqueue-return",0,NULL);
     if(result && state->host_vblank.state) {
         HRESULT hr=fut_native_display_submit(&state->scanout_display,(notification>>5)&7u);
         if(hr!=S_OK) {
             fprintf(stderr,"[GRAPHICS] scanout submit failed: HRESULT=%08lX; no flip-read advance\n",hr);
+            native_scanout_trace_failure(state,notification,"display-submit",0,NULL);
             return 0;
         }
         if(state->scanout_callback_pending)
@@ -887,6 +989,11 @@ static void native_capture_observed_lines(NativeGraphicsState *state)
         sizeof(bytes),view_a.guest_address,state->kelvin.vertex_array_offset[0],state->kelvin.vertex_array_format[0]);
 }
 
+static int native_graphics_stage_timing_enabled(void);
+static uint64_t native_graphics_stage_timing_begin(void);
+static void native_graphics_stage_timing_end(uint64_t started,const char *phase,
+    unsigned subchannel,uint32_t method,uint32_t value,size_t offset);
+
 static int native_prepare_aa2_programs(NativeGraphicsState *state)
 {
     if(!state->constant_coordinates) return 0;
@@ -896,9 +1003,43 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
     }
     ID3D11VertexShader *vs=NULL;ID3DBlob *vblob=NULL;
     ID3D11PixelShader *ps=NULL;ID3DBlob *pblob=NULL;
-    HRESULT hr=fut_native_vertex_compile_screen_aa2(state->device,state->kelvin.program+first,count,&vs,&vblob);
-    if(SUCCEEDED(hr)) hr=fut_native_fragment_compile_aa2_affine(state->device,&state->kelvin,state->textures,1,&ps,&pblob);
-    if(SUCCEEDED(hr)) hr=fut_native_fragment_linkage(vblob,pblob);
+    int timing=native_graphics_stage_timing_enabled();
+    const char *cache_option=getenv("RECOMP_VERTEX_SHADER_CACHE");
+    int cache_enabled=!(cache_option && cache_option[0]=='0' && cache_option[1]=='\0');
+    int cached_vertex=cache_enabled && state->aa2_vertex_shader && state->aa2_vertex_bytecode &&
+        state->aa2_vertex_program_cache_valid && state->aa2_vertex_program_cache_first==first &&
+        state->aa2_vertex_program_cache_count==count &&
+        memcmp(state->aa2_vertex_program_cache,state->kelvin.program+first,
+            count*sizeof(state->aa2_vertex_program_cache[0]))==0;
+    uint64_t stage_started=timing?native_graphics_stage_timing_begin():0;
+    HRESULT hr=S_OK;
+    if(cached_vertex) {
+        vs=state->aa2_vertex_shader;ID3D11VertexShader_AddRef(vs);
+        vblob=state->aa2_vertex_bytecode;ID3D10Blob_AddRef(vblob);
+        fprintf(stderr,"[GRAPHICS] original AA2 vertex program reused from exact instruction cache: start=%u instructions=%u\n",
+            first,count);
+    } else {
+        hr=fut_native_vertex_compile_screen_aa2(state->device,state->kelvin.program+first,count,&vs,&vblob);
+        if(timing) native_graphics_stage_timing_end(stage_started,"aa2-vertex-compile",0,0,0,0);
+    }
+    if(SUCCEEDED(hr)) {
+        stage_started=timing?native_graphics_stage_timing_begin():0;
+        int fragment_cache_hit=0;
+        if(cache_enabled)
+            hr=fut_native_fragment_compile_aa2_affine_cached(state->device,&state->kelvin,
+                state->textures,1,&state->aa2_fragment_cache,&ps,&pblob,&fragment_cache_hit);
+        else
+            hr=fut_native_fragment_compile_aa2_affine(state->device,&state->kelvin,
+                state->textures,1,&ps,&pblob);
+        if(timing) native_graphics_stage_timing_end(stage_started,"aa2-fragment-compile",0,0,0,0);
+        if(fragment_cache_hit)
+            fprintf(stderr,"[GRAPHICS] original AA2 pixel program reused from exact generated HLSL cache\n");
+    }
+    if(SUCCEEDED(hr)) {
+        stage_started=timing?native_graphics_stage_timing_begin():0;
+        hr=fut_native_fragment_linkage(vblob,pblob);
+        if(timing) native_graphics_stage_timing_end(stage_started,"aa2-fragment-linkage",0,0,0,0);
+    }
     if(FAILED(hr)) {
         if(vs) ID3D11VertexShader_Release(vs);if(vblob) ID3D10Blob_Release(vblob);
         if(ps) ID3D11PixelShader_Release(ps);if(pblob) ID3D10Blob_Release(pblob);
@@ -909,6 +1050,15 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
     if(state->pixel_shader) ID3D11PixelShader_Release(state->pixel_shader);
     if(state->pixel_bytecode) ID3D10Blob_Release(state->pixel_bytecode);
     state->aa2_vertex_shader=vs;state->aa2_vertex_bytecode=vblob;
+    if(cache_enabled && !cached_vertex) {
+        memcpy(state->aa2_vertex_program_cache,state->kelvin.program+first,
+            count*sizeof(state->aa2_vertex_program_cache[0]));
+        state->aa2_vertex_program_cache_first=first;
+        state->aa2_vertex_program_cache_count=count;
+        state->aa2_vertex_program_cache_valid=1;
+    } else if(!cache_enabled) {
+        state->aa2_vertex_program_cache_valid=0;
+    }
     state->pixel_shader=ps;state->pixel_bytecode=pblob;
     state->kelvin.fragment.dirty=0;
     return 1;
@@ -916,12 +1066,23 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
 
 static int native_prepare_draw(NativeGraphicsState *state)
 {
-    if (!native_prepare_surfaces(state) || !native_prepare_textures(state)) return 0;
+    int timing=native_graphics_stage_timing_enabled();
+    uint64_t stage_started=timing?native_graphics_stage_timing_begin():0;
+    int prepared=native_prepare_surfaces(state);
+    if(timing) native_graphics_stage_timing_end(stage_started,"draw-surfaces",0,0,0,0);
+    if(!prepared) return 0;
+    stage_started=timing?native_graphics_stage_timing_begin():0;
+    prepared=native_prepare_textures(state);
+    if(timing) native_graphics_stage_timing_end(stage_started,"draw-textures",0,0,0,0);
+    if(!prepared) return 0;
     int aa2=state->native_surfaces.plan.samples==2;
     unsigned candidates=0;
     for(unsigned stage=0;stage<4;++stage) if(state->textures[stage].zero_rgb_candidate) candidates|=1u<<stage;
     if(candidates) {
-        if(!native_prepare_fragment(state)) return 0;
+        stage_started=timing?native_graphics_stage_timing_begin():0;
+        prepared=native_prepare_fragment(state);
+        if(timing) native_graphics_stage_timing_end(stage_started,"draw-fragment-specialize",0,0,0,0);
+        if(!prepared) return 0;
         fprintf(stderr,"[GRAPHICS] zero-RGB specialization compiled: stages=%X; no candidate texture/alpha resources remain; generic quincunx unsupported\n",candidates);
     }
     int software_ready=aa2?
@@ -1018,9 +1179,21 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fprintf(stderr,"[GRAPHICS] fixed-function vertex execution remains untranslated; refusing stale programmable shader\n");
         return 0;
     }
-    if (!native_prepare_vertex(state) || (aa2?!native_prepare_aa2_programs(state):
-        (!candidates && !native_prepare_fragment(state)))) return 0;
+    if (!native_prepare_vertex(state)) return 0;
+    if(aa2) {
+        stage_started=timing?native_graphics_stage_timing_begin():0;
+        prepared=native_prepare_aa2_programs(state);
+        if(timing) native_graphics_stage_timing_end(stage_started,"draw-aa2-programs",0,0,0,0);
+        if(!prepared) return 0;
+    } else if(!candidates) {
+        stage_started=timing?native_graphics_stage_timing_begin():0;
+        prepared=native_prepare_fragment(state);
+        if(timing) native_graphics_stage_timing_end(stage_started,"draw-fragment-program",0,0,0,0);
+        if(!prepared) return 0;
+    }
+    stage_started=timing?native_graphics_stage_timing_begin():0;
     HRESULT linkage=fut_native_fragment_linkage(aa2?state->aa2_vertex_bytecode:state->vertex_bytecode,state->pixel_bytecode);
+    if(timing) native_graphics_stage_timing_end(stage_started,"draw-shader-linkage",0,0,0,0);
     if(FAILED(linkage)) {
         fprintf(stderr,"[GRAPHICS] VS/PS compiled signature mismatch: HRESULT=%08lX; no rasterized draw\n",linkage);
         return 0;
@@ -1100,6 +1273,35 @@ static int native_prepare_immediate(NativeGraphicsState *state)
                 positions[i].texture[0][2],positions[i].texture[0][3],state->quincunx_coordinates,
                 positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3]);
     return 1;
+}
+
+static int native_graphics_stage_timing_enabled(void)
+{
+    const char *value=getenv("RECOMP_GRAPHICS_STAGE_TIMING");
+    return value && !strcmp(value,"1");
+}
+
+static uint64_t native_graphics_stage_timing_begin(void)
+{
+    LARGE_INTEGER value={0};
+    return QueryPerformanceCounter(&value) && value.QuadPart>0?
+        (uint64_t)value.QuadPart:0;
+}
+
+static void native_graphics_stage_timing_end(uint64_t started,const char *phase,
+    unsigned subchannel,uint32_t method,uint32_t value,size_t offset)
+{
+    if(!started) return;
+    LARGE_INTEGER finished={0},frequency={0};
+    if(!QueryPerformanceCounter(&finished) ||
+        !QueryPerformanceFrequency(&frequency) || frequency.QuadPart<=0 ||
+        finished.QuadPart<(LONGLONG)started) return;
+    uint64_t elapsed_us=(uint64_t)(finished.QuadPart-(LONGLONG)started)*1000000u/
+        (uint64_t)frequency.QuadPart;
+    if(elapsed_us>=20000u)
+        fprintf(stderr,"[GRAPHICS-TIME] phase=%s duration_us=%llu thread=%lu sub=%u method=%04X value=%08X offset=%zu\n",
+            phase,(unsigned long long)elapsed_us,(unsigned long)GetCurrentThreadId(),
+            subchannel,method,value,offset);
 }
 
 static int native_method(void *context, unsigned subchannel, uint32_t method,
@@ -1308,9 +1510,19 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             (method>=0x1880u && method<0x1900u))) {
             FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);
             if(status==FUT_IMMEDIATE_APPLIED) return 1;
-            if(status!=FUT_IMMEDIATE_READY || !native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
+            if(status!=FUT_IMMEDIATE_READY) return 0;
+            int timing=native_graphics_stage_timing_enabled();
+            uint64_t stage_started=timing?native_graphics_stage_timing_begin():0;
+            int prepared=native_prepare_immediate(state);
+            if(timing) native_graphics_stage_timing_end(stage_started,"prepare-vertices",subchannel,method,value,offset);
+            if(!prepared) return 0;
+            stage_started=timing?native_graphics_stage_timing_begin():0;
+            prepared=native_prepare_draw(state);
+            if(timing) native_graphics_stage_timing_end(stage_started,"prepare-draw-state",subchannel,method,value,offset);
+            if(!prepared) return 0;
             unsigned count=state->immediate.count;
             HRESULT hr;
+            stage_started=timing?native_graphics_stage_timing_begin():0;
             if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
                 &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
                 state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
@@ -1319,6 +1531,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
                 state->device,state->context,state->vertex_shader,state->pixel_shader,
                 &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop);
+            if(timing) native_graphics_stage_timing_end(stage_started,"draw-completion-writeback",subchannel,method,value,offset);
             if(FAILED(hr)) {
                 fprintf(stderr,"[GRAPHICS] immediate draw/completion refused: HRESULT=%08lX submitted=%u dirty=%u; batch not consumed\n",
                     hr,state->native_immediate.submitted,state->native_surfaces.gpu_dirty);
@@ -1333,7 +1546,10 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 fputs("[GRAPHICS] experimental original resolve completed; inspecting 640x480 output, not a presentation receipt\n",stderr);
                 native_preview_log_source_stats(&state->native_surfaces.plan);
             }
-            if (!native_preview_original_draw(state)) return 0;
+            stage_started=timing?native_graphics_stage_timing_begin():0;
+            int previewed=native_preview_original_draw(state);
+            native_graphics_stage_timing_end(stage_started,"preview-resolve",subchannel,method,value,offset);
+            if (!previewed) return 0;
             return 1;
         }
         if (method == 0x100u && value) {
@@ -1449,14 +1665,33 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
 static int native_traced_method(void *context,unsigned subchannel,uint32_t method,
                                 uint32_t value,size_t offset)
 {
-    if(!fut_trace_file) return native_method(context,subchannel,method,value,offset);
-    fut_trace_event(FUT_TRACE_METHOD,subchannel,method,value,NULL,0);
-    fut_trace_event(FUT_TRACE_RESULT,0,0,(uint32_t)offset,NULL,0);
-    fut_trace_active=1;
-    int result=native_method(context,subchannel,method,value,offset);
-    fut_trace_active=0;
-    fut_trace_event(FUT_TRACE_RESULT,1,0,result,NULL,0);
-    if(fflush(fut_trace_file)) fut_trace_error();
+    const char *timing_env=getenv("RECOMP_GRAPHICS_STAGE_TIMING");
+    int timing=timing_env && !strcmp(timing_env,"1");
+    LARGE_INTEGER started={0};
+    if(timing) QueryPerformanceCounter(&started);
+    int result;
+    if(!fut_trace_file) result=native_method(context,subchannel,method,value,offset);
+    else {
+        fut_trace_event(FUT_TRACE_METHOD,subchannel,method,value,NULL,0);
+        fut_trace_event(FUT_TRACE_RESULT,0,0,(uint32_t)offset,NULL,0);
+        fut_trace_active=1;
+        result=native_method(context,subchannel,method,value,offset);
+        fut_trace_active=0;
+        fut_trace_event(FUT_TRACE_RESULT,1,0,result,NULL,0);
+        if(fflush(fut_trace_file)) fut_trace_error();
+    }
+    if(timing) {
+        LARGE_INTEGER finished={0},frequency={0};
+        if(QueryPerformanceCounter(&finished) && QueryPerformanceFrequency(&frequency) &&
+            frequency.QuadPart>0 && finished.QuadPart>=started.QuadPart) {
+            uint64_t elapsed_us=(uint64_t)(finished.QuadPart-started.QuadPart)*1000000u/
+                (uint64_t)frequency.QuadPart;
+            if(elapsed_us>=20000u)
+                fprintf(stderr,"[GRAPHICS-TIME] slow-method duration_us=%llu thread=%lu sub=%u method=%04X value=%08X offset=%zu result=%d\n",
+                    (unsigned long long)elapsed_us,(unsigned long)GetCurrentThreadId(),
+                    subchannel,method,value,offset,result);
+        }
+    }
     return result;
 }
 
@@ -1629,6 +1864,7 @@ static DWORD WINAPI native_worker(void *unused)
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     if (state.aa2_vertex_shader) ID3D11VertexShader_Release(state.aa2_vertex_shader);
     if (state.aa2_vertex_bytecode) ID3D10Blob_Release(state.aa2_vertex_bytecode);
+    fut_native_fragment_cache_destroy(&state.aa2_fragment_cache);
     if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
     if (state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     ID3D11DeviceContext_Release(context);

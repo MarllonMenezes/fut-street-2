@@ -1,9 +1,21 @@
 #include "recomp_types.h"
 #include "guest_interrupt_gate.h"
 
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static atomic_uint g_diagnostic_next_thread_id = ATOMIC_VAR_INIT(1u);
+static _Thread_local uint32_t g_diagnostic_thread_id;
+
+static uint32_t diagnostic_thread_id(void)
+{
+    if (g_diagnostic_thread_id == 0)
+        g_diagnostic_thread_id = atomic_fetch_add_explicit(
+            &g_diagnostic_next_thread_id, 1u, memory_order_relaxed);
+    return g_diagnostic_thread_id;
+}
 
 /* User-authorized boot exploration only. This fabricates bounded completions;
  * it implements neither DSP execution nor audio. Called by a separate,
@@ -27,10 +39,10 @@ int fut_audio_effects_bypass(uint32_t site, uint32_t address,
     }
     *command = 0;
     ++applied;
-    fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] site=%08X address=%08X "
+    fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] thread=%u site=%08X address=%08X "
             "before=00000003 after=00000000 simulated-completion=1 "
             "application=%u/4096 DSP-executed=0 audio-validated=0 NOT_READY\n",
-            site, address, applied);
+            diagnostic_thread_id(), site, address, applied);
     fflush(stderr);
     return 1;
 }
@@ -201,4 +213,136 @@ void recomp_unimpl(const char *text, uint32_t va)
     stop_on_runtime_gap();
     if (stop)
         abort();
+}
+
+/* Read-only instrumentation for the original STRM callback path. Event
+ * counters and log limits are local to this trace, independent of the global
+ * generated-function trace budget. */
+enum {
+    STREAM_TRACE_EVENT_COUNT = 17,
+    STREAM_TRACE_SUMMARY_INTERVAL = 256,
+    STREAM_TRACE_SUMMARY_LIMIT = 4096
+};
+
+static const char *const g_stream_trace_event_names[STREAM_TRACE_EVENT_COUNT] = {
+    "invalid", "register", "remove-enter", "remove-found", "remove-miss",
+    "caller-enter", "caller-return", "dispatch-enter", "dispatch-next",
+    "dispatch-return", "dispatch-exit", "callback-enter", "callback-node",
+    "callback-3988d", "process-39bd7-enter", "process-39bd7-return",
+    "callback-exit"
+};
+
+static atomic_uint_fast64_t g_stream_trace_event_counts[STREAM_TRACE_EVENT_COUNT];
+static atomic_uint_fast64_t g_stream_trace_total;
+static atomic_uint_fast64_t g_stream_trace_detail_count;
+static atomic_uint_fast64_t g_stream_trace_summary_count;
+static atomic_flag g_stream_trace_init_lock = ATOMIC_FLAG_INIT;
+static atomic_int g_stream_trace_initialized;
+static atomic_int g_stream_trace_enabled;
+static atomic_uint g_stream_trace_per_event_limit;
+
+static void stream_trace_initialize(void)
+{
+    if (atomic_load_explicit(&g_stream_trace_initialized, memory_order_acquire))
+        return;
+
+    while (atomic_flag_test_and_set_explicit(&g_stream_trace_init_lock,
+                                              memory_order_acquire)) {
+    }
+    if (!atomic_load_explicit(&g_stream_trace_initialized, memory_order_relaxed)) {
+        const char *enabled = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        const char *limit_text = getenv("RECOMP_STREAM_CALLBACK_TRACE_LIMIT");
+        unsigned limit = 128;
+        int trace_enabled = enabled != NULL && strcmp(enabled, "1") == 0;
+
+        if (limit_text != NULL && limit_text[0] != '\0') {
+            char *end = NULL;
+            const unsigned long parsed = strtoul(limit_text, &end, 10);
+            if (end == limit_text || *end != '\0' || parsed == 0 ||
+                parsed > 10000ul) {
+                trace_enabled = 0;
+                fprintf(stderr, "[STRM-CB-TRACE] invalid local limit; trace disabled\n");
+            } else {
+                limit = (unsigned)parsed;
+            }
+        }
+
+        atomic_store_explicit(&g_stream_trace_per_event_limit, limit,
+                              memory_order_relaxed);
+        atomic_store_explicit(&g_stream_trace_enabled, trace_enabled,
+                              memory_order_relaxed);
+        atomic_store_explicit(&g_stream_trace_initialized, 1,
+                              memory_order_release);
+        if (trace_enabled) {
+            fprintf(stderr,
+                    "[STRM-CB-TRACE] enabled per-event-limit=%u summary-interval=%u global-trace-budget-independent=1 read-only=1 NOT_READY\n",
+                    limit, STREAM_TRACE_SUMMARY_INTERVAL);
+            fflush(stderr);
+        }
+    }
+    atomic_flag_clear_explicit(&g_stream_trace_init_lock, memory_order_release);
+}
+
+static void stream_trace_write_summary(uint64_t total)
+{
+    const uint64_t summary_number = atomic_fetch_add_explicit(
+        &g_stream_trace_summary_count, 1, memory_order_relaxed) + 1;
+    if (summary_number > STREAM_TRACE_SUMMARY_LIMIT)
+        return;
+
+    fprintf(stderr,
+        "[STRM-CB-SUMMARY] total=%llu reg=%llu rm_enter=%llu rm_found=%llu rm_miss=%llu caller_in=%llu caller_out=%llu disp_in=%llu disp_next=%llu disp_out=%llu disp_exit=%llu cb_in=%llu node=%llu ret3988=%llu process_in=%llu process_out=%llu cb_out=%llu\n",
+        (unsigned long long)total,
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[1], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[2], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[3], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[4], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[5], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[6], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[7], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[8], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[9], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[10], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[11], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[12], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[13], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[14], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[15], memory_order_relaxed),
+        (unsigned long long)atomic_load_explicit(&g_stream_trace_event_counts[16], memory_order_relaxed));
+    fflush(stderr);
+}
+
+void recomp_stream_callback_trace(uint32_t event, uint32_t a, uint32_t b,
+                                  uint32_t c, uint32_t d, uint32_t e,
+                                  uint32_t f)
+{
+    if (event == 0 || event >= STREAM_TRACE_EVENT_COUNT)
+        return;
+
+    stream_trace_initialize();
+    if (!atomic_load_explicit(&g_stream_trace_enabled, memory_order_relaxed))
+        return;
+
+    const uint64_t event_number = atomic_fetch_add_explicit(
+        &g_stream_trace_event_counts[event], 1, memory_order_relaxed) + 1;
+    const uint64_t total = atomic_fetch_add_explicit(
+        &g_stream_trace_total, 1, memory_order_relaxed) + 1;
+    const unsigned per_event_limit = atomic_load_explicit(
+        &g_stream_trace_per_event_limit, memory_order_relaxed);
+
+    if (event_number <= per_event_limit) {
+        const uint64_t detail_number = atomic_fetch_add_explicit(
+            &g_stream_trace_detail_count, 1, memory_order_relaxed) + 1;
+        fprintf(stderr,
+                "[STRM-CB] thread=%u event=%s event_seq=%llu total=%llu a=%08X b=%08X c=%08X d=%08X e=%08X f=%08X detail=%llu\n",
+                diagnostic_thread_id(),
+                g_stream_trace_event_names[event],
+                (unsigned long long)event_number,
+                (unsigned long long)total, a, b, c, d, e, f,
+                (unsigned long long)detail_number);
+        fflush(stderr);
+    }
+
+    if ((total % STREAM_TRACE_SUMMARY_INTERVAL) == 0)
+        stream_trace_write_summary(total);
 }

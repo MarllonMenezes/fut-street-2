@@ -14,79 +14,33 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 18 de outubro de 2026
+## Estado verificável — 19 de outubro de 2026
 
-**`NOT_READY` — ainda não jogável.** A build privada do host contém 15.611
-entradas de dispatch e 37/37 gates nativos passaram. O launch limitado
-executou draws experimentais com writeback para o guest, incluindo o strip
-P8 inline 128×32 (14.553 pixel-shader invocations). A chamada recompilada
-`0x001D17BC` está ligada, mas não foi observada em execução nesta captura.
-O primeiro bloqueio atual é `NV097_SET_BEGIN_END=2` (linhas), ainda sem
-caminho de rasterização no host.
+**NOT_READY — ainda não é um jogo recompilado jogável.** A build atual do host e o CTest focal passaram. O executável dessa build ainda não foi lançado após a correção do script de preparação do overlay.
 
-| Etapa | Evidência atual |
+| Etapa | Evidência mais recente |
 | --- | --- |
-| Tradução e compilação | Build privado do host com 15.611 entradas de dispatch; 37/37 gates nativos passaram. O símbolo `0x001D17BC` foi gerado e ligado, mas sua chamada original não foi observada neste launch. |
-| Boot | Execução parcial da lógica original confirmada; o launch saiu com `exit 3` antes do timeout de 60 segundos, no início de um primitivo de linhas ainda não suportado. Boot completo e menu ainda não comprovados. |
-| Rendering | O strip P8 inline 128×32 autorizado executou seis vértices expandidos, IA=12 e PS=14.553, com writeback da superfície no guest. Também houve conclusão/writeback de outros strips experimentais, incluindo a gate BC2/AA2. Os casos BC2 e AA2 seguem aproximações sem fidelidade NV2A comprovada; isso não comprova uma imagem completa do jogo. |
-| Áudio | Não funcional nem validado. O experimento usa bypass explícito da espera de efeitos no host; DSP permanece isolado. |
-| Controles e gameplay | Menu navegável, comandos na lógica original e partida curta ainda não comprovados. |
+| Tradução e compilação | O código recompilado do host compilou; o teste no_emulation_runtime_support passou (1/1). Isso confirma build e gate focal, não boot funcional. |
+| Boot | O último launch, run 011520, usou o executável anterior à correção do script; expirou em 60 segundos e foi encerrado pelo runner. O executável da build atual ainda precisa de um launch limitado. Menu e boot completo continuam sem comprovação. |
+| Streaming e áudio | Durante o launch, o updater encheu o registro alvo até cursor 29 diante de highwater 30; o crédito ficou em zero e nenhum dos readers instrumentados foi chamado nessa janela. O ring do host não tinha espaço para outro bloco. Um bypass experimental completou 931 esperas artificialmente; DSP executado = 0 e áudio validado = 0. A relação causal entre esses registros e o avanço do boot ainda precisa ser confirmada. |
+| Rendering | O launch executou um caso capturado de AA2 LINELIST com 8 vértices, 16 vértices de IA, 5.507 pixel-shader invocations e writeback da superfície guest. A cobertura de linha D3D11, depth compression e apresentação/VBlank não foram validadas como equivalentes NV2A. Isso não comprova um quadro completo nem a resolução 1920×1080. |
+| Controles e gameplay | Menu utilizável, comandos chegando à lógica original, carregamento de cenário e partida curta ainda não foram comprovados. |
 
-O presenter antes esperava exclusivamente `GetFrameStatistics`. O teste
-sintético reproduziu estatísticas atrasadas mesmo após uma submissão aceita.
-Agora ele também reconhece o evento documentado de
-[conclusão da apresentação do DXGI](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_3/nf-dxgi1_3-idxgiswapchain2-getframelatencywaitableobject),
-com somente um quadro pendente e identificador de submissão conferido.
-A prontidão inicial é consumida antes do desenho; um sinal consumido para
-confirmar o quadro fica reservado para a próxima etapa de staging.
-Recibos distinguem sua origem: o evento registra o instante de observação da
-CPU e mantém refresh e timestamp de sincronismo zerados. Nenhuma estatística
-é sintetizada. O avanço do flip continua condicionado à correlação com a
-aposentadoria pela ISR original, sob o modelo já existente de timing do host.
+As aproximações de textura, AA2, resolve e linhas permanecem experimentais,
+restritas aos casos observados e opt-in. Não há alegação de fidelidade NV2A.
+A ISO/XBE original permaneceu intacta; builds, saves, logs, capturas e fontes
+recompilados proprietários ficam locais.
 
-O caso P8 128×32 foi exercitado com depth-write e a aproximação AA2 autorizada;
-compressão de depth e fidelidade NV2A continuam sem validação. A conversão
-S32K segue o modelo local S16-para-float. O draw BC2/DXT23 64×64 autorizado
-passou pela gate, completou a chamada D3D e writeback do guest; filtragem BC2,
-compress-depth e fidelidade NV2A continuam sem validação. Os descritores
-vertex inline adicionais foram apenas retidos e testados contra o pacote
-observado.
+### O que falta
 
-As aproximações gráficas continuam restritas aos casos observados e aceitos:
-dithering neutro em ARGB8 single-sample; AA2 com os baselines autorizados;
-quincunx no resolve 1280×480→640×480; BC1 sem o ruído DXT1 desconhecido na
-textura 512×512 e desenho aceito; P8 32×32 e P8 128×32 nas opções independentes.
-BC2/DXT23 64×64 no draw AA2 capturado tem opção própria desligada por
-padrão. Nenhuma dessas aproximações comprova equivalência NV2A.
+1. Identificar por que o caminho de leitura do ring não foi acionado e verificar se ele realmente bloqueia a progressão. Não preencher cursores nem fabricar consumo.
+2. Repetir um boot limitado após resolver o primeiro bloqueio funcional observado e comprovar a chegada ao menu e ao cenário.
+3. Produzir e avaliar um quadro completo, incluindo apresentação e funcionamento em 1920×1080; os draws capturados ainda não provam isso.
+4. Validar entrada do controle e uma partida curta com jogadores, bola, regras e placar conduzidos pela lógica recompilada original.
+5. Retirar o bypass de áudio e demonstrar áudio funcional separadamente; o bypass atual apenas permite investigação limitada.
 
-O bypass de áudio exige opção explícita. Sua conclusão artificial serve para
-investigar os bloqueios seguintes; não representa execução do DSP ou áudio
-correto. No experimento DSP isolado, `FFFFB2` e o campo de passo do DMA circular
-continuam desconhecidos; nenhum START original foi observado. O DSP não
-participa do boot. O XBE permaneceu intacto e os logs, saves, capturas e código
-gerado proprietário ficam locais em D:.
-
-### Próximos passos
-
-1. **Implementar o primitivo de linhas observado:** `BEGIN_END=2` está definido
-   como `LINES` no mapa XDK local e é seguido por 32 índices (16 pares); falta um caminho
-   de expansão e rasterização de linhas com gates e teste focais.
-2. **Retomar o boot limitado:** executar com limite finito para localizar o
-   primeiro bloqueio seguinte, preservando as aproximações opt-in e os logs.
-3. **Verificar rendering:** capturar e avaliar quadros produzidos e medir
-   cobertura/writeback; draws aceitos ainda não demonstram imagem fiel.
-4. **Chegar ao menu utilizável:** resolver dependências de tradução, serviços
-   do host e carregamento encontradas pelo caminho original.
-5. **Validar controles e cenário:** comprovar entrada chegando à lógica
-   original e carregamento de uma partida.
-6. **Comprovar uma partida curta:** jogadores, bola, regras, placar e progressão
-   pela lógica original, com estabilidade verificável.
-7. **Fechar áudio e fidelidade:** resolver DSP/APU, retirar a dependência do
-   bypass e avaliar os limites das aproximações gráficas.
-
-Build, boot, rendering, áudio e gameplay são critérios separados. O estado
-permanece `NOT_READY` até a comprovação dos requisitos funcionais.
-
+Build, boot, rendering, resolução, áudio e gameplay são critérios separados.
+O estado permanece NOT_READY até comprovação funcional.
 ## Abordagem
 
 - Usar o [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) como base para análise e tradução estática do código Xbox x86 para C, com uma pilha de patches versionada em [`native_recomp/patches`](native_recomp/patches).
