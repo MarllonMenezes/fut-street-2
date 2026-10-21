@@ -18,23 +18,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** O host nativo foi compilado e executado com saída PCM experimental e captura de quadros. A tela original de carregamento já foi inspecionada em 640×480; menu, cenário e partida continuam sem comprovação.
 
-A integração de diagnóstico durou 120 segundos e foi encerrada pelo timeout.
-Uma execução final de 20 segundos confirmou o boot da build final, também limitada
-por timeout.
-O novo rastreamento opcional confirmou chamadas das rotinas originais de interface
-e atualização de variáveis, identificando seus chamadores. Os dois pontos
-monitorados de preparação da tela e transição geral de fase não foram observados
-nessa janela; isso ainda não identifica a causa da espera. A captura final
-continua mostrando “LOADING…”, sem menu comprovado. Dezesseis testes focais passaram.
-O próximo experimento acompanha a sequência original de boot identificada pelos
-chamadores, até localizar a condição que impede sua conclusão.
+Foi corrigida a ordem de envio do PCM: a saída nativa agora recebe o cursor
+que a rotina original acabou de atualizar, em vez do valor anterior ao refill.
+O teste de regressão rejeita a ordem antiga e verifica a nova no código regenerado.
+
+Na integração de 300 segundos, os scripts originais navegaram por quatro telas
+de boot. A chegada ao último estágio observado ocorreu por volta de 115 segundos,
+contra 140 segundos na execução anterior com as mesmas opções. Essa comparação
+entre builds não isola toda a variação de desempenho. Houve 1.016 apresentações
+com retirada pela ISR confirmada; a captura final ainda mostra “LOADING…”.
+Dezessete testes focais passaram. Uma execução adicional de 20 segundos confirmou
+o boot da build final. Ambas foram encerradas pelo timeout.
+
+O próximo experimento acompanha a notificação original de conclusão do preload
+e a condição de navegação da tela atual para o menu. A causa da espera restante
+ainda não está demonstrada.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação e testes | Build passou; dezesseis testes focais passaram, incluindo o rastreamento de interface desligado/ligado, limites, preservação de registradores e recusa de pontos de inserção ausentes/duplicados, contratos de runtime e dispatch, além de caches/execução de shaders, texturas, alpha, AA2, backend, comandos e salto da fila, arrays, estados de software, pipeline e contratos de áudio. |
-| Streaming | O mixer original voltou a chamar os leitores. O registro alvo recebeu pelo menos 145 blocos, com consumo liberando slots; antes parava em 29. |
-| Saída PCM nativa | O Windows aceitou PCM de seis canais, 48 kHz e 16 bits. A posição real do dispositivo avançou e houve envio de pacotes não silenciosos produzidos pelo mixer original. Conteúdo audível, canais e latência ainda não foram validados. |
-| Boot e rendering | Capturas mostram a arte original e “LOADING…”. Antes do cache de fragmentos, foram 772 compilações em 60 segundos; depois, sete em toda a execução de 300 segundos, com reutilização por comparação integral do código gerado. Nas janelas de cerca de um minuto, os recibos DXGI/ISR passaram de 171 para 232. Menu e funcionamento em 1920×1080 ainda não comprovados. |
+| Compilação e testes | Build passou; 17 testes focais passaram, incluindo ordem de refill PCM, rastreamento, ponteiros inválidos, limites de texto e registradores, runtime/dispatch e integração gráfica. |
+| Streaming | O mixer original continua ativo e alimenta a saída nativa. O envio PCM passou a ocorrer após a atualização original do cursor de preenchimento. |
+| Saída PCM nativa | PCM experimental de seis canais, 48 kHz e 16 bits, com posição real de reprodução e pacotes não silenciosos. Conteúdo audível, canais, latência e continuidade ainda não foram validados. |
+| Boot e rendering | Os comandos originais comprovam navegação entre telas de boot; houve 1.016 apresentações/ISR na execução de 300 segundos. A captura final ainda contém “LOADING…”. Menu e funcionamento em 1920×1080 não comprovados. |
 | Controles e gameplay | Entrada na lógica original, cenário carregado e partida curta ainda não comprovados. |
 
 A saída PCM exige `-NativePcmOutput` no runner e uma build com
@@ -42,8 +47,8 @@ A saída PCM exige `-NativePcmOutput` no runner e uma build com
 Ela usa o buffer final do mixer original e a posição de reprodução do Windows.
 O avanço de 32 amostras do cursor de escrita e o mapeamento 5.1 são experimentais.
 Isso não implementa o DSP/APU nem comprova equivalência de áudio Xbox.
-O bypass de espera de efeitos ainda foi necessário e completou 2.195 esperas
-artificialmente na integração anterior de 300 segundos. Seu orçamento padrão continua 4.096;
+O bypass de espera de efeitos ainda foi necessário e completou 1.943 esperas
+artificialmente na integração de 300 segundos. Seu orçamento padrão continua 4.096;
 o experimento longo usou o limite explícito de 16.384.
 
 As aproximações gráficas permanecem experimentais e restritas aos casos
@@ -67,12 +72,14 @@ não são usados como chaves do cache. O runner registra essas opções efetivas
 
 O rastreamento de interface exige `FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK=ON`
 na build e `-FrontendLoadingTrace` no runner. É desligado por padrão e registra
-somente valores numéricos de entrada, com limite de 64 linhas por ponto.
+valores de entrada e nomes de comandos, com limite de 64 linhas por ponto.
+Os nomes são lidos com proteção contra ponteiros inválidos, limitados a 96 bytes
+e escapados para não introduzir linhas adicionais nos logs.
 Ele não altera registradores, condições de fase ou resultados das rotinas.
 
 ### O que falta
 
-1. Identificar a condição que mantém a tela LOADING e comprovar a transição para o menu e o cenário.
+1. Acompanhar a notificação original de conclusão do preload e identificar a condição restante para sair da tela atual; comprovar menu e cenário.
 2. Resolver o próximo bloqueio funcional observado em execuções limitadas, preservando o consumo original do streaming.
 3. Comprovar uma imagem completa em 1920×1080.
 4. Validar controles e uma partida curta com jogadores, bola, regras e placar conduzidos pela lógica recompilada original.

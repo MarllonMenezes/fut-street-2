@@ -5,6 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static atomic_uint g_diagnostic_next_thread_id = ATOMIC_VAR_INIT(1u);
 static _Thread_local uint32_t g_diagnostic_thread_id;
@@ -45,6 +48,71 @@ void recomp_frontend_loading_trace(uint32_t site, uint32_t object, uint32_t stac
     fprintf(stderr, "[FRONTEND-LOADING-TRACE] thread=%u site=%08X sample=%u "
         "object=%08X esp=%08X return=%08X arg0=%08X arg1=%08X arg2=%08X read-only=1\n",
         diagnostic_thread_id(), site, count + 1u, object, stack, caller, arg0, arg1, arg2);
+}
+
+/* Read bounded diagnostic text through the OS: invalid guest pointers must not
+ * turn optional tracing into a crash. Escape all nontrivial bytes for one-line logs. */
+static const char *frontend_trace_text(uint32_t address, char text[385])
+{
+    text[0] = 0;
+#ifdef _WIN32
+    if (!g_xbox_mem_offset || address < 0x10000u || address > 0x83FFFF9Fu)
+        return "unreadable";
+    DWORD saved_error = GetLastError();
+    unsigned used = 0;
+    const char *status = "truncated";
+    for (unsigned i = 0; i < 96u; ++i) {
+        unsigned char value; SIZE_T read = 0;
+        if (!ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(address + i),
+                               &value, 1u, &read) || read != 1u) {
+            status = "unreadable"; break;
+        }
+        if (!value) { status = "terminated"; break; }
+        if (value >= 32u && value <= 126u && value != '"' && value != 92u)
+            text[used++] = (char)value;
+        else {
+            static const char hex[] = "0123456789ABCDEF";
+            text[used++] = 92; text[used++] = 'x';
+            text[used++] = hex[value >> 4]; text[used++] = hex[value & 15u];
+        }
+    }
+    text[used] = 0;
+    SetLastError(saved_error);
+    return status;
+#else
+    (void)address;
+    return "unavailable";
+#endif
+}
+
+void recomp_frontend_command_trace(uint32_t site, uint32_t name,
+                                   uint32_t detail, uint32_t result)
+{
+    static atomic_uint counts[3];
+    unsigned index;
+    switch (site) {
+    case 0x00160DF0u: index = 0; break;
+    case 0x00160E2Eu: index = 1; break;
+    case 0x00160ED0u: index = 2; break;
+    default: return;
+    }
+    if (!recomp_frontend_loading_trace_enabled()) return;
+    unsigned count = atomic_load_explicit(&counts[index], memory_order_relaxed);
+    do {
+        if (count >= 64u) return;
+    } while (!atomic_compare_exchange_weak_explicit(&counts[index], &count,
+        count + 1u, memory_order_relaxed, memory_order_relaxed));
+#ifdef _WIN32
+    DWORD saved_error = GetLastError();
+#endif
+    char text[385];
+    const char *status = frontend_trace_text(name, text);
+    fprintf(stderr, "[FRONTEND-COMMAND-TRACE] site=%08X sample=%u name=%08X "
+        "text=\"%s\" text_status=%s detail=%08X result=%08X read-only=1\n",
+        site, count + 1u, name, text, status, detail, result);
+#ifdef _WIN32
+    SetLastError(saved_error);
+#endif
 }
 
 /* User-authorized boot exploration only. This fabricates bounded completions;

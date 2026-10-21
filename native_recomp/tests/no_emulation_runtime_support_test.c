@@ -3,6 +3,9 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 void nv2a_pb_scan(uint32_t start_va, uint32_t end_va);
 void nv2a_pb_scan_report(void);
@@ -14,6 +17,7 @@ void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
 int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 unsigned fut_audio_effects_bypass_limit(void);
+void recomp_frontend_command_trace(uint32_t,uint32_t,uint32_t,uint32_t);
 void recomp_frontend_loading_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);
 
 /* The unit target does not link the generated game code. The manual lookup
@@ -54,6 +58,41 @@ volatile uint64_t g_icall_count;
 int main(int argc, char **argv)
 {
     if (argc == 2) {
+#ifdef _WIN32
+        if (strcmp(argv[1], "frontend-text-boundaries") == 0) {
+            void *guard = VirtualAlloc(NULL, 4096, MEM_COMMIT|MEM_RESERVE, PAGE_NOACCESS);
+            if (!guard) return 96;
+            g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)guard - (ptrdiff_t)0x10000u;
+            SetLastError(0x1234u);
+            recomp_frontend_command_trace(0x00160DF0u, 0x10000u, 0u, 0u);
+            DWORD error = GetLastError();
+            VirtualFree(guard, 0, MEM_RELEASE);
+            if (error != 0x1234u) return 97;
+            char bytes[96]; memset(bytes, 1, sizeof(bytes));
+            g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)bytes - (ptrdiff_t)0x10000u;
+            recomp_frontend_command_trace(0x00160E2Eu, 0x10000u, 0u, 0u);
+            memset(bytes, 'X', sizeof(bytes)); bytes[95] = 0;
+            recomp_frontend_command_trace(0x00160ED0u, 0x10000u, 0u, 0u);
+            g_xbox_mem_offset = 0;
+            return 0;
+        }
+#endif
+        if (strcmp(argv[1], "frontend-command") == 0) {
+            char text[] = "boot\n\"\\command";
+            g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)text - (ptrdiff_t)0x10000u;
+            ptrdiff_t saved_offset = g_xbox_mem_offset;
+            g_eax = 123u; g_esp = 456u;
+            for (unsigned i = 0; i < 70; ++i) {
+                recomp_frontend_command_trace(0x00160DF0u, 0x10000u, 4u, 5u);
+                recomp_frontend_command_trace(0x00160E2Eu, 0xFFFFFFFFu, 4u, 0u);
+                recomp_frontend_command_trace(0x00160ED0u, 0u, 0u, 0u);
+                recomp_frontend_command_trace(0xDEADBEEFu, 0x10000u, 0u, 0u);
+            }
+            int ok = g_eax == 123u && g_esp == 456u &&
+                g_xbox_mem_offset == saved_offset && strcmp(text, "boot\n\"\\command") == 0;
+            g_xbox_mem_offset = 0;
+            return ok ? 0 : 98;
+        }
         if (strcmp(argv[1], "frontend-trace") == 0) {
             const uint32_t sites[] = {0x0015F7B0u,0x001606E0u,0x001630B0u,0x00163570u,0xDEADBEEFu};
             g_eax = 123u; g_esp = 456u;

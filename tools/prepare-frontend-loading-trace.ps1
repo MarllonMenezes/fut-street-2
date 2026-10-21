@@ -22,6 +22,15 @@ foreach($name in @('recomp_0026.c','recomp_0027.c')) {
         $call="    if (recomp_frontend_loading_trace_enabled())`n        recomp_frontend_loading_trace(0x${site}u, ecx, esp, MEM32(esp), MEM32(esp+4u), MEM32(esp+8u), MEM32(esp+12u));`n"
         $text=Replace-Unique $text $anchor ($anchor+$call)
     }
+    if($name -eq 'recomp_0026.c') {
+        $text=Replace-Unique $text '#include "recomp_funcs.h"' ('#include "recomp_funcs.h"'+"`nextern void recomp_frontend_command_trace(uint32_t,uint32_t,uint32_t,uint32_t);`n")
+        $anchor="void sub_00160DF0(void)`n{`n"
+        $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160DF0u, MEM32(esp+4u), MEM32(esp+8u), 0u);`n")
+        $anchor="loc_00160E2E: ;`n"
+        $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160E2Eu, esi, edi, eax);`n")
+        $anchor="void sub_00160ED0(void)`n{`n"
+        $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160ED0u, MEM32(esp+4u), 0u, 0u);`n")
+    }
     $results[$name]=$text
 }
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

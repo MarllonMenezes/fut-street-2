@@ -1490,10 +1490,12 @@ loc_0023C2F2: ;
 $dispatch = Replace-Unique $dispatch @'
 loc_0023C548: ;
     POP32(esp, edi);
+    MEM32(0x351870) = esi;
 '@ @'
 loc_0023C548: ;
-    fut_native_pcm_submit(MEM32(0x351850u), MEM32(0x351870u));
     POP32(esp, edi);
+    MEM32(0x351870) = esi;
+    fut_native_pcm_submit(MEM32(0x351850u), MEM32(0x351870u));
 '@ 'native PCM submit original refill'
 
 $dispatch = Replace-Unique $dispatch @'

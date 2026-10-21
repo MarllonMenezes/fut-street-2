@@ -376,6 +376,12 @@ if(BUILD_TESTING)
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-effects-bypass-contract.ps1"
             "$<TARGET_FILE:no_emulation_runtime_support_test>")
     set_tests_properties(audio_effects_bypass_contract PROPERTIES TIMEOUT 15)
+    add_test(NAME audio_pcm_refill_overlay_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-pcm-refill-overlay-contract.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-stream-callback-trace.ps1"
+            "${RECOMP_GENERATED_DIR}")
+    set_tests_properties(audio_pcm_refill_overlay_contract PROPERTIES TIMEOUT 20)
     add_test(NAME audio_effects_overlay_contract
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-effects-overlay-contract.ps1"
