@@ -20,6 +20,17 @@ static uint32_t diagnostic_thread_id(void)
 /* User-authorized boot exploration only. This fabricates bounded completions;
  * it implements neither DSP execution nor audio. Called by a separate,
  * explicitly selected generated-source overlay in the submitting thread. */
+unsigned fut_audio_effects_bypass_limit(void)
+{
+    const char *option = getenv("RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS");
+    if (!option) return 4096u;
+    if (!option[0]) return 0;
+    for (const char *p = option; *p; ++p)
+        if (*p < '0' || *p > '9') return 0;
+    unsigned long value = strtoul(option, NULL, 10);
+    return value >= 1u && value <= 16384u ? (unsigned)value : 0u;
+}
+
 int fut_audio_effects_bypass(uint32_t site, uint32_t address,
                              volatile uint32_t *command)
 {
@@ -27,7 +38,8 @@ int fut_audio_effects_bypass(uint32_t site, uint32_t address,
     const char *option = getenv("RECOMP_AUDIO_EFFECTS_BYPASS");
     if (!option || strcmp(option, "0") == 0)
         return 0;
-    if (strcmp(option, "1") != 0 || applied >= 4096u ||
+    const unsigned limit = fut_audio_effects_bypass_limit();
+    if (strcmp(option, "1") != 0 || !limit || applied >= limit ||
         site != 0x002872FFu || address != 0x83360810u ||
         (uintptr_t)command != (uintptr_t)XBOX_PTR(address) ||
         !g_xbox_mem_offset || *command != 3u) {
@@ -41,8 +53,8 @@ int fut_audio_effects_bypass(uint32_t site, uint32_t address,
     ++applied;
     fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] thread=%u site=%08X address=%08X "
             "before=00000003 after=00000000 simulated-completion=1 "
-            "application=%u/4096 DSP-executed=0 audio-validated=0 NOT_READY\n",
-            diagnostic_thread_id(), site, address, applied);
+            "application=%u/%u DSP-executed=0 audio-validated=0 NOT_READY\n",
+            diagnostic_thread_id(), site, address, applied, limit);
     fflush(stderr);
     return 1;
 }

@@ -88,6 +88,18 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int bc2_lc_retained_baseline=family_common_baseline &&
         t0->control1==0x05000000u && t0->image_rect==0x028001E0u;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
+    int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
+        !fut_graphics_software_draw_ready(s) &&
+        surface->logical_width==640 && surface->logical_height==480 &&
+        t0->format==0x06A10E29u && t0->offset==0x00C6CF00u &&
+        t0->valid==0x3BFu && t0->control0==0 && t0->address==0x10303u &&
+        t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
+        t0->filter==0x02062000u && (k->fragment.valid&2u) &&
+        k->fragment.stage_program==0 && k->draw.dither==1 &&
+        k->depth_test==1 && k->draw.depth_write==1 && k->compress_depth==1 &&
+        !k->stencil_test && k->control0==0x00100001u;
+    for(unsigned stage=1;stage<4;++stage)
+        if(k->textures[stage].control0) untextured=0;
     int bc2_family=bc2_format && fut_graphics_bc2_aa2_family_approximation_enabled() &&
         family_dimensions &&
         !(t0->offset&15u) && t0->offset<=0x04000000u &&
@@ -102,7 +114,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
         !(t0->palette&0x3Fu) && t0->palette<=0x04000000u-1024u;
     if(p8_format && t0->format!=0x05510B29u && t0->format!=0x05710B29u &&
         (!p8_family || fut_graphics_software_draw_ready(s))) return 0;
-    if(bc2_format && (!(t0->control0&0x40000000u) ||
+    if(bc2_format && !untextured && (!(t0->control0&0x40000000u) ||
         fut_graphics_software_draw_ready(s))) return 0;
     int bc2_c9df00=t0->format==0x09A10E29u &&
         fut_graphics_bc2_c9df00_aa2_approximation_enabled() &&
@@ -114,7 +126,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
      * empty software controls or a disabled texture cannot bypass its gate. */
     if(t0->format==0x09A10E29u &&
         (!(bc2_c9df00 || bc2_family) || fut_graphics_software_draw_ready(s))) return 0;
-    if(bc2_format && t0->format!=0x06610E29u && t0->format!=0x09A10E29u &&
+    if(bc2_format && !untextured && t0->format!=0x06610E29u && t0->format!=0x09A10E29u &&
         (!bc2_family || fut_graphics_software_draw_ready(s))) return 0;
     if(!fut_graphics_software_draw_ready(s)) {
         /* User-approved experiment, ONLY the observed ARGB8 AA2 baseline.

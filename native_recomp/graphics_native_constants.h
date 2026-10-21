@@ -9,6 +9,9 @@ typedef struct {
     ID3D11DeviceContext *context; /* Borrowed from the owning renderer. */
     ID3D11Buffer *buffer;
     ID3D11Query *completion;
+    HANDLE poll_timer; /* Optional process-local high-resolution polling wait. */
+    int profile_waits;
+    uint64_t wait_count, wait_us, max_wait_us;
 } FutNativeConstants;
 
 HRESULT fut_native_constants_init(FutNativeConstants *native,

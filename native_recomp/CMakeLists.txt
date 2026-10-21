@@ -355,6 +355,19 @@ if(BUILD_TESTING)
             "${RECOMP_GENERATED_DIR}")
 endif()
 
+if(WIN32 AND BUILD_TESTING)
+    add_executable(audio_native_pcm_contract_test
+        tests/audio_native_pcm_contract_test.c audio_native_pcm.c)
+    target_include_directories(audio_native_pcm_contract_test PRIVATE "${RECOMP_GENERATED_DIR}")
+    target_compile_definitions(audio_native_pcm_contract_test PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(audio_native_pcm_contract_test PRIVATE winmm)
+    add_test(NAME audio_native_pcm_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-native-pcm-contract.ps1"
+            "$<TARGET_FILE:audio_native_pcm_contract_test>")
+    set_tests_properties(audio_native_pcm_contract PROPERTIES TIMEOUT 15)
+endif()
+
 if(FUT_STREET2_BUILD_HOST_APP)
     if(NOT WIN32)
         message(FATAL_ERROR "The current XboxRecomp native runtime integration is Windows-only")
@@ -405,7 +418,7 @@ if(FUT_STREET2_BUILD_HOST_APP)
         kernel32 bcrypt
         fut_street_2_no_emulation_runtime_support)
 
-    add_executable(fut_street_2_recompiled_app host_bootstrap.c mcpx_aci_host.c graphics_native_backend.c graphics_native_scanout_dispatch.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c graphics_vertex_array.c)
+    add_executable(fut_street_2_recompiled_app host_bootstrap.c audio_native_pcm.c mcpx_aci_host.c graphics_native_backend.c graphics_native_scanout_dispatch.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c graphics_vertex_array.c)
     target_include_directories(fut_street_2_recompiled_app PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${RECOMP_GENERATED_DIR}"
@@ -417,10 +430,14 @@ if(FUT_STREET2_BUILD_HOST_APP)
         target_compile_definitions(fut_street_2_recompiled_app PRIVATE
             FUT_AUDIO_EFFECTS_BYPASS_HOOK=1)
     endif()
+    if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
+        target_compile_definitions(fut_street_2_recompiled_app PRIVATE
+            FUT_NATIVE_PCM_HOOK=1)
+    endif()
     target_link_libraries(fut_street_2_recompiled_app PRIVATE
         fut_street_2_recompiled_code
         fut_street_2_no_emulation_kernel
-        ${RECOMP_HOST_LIBRARIES} dxguid dxgi user32)
+        ${RECOMP_HOST_LIBRARIES} dxguid dxgi user32 winmm)
     # DSP experimentation remains isolated; never link it into the game host.
 
     add_executable(graphics_replay graphics_replay.c graphics_native_constants.c graphics_native_vertex.c graphics_native_surfaces.c graphics_native_pipeline.c graphics_native_textures.c graphics_native_fragment.c graphics_native_immediate.c graphics_native_draw.c graphics_native_display.c graphics_native_vblank.c)

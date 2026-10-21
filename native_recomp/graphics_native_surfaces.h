@@ -21,6 +21,11 @@ typedef struct {
 HRESULT fut_native_surfaces_prepare(FutNativeSurfaces *native, ID3D11Device *device,
     const FutGraphicsSurfacePlan *plan, FutGraphicsMemoryRead read, void *context);
 void fut_native_surfaces_destroy(FutNativeSurfaces *native);
+/* Read-only diagnostic of the actual color texture. Top-down BGRA8 BMP;
+ * no guest memory writes or dirty-state changes. GPU wait bounded to 2s. */
+HRESULT fut_native_surfaces_capture_bmp(const FutNativeSurfaces *native,
+    ID3D11Device *device, ID3D11DeviceContext *context,
+    FutNativeConstants *completion, const char *path, HANDLE stop_event);
 typedef int (*FutGraphicsMemoryWrite)(void *context, uint32_t address, const void *data, size_t size);
 /* Call before issuing any GPU command that changes an attachment. */
 void fut_native_surfaces_mark_dirty(FutNativeSurfaces *native, unsigned attachments);

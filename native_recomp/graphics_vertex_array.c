@@ -172,7 +172,8 @@ int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray 
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
         !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=2 ||
         a->input_mode!=1 || (a->count!=32u && a->count!=8u) || a->inline_count || formats[0]!=0x635u ||
-        offsets[0]!=(a->count==8u?0x001688B4u:0x001689D4u) || required!=1u ||
+        (a->count==8u ? offsets[0]!=0x001688B4u :
+            (offsets[0]!=0x001689D4u && offsets[0]!=0x00163D24u)) || required!=1u ||
         view_a->guest_address!=0x80000000u || view_a->size!=0x04000000u ||
         view_a->guest_address>UINT32_MAX-view_a->size || attribute_valid[0]!=15) return 0;
     for(unsigned i=0;i<a->count;++i) if(a->indices[i]!=(a->count==8u?rectangle[i]:expected[i])) return 0;

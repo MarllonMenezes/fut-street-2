@@ -37,7 +37,7 @@ function Read-GeneratedText([string]$Name) {
 $declaration = "`n#include <stdio.h>`n#include <string.h>`nextern void recomp_stream_callback_trace(uint32_t event, uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t e, uint32_t f);`n"
 $dispatch = Read-GeneratedText 'recomp_0046.c'
 $dispatch = Replace-Unique $dispatch '#include "recomp_funcs.h"' `
-    ('#include "recomp_funcs.h"' + $declaration) 'dispatcher trace declaration'
+    ('#include "recomp_funcs.h"' + $declaration + "`nextern void fut_native_pcm_configure(uint32_t format);`nextern int fut_native_pcm_position(uint32_t ring, uint32_t frames, uint32_t rate, uint32_t *position);`nextern void fut_native_pcm_submit(uint32_t ring, uint32_t filled);`n") 'dispatcher trace declaration'
 
 $dispatch = Replace-Unique $dispatch @'
 void sub_00240BD1(void)
@@ -1374,6 +1374,174 @@ void sub_00249995(void)
     uint32_t ebp = 0;
 "@ `
     'indirect stream read method 49995 entry'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_00240D9C: ;
+    MEM8(eax) = 2;
+'@ @'
+loc_00240D9C: ;
+    MEM8(eax) = 2;
+    {
+        const char *option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int samples;
+        if (option && strcmp(option, "1") == 0 && samples < 16u) {
+            fprintf(stderr, "[STRM-CHANNEL-ACTIVATED] sample=%u caller=%08X channel=%08X state=%u head40=%08X count=%u\n",
+                    ++samples, MEM32(esp + 4u), eax, (unsigned)MEM8(eax),
+                    MEM32(eax + 0x40u), (unsigned)MEM8(0x351C80u));
+            fflush(stderr);
+        }
+    }
+'@ 'reader channel activation completed'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0024108F: ;
+    PUSH32(esp, ebp);
+'@ @'
+loc_0024108F: ;
+    {
+        const char *option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int samples;
+        if (option && strcmp(option, "1") == 0 && samples < 8u) {
+            fprintf(stderr, "[STRM-MIXER-ENTRY] sample=%u caller=%08X arg1=%08X requested=%08X count=%u table=%08X\n",
+                    ++samples, MEM32(esp), MEM32(esp + 4u), MEM32(esp + 8u),
+                    (unsigned)MEM8(0x351C80u), MEM32(0x351E58u));
+            fflush(stderr);
+        }
+    }
+    PUSH32(esp, ebp);
+'@ 'reader mixer entry'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0024117A: ;
+    ecx = MEM32(esi + 0x40);
+'@ @'
+loc_0024117A: ;
+    ecx = MEM32(esi + 0x40);
+    {
+        const char *option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int samples;
+        if (option && strcmp(option, "1") == 0 && samples < 16u) {
+            fprintf(stderr, "[STRM-MIXER-CALL] sample=%u caller=%08X channel=%08X state=%u remaining=%08X head=%08X target=%08X\n",
+                    ++samples, MEM32(ebp + 4u), esi, (unsigned)MEM8(esi),
+                    eax, ecx, MEM32(ecx));
+            fflush(stderr);
+        }
+    }
+'@ 'reader mixer chain call'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0023C4D3: ;
+    eax = MEM32(ebp + -4);
+'@ @'
+loc_0023C4D3: ;
+    {
+        uint32_t native_write_position = 0u;
+        if (fut_native_pcm_position(MEM32(0x351850u), MEM32(0x351868u),
+                                    MEM16(0x3515B6u), &native_write_position))
+            MEM32(ebp - 4u) = native_write_position;
+        const char *option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int calls;
+        if (option && strcmp(option, "1") == 0 && calls < 1048576u) {
+            ++calls;
+            if (calls <= 8u || (calls & (calls - 1u)) == 0u) {
+                fprintf(stderr, "[STRM-AUDIO-POSITION] call=%u caller=%08X object=%08X result=%08X position_bytes=%08X ring_samples=%08X lead_samples=%08X filled_samples=%08X\n",
+                        calls, MEM32(ebp + 4u), MEM32(0x351838u), eax,
+                        MEM32(ebp - 4u), MEM32(0x351868u), MEM32(0x35186Cu),
+                        MEM32(0x351870u));
+                const uint32_t position_object = MEM32(0x351838u);
+                const uint32_t voice = position_object >= 0x10000u && position_object <= 0x9FFFFFF7u
+                    ? MEM32(position_object + 4u) : 0u;
+                if (voice >= 0x10000u && voice <= 0x9FFFFEABu) {
+                    const uint32_t dma = MEM32(0x28D5E8u);
+                    const unsigned int selector = MEM8(voice + 0x64u);
+                    const unsigned int voice_id = MEM16(voice + 0xCu);
+                    const unsigned int selected_id = selector < 4u ? MEM16(voice + 0xAu + selector * 2u) : 0xFFFFu;
+                    const int dma_valid = dma >= 0x10000u && dma <= 0x9FFF7FFFu;
+                    const uint32_t format = MEM32(voice + 0x70u);
+                    const uint32_t buffer = MEM32(voice + 0x80u);
+                    const int format_valid = format >= 0x10000u && format <= 0x9FFFFFE7u;
+                    const int buffer_valid = buffer >= 0x10000u && buffer <= 0x9FFFFF2Bu;
+                    fprintf(stderr, "[STRM-AUDIO-PRODUCER] call=%u voice=%08X flags12=%04X saved148=%08X selector=%u id=%u selected=%u dma=%08X status54=%08X raw58=%08X format=%08X tag0c=%04X stride14=%08X buffer=%08X minimum14=%08X bytesc0=%08X loopcc=%08X/%08X\n",
+                            calls, voice, (unsigned)MEM16(voice + 0x12u), MEM32(voice + 0x148u),
+                            selector, voice_id, selected_id, dma,
+                            dma_valid && selected_id < 256u ? MEM32(dma + selected_id * 128u + 0x54u) : 0xFFFFFFFFu,
+                            dma_valid && voice_id < 256u ? MEM32(dma + voice_id * 128u + 0x58u) : 0xFFFFFFFFu,
+                            format, format_valid ? (unsigned)MEM16(format + 0xCu) : 0xFFFFu,
+                            format_valid ? MEM32(format + 0x14u) : 0xFFFFFFFFu,
+                            buffer, buffer_valid ? MEM32(buffer + 0x14u) : 0xFFFFFFFFu,
+                            buffer_valid ? MEM32(buffer + 0xC0u) : 0xFFFFFFFFu,
+                            buffer_valid ? MEM32(buffer + 0xCCu) : 0xFFFFFFFFu,
+                            buffer_valid ? MEM32(buffer + 0xD0u) : 0xFFFFFFFFu);
+                }
+                fflush(stderr);
+            }
+        }
+    }
+    eax = MEM32(ebp + -4);
+'@ 'audio position query result'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0023C2F2: ;
+'@ @'
+loc_0023C2F2: ;
+    fut_native_pcm_configure(ebp - 40u);
+'@ 'native PCM original format'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0023C548: ;
+    POP32(esp, edi);
+'@ @'
+loc_0023C548: ;
+    fut_native_pcm_submit(MEM32(0x351850u), MEM32(0x351870u));
+    POP32(esp, edi);
+'@ 'native PCM submit original refill'
+
+$dispatch = Replace-Unique $dispatch @'
+loc_0023C513: ;
+    MEM32(ebp + -16) = ecx;
+'@ @'
+loc_0023C513: ;
+    MEM32(ebp + -16) = ecx;
+    {
+        const char *option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int calls;
+        if (option && strcmp(option, "1") == 0 && calls < 1048576u) {
+            ++calls;
+            if (calls <= 8u || (calls & (calls - 1u)) == 0u) {
+                fprintf(stderr, "[STRM-AUDIO-DEMAND] call=%u position_samples=%08X target=%08X filled=%08X range0=%08X range1=%08X\n",
+                        calls, MEM32(ebp - 4u), esi, MEM32(0x351870u),
+                        ecx, MEM32(ebp - 12u));
+                fflush(stderr);
+            }
+        }
+    }
+'@ 'audio refill demand ranges'
+
+$stream_methods = Replace-Unique $stream_methods @'
+loc_00249638: ;
+    ecx = MEM32(ebp + -12);
+    MEM32(esi + 0x1C) = eax;
+'@ @'
+loc_00249638: ;
+    ecx = MEM32(ebp + -12);
+    MEM32(esi + 0x1C) = eax;
+    {
+        const char *reader_ctor_option = getenv("RECOMP_STREAM_CALLBACK_TRACE");
+        static unsigned int reader_ctor_samples;
+        if (reader_ctor_option && strcmp(reader_ctor_option, "1") == 0 &&
+            reader_ctor_samples < 16u) {
+            const uint32_t reader_index = MEM32(esi + 0x30u);
+            const uint32_t reader_record = reader_index == 6u
+                ? MEM32(0x351BE4u + 6u * 4u) : 0u;
+            fprintf(stderr,
+                    "[STRM-READER-CONSTRUCTED] sample=%u caller=%08X object=%08X descriptor=%08X reader=%08X index=%08X slot=%u state24=%08X allocation1c=%08X record_for_index6=%08X\n",
+                    ++reader_ctor_samples, MEM32(ebp + 4u), esi, edi,
+                    MEM32(esi), reader_index, (unsigned)MEM8(esi + 0x38u),
+                    MEM32(esi + 0x24u), MEM32(esi + 0x1Cu), reader_record);
+            fflush(stderr);
+        }
+    }
+'@ 'reader constructor completed association'
 
 $callback = Read-GeneratedText 'recomp_callback_00239C1A.c'
 $callback = Replace-Unique $callback '#include "recomp_funcs.h"' `

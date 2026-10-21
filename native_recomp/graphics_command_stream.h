@@ -41,6 +41,17 @@ FutGraphicsDecodeStatus fut_graphics_decode_live(size_t size,
     FutGraphicsCommandReader reader, void *reader_context,
     FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result);
 
+/* Observed circular queue transition only: PUT is below cursor and a single
+ * absolute low-bits-01 jump returns to ring_start. Reader offsets are relative
+ * to ring_start; receiver/result offsets count executed bytes, excluding padding
+ * after the jump. At most65536 executed bytes; other control flow is refused.
+ * A decoded jump is NOT permission to update DMA GET or claim GPU completion. */
+FutGraphicsDecodeStatus fut_graphics_decode_wrapped_live(uint32_t ring_start,
+    uint32_t ring_end,uint32_t cursor,uint32_t submitted,
+    FutGraphicsCommandReader reader,void *reader_context,
+    FutGraphicsMethodReceiver receiver,void *context,FutGraphicsDecodeResult *result,
+    size_t *jump_offset);
+
 /* An initial cursor may be established only when the title's queue is empty,
  * aligned and inside the 64 MB contiguous view. This is not a consumption test. */
 int fut_graphics_empty_queue(uint32_t start, uint32_t end, uint32_t write_ptr, uint32_t put);

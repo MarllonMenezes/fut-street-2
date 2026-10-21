@@ -459,17 +459,25 @@ int main(void)
     CHECK(SUCCEEDED(fut_native_texture_zero_rgb_candidate(&native,state,1)) && native.zero_rgb_candidate &&
         !native.sampling_ready && !native.sampler,38);
     approved[0]=native;
-    CHECK(SUCCEEDED(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)),39);
+    FutNativeFragmentCache candidate_cache={0};int candidate_hit=99;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&kelvin,approved,&candidate_cache,&pixel_shader,&pixel_blob,&candidate_hit)) && !candidate_hit && candidate_cache.entries[0].candidates==1,39);
     CHECK(verify_zero_rgb_pixel_shader(device,context,&completion,pixel_shader)==0,40);
+    ID3D11PixelShader_Release(pixel_shader);ID3D10Blob_Release(pixel_blob);
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&kelvin,approved,&candidate_cache,&pixel_shader,&pixel_blob,&candidate_hit)) && candidate_hit,125);
+    CHECK(verify_zero_rgb_pixel_shader(device,context,&completion,pixel_shader)==0,126);
     ID3D11PixelShader_Release(pixel_shader);ID3D10Blob_Release(pixel_blob);
     /* Unknown alpha used as output alpha or RGB MUST remain blocked. */
     CHECK(fut_graphics_kelvin_state(&kelvin,0x260,0x18200000)==FUT_KELVIN_APPLIED,41);
     CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL && !pixel_shader && !pixel_blob,42);
+    CHECK(fut_native_fragment_compile_cached(device,&kelvin,approved,&candidate_cache,&pixel_shader,&pixel_blob,&candidate_hit)==E_NOTIMPL && !candidate_hit && !pixel_shader && !pixel_blob && candidate_cache.next==1,127);
     CHECK(fut_graphics_kelvin_state(&kelvin,0x260,0x14200000)==FUT_KELVIN_APPLIED &&
         fut_graphics_kelvin_state(&kelvin,0xAC0,0x18200000)==FUT_KELVIN_APPLIED,43);
     CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL && !pixel_shader && !pixel_blob,44);
+    CHECK(fut_native_fragment_compile_cached(device,&kelvin,approved,&candidate_cache,&pixel_shader,&pixel_blob,&candidate_hit)==E_NOTIMPL && !candidate_hit && !pixel_shader && !pixel_blob && candidate_cache.next==1,128);
     CHECK(fut_graphics_kelvin_state(&kelvin,0xAC0,0x08200000)==FUT_KELVIN_APPLIED,45);
     state->address=0x10404;
+    CHECK(fut_native_fragment_compile_cached(device,&kelvin,approved,&candidate_cache,&pixel_shader,&pixel_blob,&candidate_hit)==E_NOTIMPL && !candidate_hit && !pixel_shader && !pixel_blob && candidate_cache.next==1,129);
+    fut_native_fragment_cache_destroy(&candidate_cache);
     CHECK(fut_native_fragment_compile(device,&kelvin,approved,&pixel_shader,&pixel_blob)==E_NOTIMPL &&
         fut_native_texture_zero_rgb_candidate(&native,state,1)==E_NOTIMPL && !native.zero_rgb_candidate,46);
     state->address=0x10303;state->filter=0x04074000;

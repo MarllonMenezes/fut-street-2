@@ -61,6 +61,7 @@ static int verify_alpha_test(ID3D11Device *device,ID3D11DeviceContext *context,
     FutNativeConstants *completion)
 {
     FutGraphicsKelvinState state={0};FutNativeTexture textures[4]={0};
+    FutNativeFragmentCache cache={0};
     configure(&state.fragment,0x04200000,0x14200000,0);
     state.draw.valid=0xFFFFF;state.draw.alpha_test=1;state.draw.alpha_ref=16;
     state.draw.blend_src=1;state.draw.blend_dst=0;state.draw.blend_op=0x8006;
@@ -118,7 +119,10 @@ static int verify_alpha_test(ID3D11Device *device,ID3D11DeviceContext *context,
     for(unsigned func=0;func<8;++func) {
         state.draw.alpha_func=0x200+func;
         ID3D11PixelShader *ps=NULL;ID3DBlob *blob=NULL;
-        CHECK(SUCCEEDED(fut_native_fragment_compile(device,&state,textures,&ps,&blob)),129);
+        int hit=99;
+        CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && !hit,129);
+        ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+        CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && hit,140);
         CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),130);
         ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);
         ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&alpha_buffer);
@@ -152,6 +156,7 @@ static int verify_alpha_test(ID3D11Device *device,ID3D11DeviceContext *context,
         ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
     }
     ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
+    fut_native_fragment_cache_destroy(&cache);
     ID3D11RenderTargetView_Release(rt);ID3D11DepthStencilView_Release(ds);
     ID3D11Texture2D_Release(color);ID3D11Texture2D_Release(depth);
     ID3D11Texture2D_Release(color_read);ID3D11Texture2D_Release(depth_read);
@@ -176,6 +181,62 @@ static int verify_linkage(void)
     CHECK(fut_native_fragment_linkage(NULL,pixel)==E_INVALIDARG &&
         fut_native_fragment_linkage(pixel,current)==E_INVALIDARG,115);
     ID3D10Blob_Release(old);ID3D10Blob_Release(current);ID3D10Blob_Release(pixel);
+    return 0;
+}
+static int verify_cache(ID3D11Device *device)
+{
+    FutNativeFragmentCache cache={0};FutGraphicsKelvinState state={0},base;
+    FutNativeTexture textures[4]={0};
+    configure(&state.fragment,0x04200000,0x14200000,0);base=state;
+    ID3D11PixelShader *first=NULL,*ps=NULL;ID3DBlob *first_blob=NULL,*blob=NULL;int hit=99;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&first,&first_blob,&hit)) && !hit,150);
+    state.fragment.color_input[0]=0x05200000;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && !hit,151);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);state=base;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && hit && ps==first && blob==first_blob,152);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_affine_cached(device,&state,textures,1,&cache,&ps,&blob,&hit)) && !hit,153);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_affine_cached(device,&state,textures,1,&cache,&ps,&blob,&hit)) && hit,154);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    unsigned next=cache.next;
+    CHECK(fut_native_fragment_compile_aa2_affine_cached(device,&state,textures,0,&cache,&ps,&blob,&hit)==E_NOTIMPL && !ps && !blob && !hit && cache.next==next,155);
+    ID3D11Device *other=NULL;D3D_FEATURE_LEVEL level;
+    CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&other,&level,NULL)),156);
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(other,&state,textures,&cache,&ps,&blob,&hit)) && !hit,157);
+    ID3D11Device *owner=NULL;ID3D11PixelShader_GetDevice(ps,&owner);CHECK(owner==other,158);ID3D11Device_Release(owner);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    next=cache.next;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,NULL,&ps,&blob,&hit)) && !hit && cache.next==next,159);
+    CHECK(ID3D10Blob_GetBufferSize(blob)==ID3D10Blob_GetBufferSize(first_blob) &&
+        !memcmp(ID3D10Blob_GetBufferPointer(blob),ID3D10Blob_GetBufferPointer(first_blob),ID3D10Blob_GetBufferSize(blob)),160);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    for(unsigned invalid=0;invalid<5;++invalid) {
+        state=base;
+        if(invalid==0){state.draw.alpha_test=1;state.draw.alpha_ref=256;state.draw.alpha_func=0x204;}
+        if(invalid==1){state.draw.alpha_test=1;state.draw.alpha_func=0x208;}
+        if(invalid==2)state.fragment.valid=0;
+        CHECK(FAILED(fut_native_fragment_compile_cached(invalid==3?NULL:device,invalid==4?NULL:&state,textures,&cache,&ps,&blob,&hit)) && !hit && !ps && !blob && cache.next==next,161);
+    }
+    fut_native_fragment_cache_destroy(&cache);
+    state=base;state.draw.alpha_test=1;state.draw.alpha_func=0x204;
+    for(unsigned i=0;i<=FUT_NATIVE_FRAGMENT_CACHE_CAPACITY;++i) {
+        state.draw.alpha_ref=i;
+        CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && !hit,162);
+        ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    }
+    CHECK(cache.next==1,163);
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && hit,164);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);state.draw.alpha_ref=0;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&blob,&hit)) && !hit,165);
+    ID3D11PixelShader_Release(ps);ID3D10Blob_Release(blob);
+    fut_native_fragment_cache_destroy(&cache);fut_native_fragment_cache_destroy(&cache);
+    for(unsigned i=0;i<FUT_NATIVE_FRAGMENT_CACHE_CAPACITY;++i)
+        CHECK(!cache.entries[i].source && !cache.entries[i].shader && !cache.entries[i].bytecode,166);
+    CHECK(!cache.next && ID3D10Blob_GetBufferSize(first_blob)>0,167);
+    ID3D11PixelShader_GetDevice(first,&owner);CHECK(owner==device,168);ID3D11Device_Release(owner);
+    ID3D11PixelShader_Release(first);ID3D10Blob_Release(first_blob);ID3D11Device_Release(other);
+    puts("Exact fragment cache: alternation, source/mode/device separation, invalid states, FIFO and COM ownership verified");
     return 0;
 }
 int main(void)
@@ -266,6 +327,7 @@ int main(void)
      * this program genuinely depends on the texture's filtered RGB. */
     configure(&state,0x08200000,0x14200000,1);state.final_words[0]=0xC;state.final_words[1]=0x1C80;
     CHECK(verify_math(device,context,&completion,&state,(float[]){.125,.25,.5,.5})==0,18);
+    CHECK(verify_cache(device)==0,169);
     FutGraphicsKelvinState kelvin={0};kelvin.fragment=state;
     FutNativeTexture textures[4]={0};ID3D11PixelShader *shader=NULL;ID3DBlob *bytecode=NULL;
     CHECK(fut_native_fragment_compile(device,&kelvin,textures,&shader,&bytecode)==E_NOTIMPL && !shader && !bytecode,19);

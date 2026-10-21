@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_surfaces.h"
 #include <string.h>
+#include <stdio.h>
 
 void fut_native_surfaces_destroy(FutNativeSurfaces *native)
 {
@@ -152,6 +153,50 @@ done:
     if (depth) HeapFree(GetProcessHeap(), 0, depth);
     return hr;
 }
+HRESULT fut_native_surfaces_capture_bmp(const FutNativeSurfaces *native,
+    ID3D11Device *device, ID3D11DeviceContext *context,
+    FutNativeConstants *completion, const char *path, HANDLE stop_event)
+{
+    if (!native || !native->valid || !native->color || !valid_plan(&native->plan) ||
+        native->plan.samples != 1 || native->plan.width > 1920 || native->plan.height > 1080 ||
+        native->plan.color_span > 16u * 1024u * 1024u || !device || !context ||
+        !completion || !path || !path[0]) return E_INVALIDARG;
+    if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) return E_ABORT;
+    const FutGraphicsSurfacePlan *p = &native->plan;
+    D3D11_TEXTURE2D_DESC desc;
+    ID3D11Texture2D_GetDesc(native->color, &desc);
+    if (desc.Width != p->width || desc.Height != p->height ||
+        desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM || desc.SampleDesc.Count != 1 ||
+        desc.ArraySize != 1 || desc.MipLevels != 1) return E_INVALIDARG;
+    uint8_t *pixels = HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, p->color_span);
+    if (!pixels) return E_OUTOFMEMORY;
+    HRESULT hr = download_pixels(device, context, completion, native->color, p,
+        pixels, 0, 0, 0, stop_event);
+    if (SUCCEEDED(hr) && stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) hr = E_ABORT;
+    if (SUCCEEDED(hr)) {
+        BITMAPFILEHEADER file = {0};
+        BITMAPINFOHEADER info = {0};
+        file.bfType = 0x4D42u;
+        file.bfOffBits = sizeof(file) + sizeof(info);
+        file.bfSize = file.bfOffBits + p->width * p->height * 4u;
+        info.biSize = sizeof(info); info.biWidth = p->width; info.biHeight = -(LONG)p->height;
+        info.biPlanes = 1; info.biBitCount = 32; info.biCompression = BI_RGB;
+        info.biSizeImage = p->width * p->height * 4u;
+        FILE *output = fopen(path, "wb");
+        if (!output) hr = E_FAIL;
+        else {
+            int ok = fwrite(&file, sizeof(file), 1, output) == 1 &&
+                fwrite(&info, sizeof(info), 1, output) == 1;
+            for (unsigned y = 0; ok && y < p->height; ++y)
+                ok = fwrite(pixels + (size_t)y * p->color_pitch, 4u, p->width, output) == p->width;
+            if (fclose(output) != 0) ok = 0;
+            if (!ok) { remove(path); hr = E_FAIL; }
+        }
+    }
+    HeapFree(GetProcessHeap(), 0, pixels);
+    return hr;
+}
+
 HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *device,
     ID3D11DeviceContext *context, FutNativeConstants *completion,
     const FutGraphicsKelvinState *state, uint32_t flags, FutGraphicsMemoryRead read,

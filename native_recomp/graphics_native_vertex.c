@@ -43,6 +43,50 @@ HRESULT fut_native_vertex_compile_screen_aa2(ID3D11Device *device,const uint32_t
 {
     return compile(device,words,count,shader,bytecode,2);
 }
+static void cache_entry_destroy(FutNativeVertexCacheEntry *entry)
+{
+    if(entry->shader) ID3D11VertexShader_Release(entry->shader);
+    if(entry->bytecode) ID3D10Blob_Release(entry->bytecode);
+    memset(entry,0,sizeof(*entry));
+}
+void fut_native_vertex_cache_destroy(FutNativeVertexCache *cache)
+{
+    if(!cache) return;
+    for(unsigned i=0;i<FUT_NATIVE_VERTEX_CACHE_CAPACITY;++i)
+        cache_entry_destroy(&cache->entries[i]);
+    cache->next=0;
+}
+HRESULT fut_native_vertex_compile_screen_cached(ID3D11Device *device,
+    const uint32_t (*words)[4],unsigned count,int aa2,FutNativeVertexCache *cache,
+    ID3D11VertexShader **shader,ID3DBlob **bytecode,int *cache_hit)
+{
+    if(cache_hit) *cache_hit=0;
+    if(!shader || !bytecode) return E_INVALIDARG;
+    *shader=NULL;*bytecode=NULL;
+    if(!device || !words || !count || count>136 || (aa2!=0 && aa2!=1)) return E_INVALIDARG;
+    if(cache) for(unsigned i=0;i<FUT_NATIVE_VERTEX_CACHE_CAPACITY;++i) {
+        FutNativeVertexCacheEntry *entry=&cache->entries[i];
+        if(entry->device==device && entry->aa2==aa2 && entry->count==count &&
+            entry->shader && entry->bytecode &&
+            !memcmp(entry->words,words,count*sizeof(words[0]))) {
+            *shader=entry->shader;ID3D11VertexShader_AddRef(*shader);
+            *bytecode=entry->bytecode;ID3D10Blob_AddRef(*bytecode);
+            if(cache_hit) *cache_hit=1;
+            return S_OK;
+        }
+    }
+    HRESULT hr=compile(device,words,count,shader,bytecode,aa2?2:1);
+    if(SUCCEEDED(hr) && cache && *shader && *bytecode) {
+        FutNativeVertexCacheEntry *entry=&cache->entries[cache->next];
+        cache_entry_destroy(entry);
+        entry->device=device;entry->aa2=aa2;entry->count=count;
+        memcpy(entry->words,words,count*sizeof(words[0]));
+        entry->shader=*shader;ID3D11VertexShader_AddRef(entry->shader);
+        entry->bytecode=*bytecode;ID3D10Blob_AddRef(entry->bytecode);
+        cache->next=(cache->next+1u)%FUT_NATIVE_VERTEX_CACHE_CAPACITY;
+    }
+    return hr;
+}
 void fut_native_vertex_surface_destroy(FutNativeVertexSurface *native)
 {
     if(native->buffer) ID3D11Buffer_Release(native->buffer);

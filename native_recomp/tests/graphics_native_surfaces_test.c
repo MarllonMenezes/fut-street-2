@@ -207,7 +207,34 @@ int main(void)
         native.plan.width==4 && native.plan.samples==1,59);
     CHECK(verify_texture(device,context,&completion,native.color,memory.next_color,20,0,0,0)==0 &&
         verify_texture(device,context,&completion,native.depth,memory.next_depth,24,1,0,0)==0,60);
+    /* Capture must omit row padding, preserve top-down pixel order and never
+     * consume guest dirty state or issue guest reads/writes. */
+    const char *capture_path="surface-capture-contract.bmp";
+    unsigned capture_reads=memory.reads, capture_writes=memory.writes;
+    native.gpu_dirty=1;
+    CHECK(fut_native_surfaces_capture_bmp(&native,device,context,&completion,
+        capture_path,NULL)==S_OK && native.gpu_dirty==1 &&
+        memory.reads==capture_reads && memory.writes==capture_writes,64);
+    FILE *capture=fopen(capture_path,"rb"); CHECK(capture!=NULL,65);
+    BITMAPFILEHEADER bmp_file; BITMAPINFOHEADER bmp_info;
+    CHECK(fread(&bmp_file,sizeof(bmp_file),1,capture)==1 &&
+        fread(&bmp_info,sizeof(bmp_info),1,capture)==1,66);
+    CHECK(bmp_file.bfType==0x4D42 && bmp_file.bfOffBits==54 && bmp_file.bfSize==102 &&
+        bmp_info.biWidth==4 && bmp_info.biHeight==-3 && bmp_info.biBitCount==32 &&
+        bmp_info.biSizeImage==48,67);
+    uint8_t row[16];
+    for(unsigned y=0;y<3;++y)
+        CHECK(fread(row,1,sizeof(row),capture)==sizeof(row) &&
+            !memcmp(row,memory.next_color+y*20,sizeof(row)),68);
+    CHECK(fgetc(capture)==EOF && fclose(capture)==0 && remove(capture_path)==0,69);
+    stop=CreateEventA(NULL,TRUE,TRUE,NULL); CHECK(stop!=NULL,70);
+    CHECK(fut_native_surfaces_capture_bmp(&native,device,context,&completion,
+        capture_path,stop)==E_ABORT,71);
+    CloseHandle(stop);
+    native.gpu_dirty=0;
     CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native,device,&plan,memory_read,&memory)),61);
+    CHECK(fut_native_surfaces_capture_bmp(&native,device,context,&completion,
+        capture_path,NULL)==E_INVALIDARG,72);
     CHECK(verify_texture(device,context,&completion,native.color,NULL,0,0,0xFF112233u,1)==0 &&
         verify_texture(device,context,&completion,native.depth,NULL,0,1,0xFFFFFF5Au,1)==0,62);
     saved=native.color; memory.fail=1;

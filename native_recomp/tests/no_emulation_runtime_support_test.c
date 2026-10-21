@@ -13,6 +13,7 @@ void recomp_xbox_cli(void);
 void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
 int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
+unsigned fut_audio_effects_bypass_limit(void);
 
 /* The unit target does not link the generated game code. The manual lookup
  * contract is tested by address identity; the native bring-up validates the
@@ -53,6 +54,8 @@ int main(int argc, char **argv)
 {
     if (argc == 2) {
         if (strncmp(argv[1], "audio-", 6) == 0) {
+            if (strcmp(argv[1], "audio-limit-upper") == 0)
+                return fut_audio_effects_bypass_limit() == 16384u ? 0 : 97;
             uint32_t words[] = {0xAAAAAAAAu, 3u, 0xBBBBBBBBu};
             g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)&words[1] - (ptrdiff_t)0x83360810u;
             uint32_t site = 0x002872FFu, address = 0x83360810u;

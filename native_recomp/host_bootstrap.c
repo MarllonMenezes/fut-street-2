@@ -161,8 +161,8 @@ static DWORD WINAPI graphics_snapshot_thread(void *opaque)
 {
     const GraphicsSnapshotContext *snapshot=opaque;
     const ULONGLONG started=GetTickCount64();
-    /* Cover the runner's complete 60-second ceiling, including late waits. */
-    for (unsigned sample = 0; sample < 60; ++sample) {
+    /* Cover the runner's finite integration ceiling, including late waits. */
+    for (unsigned sample = 0; sample < 300; ++sample) {
         uint32_t device = 0, start = 0, end = 0, submitted = 0;
         uint32_t consumer_ptr = 0, consumed = 0, channel = 0, put = 0, get = 0;
         uint32_t write_ptr = 0, fence_tag = 0, fence_end = 0;
@@ -436,8 +436,30 @@ int main(int argc, char **argv)
             fprintf(stderr, "Audio bypass requested but this build has no overlay hook.\n");
             return 2;
 #else
-            fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] armed: at most 4096 known "
-                    "effects submissions; simulated completions; NOT_READY\n");
+            extern unsigned fut_audio_effects_bypass_limit(void);
+            const unsigned limit = fut_audio_effects_bypass_limit();
+            if (!limit) {
+                fputs("Invalid RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS; use 1..16384.\n", stderr);
+                return 2;
+            }
+            fprintf(stderr, "[EXPERIMENTAL-AUDIO-BYPASS] armed: at most %u known "
+                    "effects submissions; simulated completions; NOT_READY\n", limit);
+#endif
+        }
+    }
+    {
+        const char *pcm = getenv("RECOMP_NATIVE_PCM_OUTPUT");
+        if (pcm && strcmp(pcm, "0") != 0) {
+            if (strcmp(pcm, "1") != 0) {
+                fprintf(stderr, "Invalid RECOMP_NATIVE_PCM_OUTPUT; use 0 or 1.\n");
+                return 2;
+            }
+#ifndef FUT_NATIVE_PCM_HOOK
+            fprintf(stderr, "Native PCM requested but this build has no original-mixer output hooks.\n");
+            return 2;
+#else
+            fprintf(stderr, "[NATIVE-PCM] armed: observed final software-mixer ring only; "
+                    "Windows device position, experimental mapping/latency; DSP-executed=0 NOT_READY\n");
 #endif
         }
     }

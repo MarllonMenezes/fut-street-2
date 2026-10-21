@@ -1,7 +1,9 @@
 param([Parameter(Mandatory = $true)][string]$ExecutablePath)
 $ErrorActionPreference = 'Stop'
 $previous = $env:RECOMP_AUDIO_EFFECTS_BYPASS
+$previousLimit = $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS
 try {
+    $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = $null
     foreach ($option in @($null, '0', '1')) {
         $env:RECOMP_AUDIO_EFFECTS_BYPASS = $option
         $case = if ($option -eq '1') { 'audio-on' } else { 'audio-off' }
@@ -37,7 +39,28 @@ try {
             throw 'Bypass budget must allow exactly 4096, then refuse the 4097th.'
         }
     }
-    Write-Output 'Audio bypass: disabled/unset, explicit apply with intact neighbours, six scope/configuration refusals passed.'
+    $env:RECOMP_AUDIO_EFFECTS_BYPASS = '1'
+    $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = '2'
+    $ErrorActionPreference = 'Continue'
+    $output = @(& $ExecutablePath audio-budget 2>&1) -join "`n"
+    $code = $LASTEXITCODE
+    $ErrorActionPreference = 'Stop'
+    if ($code -ne 3 -or ([regex]::Matches($output, 'simulated-completion=1').Count -ne 2) -or
+        -not $output.Contains('applied=2;')) {throw "Custom budget not enforced: $code $output"}
+    $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = '16384'
+    & $ExecutablePath audio-limit-upper
+    if ($LASTEXITCODE -ne 0) {throw 'Upper configuration bound rejected'}
+    foreach ($limit in @('0', '16385', '-1', '1x', '999999999999999999999999')) {
+        $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = $limit
+        $ErrorActionPreference = 'Continue'
+        $output = @(& $ExecutablePath audio-on 2>&1) -join "`n"
+        $code = $LASTEXITCODE
+        $ErrorActionPreference = 'Stop'
+        if ($code -ne 3 -or -not $output.Contains('refused scope/configuration') -or
+            $output.Contains('simulated-completion=1')) {throw "Invalid limit accepted: $limit $code $output"}
+    }
+    Write-Output 'Audio bypass: default4096/custom2 exact refusal, bounded16384 configuration, invalid limits and original scope guards passed.'
 } finally {
     $env:RECOMP_AUDIO_EFFECTS_BYPASS = $previous
+    $env:RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = $previousLimit
 }

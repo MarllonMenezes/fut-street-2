@@ -2,6 +2,13 @@
 #define FUT_GRAPHICS_EXPERIMENT_H
 #include <stdlib.h>
 #include <string.h>
+/* Captured untextured AA2 draw after the intro; retained descriptors are
+ * not sampled. Separate opt-in from BC2 decoding and from the AA2 model. */
+static inline int fut_graphics_untextured_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_UNTEXTURED_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 /* Explicitly authorized 2026-10-15. Default is strict; an inherited arbitrary
  * string must not silently enable the approximation. */
 static inline int fut_graphics_aa2_approximation_enabled(void)

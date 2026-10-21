@@ -176,20 +176,13 @@ typedef struct {
     FutNativeConstants native_constants;
     ID3D11VertexShader *vertex_shader;
     ID3DBlob *vertex_bytecode;
-    uint32_t vertex_program_cache[136][4];
-    unsigned vertex_program_cache_first;
-    unsigned vertex_program_cache_count;
-    int vertex_program_cache_valid;
+    FutNativeVertexCache vertex_cache;
     ID3D11VertexShader *aa2_vertex_shader;
     ID3DBlob *aa2_vertex_bytecode;
-    uint32_t aa2_vertex_program_cache[136][4];
-    unsigned aa2_vertex_program_cache_first;
-    unsigned aa2_vertex_program_cache_count;
-    int aa2_vertex_program_cache_valid;
     FutNativeVertexSurface vertex_surface;
     ID3D11PixelShader *pixel_shader;
     ID3DBlob *pixel_bytecode;
-    FutNativeFragmentCache aa2_fragment_cache;
+    FutNativeFragmentCache fragment_cache;
     FutGraphicsBindings bindings;
     FutGraphicsKelvinState kelvin;
     FutGraphicsSurfaceState surfaces;
@@ -534,19 +527,10 @@ static int native_prepare_vertex(NativeGraphicsState *state)
         }
         const char *cache_option = getenv("RECOMP_VERTEX_SHADER_CACHE");
         int cache_enabled = !(cache_option && cache_option[0] == '0' && cache_option[1] == '\0');
-        if (cache_enabled && state->vertex_shader && state->vertex_bytecode && state->vertex_program_cache_valid &&
-            state->vertex_program_cache_first == first && state->vertex_program_cache_count == count &&
-            memcmp(state->vertex_program_cache, state->kelvin.program + first,
-                count * sizeof(state->vertex_program_cache[0])) == 0) {
-            ID3D11DeviceContext_VSSetShader(state->context, state->vertex_shader, NULL, 0);
-            state->kelvin.program_dirty = 0;
-            fprintf(stderr, "[GRAPHICS] original vertex program reused from exact instruction cache: start=%u instructions=%u\n",
-                first, count);
-            return 1;
-        }
+        int cache_hit=0;
         ID3D11VertexShader *shader = NULL; ID3DBlob *bytecode = NULL;
-        HRESULT hr = fut_native_vertex_compile_screen(state->device, state->kelvin.program + first,
-            count, &shader, &bytecode);
+        HRESULT hr = fut_native_vertex_compile_screen_cached(state->device, state->kelvin.program + first,
+            count, 0, cache_enabled?&state->vertex_cache:NULL, &shader, &bytecode, &cache_hit);
         if (FAILED(hr)) {
             fprintf(stderr, "[GRAPHICS] vertex program recompilation failed: start=%u count=%u hr=%08lX\n",
                     first, count, hr);
@@ -560,18 +544,12 @@ static int native_prepare_vertex(NativeGraphicsState *state)
         if (state->vertex_shader) ID3D11VertexShader_Release(state->vertex_shader);
         if (state->vertex_bytecode) ID3D10Blob_Release(state->vertex_bytecode);
         state->vertex_shader = shader; state->vertex_bytecode = bytecode;
-        if (cache_enabled) {
-            memcpy(state->vertex_program_cache, state->kelvin.program + first,
-                count * sizeof(state->vertex_program_cache[0]));
-            state->vertex_program_cache_first = first;
-            state->vertex_program_cache_count = count;
-            state->vertex_program_cache_valid = 1;
-        } else {
-            state->vertex_program_cache_valid = 0;
-        }
         ID3D11DeviceContext_VSSetShader(state->context, shader, NULL, 0);
         state->kelvin.program_dirty = 0;
-        fprintf(stderr, "[GRAPHICS] original vertex program recompiled to native shader: start=%u instructions=%u\n",
+        if(cache_hit)
+            fprintf(stderr,"[GRAPHICS] original vertex program reused from exact instruction cache: start=%u instructions=%u\n",first,count);
+        else
+            fprintf(stderr, "[GRAPHICS] original vertex program recompiled to native shader: start=%u instructions=%u\n",
                 first, count);
     }
     return 1;
@@ -830,6 +808,38 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
             fprintf(stderr,"[GRAPHICS] scanout staging failed: HRESULT=%08lX\n",hr);
             native_scanout_trace_failure(state,notification,"display-stage",0,NULL);return 0;
         }
+        const char *capture=getenv("RECOMP_CAPTURE_PRESENTED_FRAMES");
+        static unsigned capture_count;
+        static ULONGLONG capture_at;
+        ULONGLONG capture_now=capture && !strcmp(capture,"1")?GetTickCount64():0;
+        unsigned long capture_interval=1000u;
+        if(capture_now) {
+            const char *interval=getenv("RECOMP_FRAME_CAPTURE_INTERVAL_MS");
+            if(interval) {
+                char *end=NULL;
+                capture_interval=strtoul(interval,&end,10);
+                if(!interval[0] || !end || *end || capture_interval<1000u || capture_interval>10000u) {
+                    fputs("[FRAME-CAPTURE] invalid interval; use 1000..10000ms\n",stderr);
+                    return 0;
+                }
+            }
+        }
+        if(capture && !strcmp(capture,"1") && capture_count<64u &&
+            (capture_count<8u || capture_now-capture_at>=capture_interval)) {
+            char path[80];
+            snprintf(path,sizeof(path),"native-staged-frame-%03u.bmp",capture_count+1u);
+            hr=fut_native_surfaces_capture_bmp(&state->native_surfaces,state->device,
+                state->context,&state->native_constants,path,backend_stop);
+            if(hr!=S_OK) {
+                fprintf(stderr,"[FRAME-CAPTURE] failed: hr=%08lX; no presentation claim\n",hr);
+                return 0;
+            }
+            ++capture_count;
+            capture_at=capture_now;
+            fprintf(stderr,"[FRAME-CAPTURE] capture=%u file=%s size=%ux%u color=%08X notification=%08X; receipt pending\n",
+                capture_count,path,state->native_surfaces.plan.width,
+                state->native_surfaces.plan.height,state->native_surfaces.plan.color_address,notification);
+        }
     }
     uint32_t observed_context,observed_words[FUT_SCANOUT_CONTEXT_WORDS];
     if(native_scanout_context(&observed_context,observed_words) &&
@@ -868,10 +878,18 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
     return result;
 }
 
+static int native_fragment_cache_enabled(void)
+{
+    const char *vertex=getenv("RECOMP_VERTEX_SHADER_CACHE");
+    const char *fragment=getenv("RECOMP_FRAGMENT_SHADER_CACHE");
+    return !(vertex && !strcmp(vertex,"0")) && !(fragment && !strcmp(fragment,"0"));
+}
 static int native_prepare_fragment(NativeGraphicsState *state)
 {
     ID3D11PixelShader *shader=NULL;ID3DBlob *bytecode=NULL;
-    HRESULT hr=fut_native_fragment_compile(state->device,&state->kelvin,state->textures,&shader,&bytecode);
+    int cache_hit=0;
+    HRESULT hr=fut_native_fragment_compile_cached(state->device,&state->kelvin,state->textures,
+        native_fragment_cache_enabled()?&state->fragment_cache:NULL,&shader,&bytecode,&cache_hit);
     if(FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] fragment-program translation pending/failed: control=%08X HRESULT=%08lX\n",
             state->kelvin.fragment.control,hr);
@@ -881,7 +899,8 @@ static int native_prepare_fragment(NativeGraphicsState *state)
     if(state->pixel_bytecode) ID3D10Blob_Release(state->pixel_bytecode);
     state->pixel_shader=shader;state->pixel_bytecode=bytecode;state->kelvin.fragment.dirty=0;
     ID3D11DeviceContext_PSSetShader(state->context,shader,NULL,0);
-    fprintf(stderr,"[GRAPHICS] register-combiner equations compiled to native pixel shader; no draw\n");
+    fprintf(stderr,"[GRAPHICS] register-combiner equations %s; no draw\n",
+        cache_hit?"reused from exact generated HLSL cache":"compiled to native pixel shader");
     return 1;
 }
 
@@ -1006,28 +1025,22 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
     int timing=native_graphics_stage_timing_enabled();
     const char *cache_option=getenv("RECOMP_VERTEX_SHADER_CACHE");
     int cache_enabled=!(cache_option && cache_option[0]=='0' && cache_option[1]=='\0');
-    int cached_vertex=cache_enabled && state->aa2_vertex_shader && state->aa2_vertex_bytecode &&
-        state->aa2_vertex_program_cache_valid && state->aa2_vertex_program_cache_first==first &&
-        state->aa2_vertex_program_cache_count==count &&
-        memcmp(state->aa2_vertex_program_cache,state->kelvin.program+first,
-            count*sizeof(state->aa2_vertex_program_cache[0]))==0;
+    int cached_vertex=0;
     uint64_t stage_started=timing?native_graphics_stage_timing_begin():0;
-    HRESULT hr=S_OK;
+    HRESULT hr=fut_native_vertex_compile_screen_cached(state->device,state->kelvin.program+first,
+        count,1,cache_enabled?&state->vertex_cache:NULL,&vs,&vblob,&cached_vertex);
     if(cached_vertex) {
-        vs=state->aa2_vertex_shader;ID3D11VertexShader_AddRef(vs);
-        vblob=state->aa2_vertex_bytecode;ID3D10Blob_AddRef(vblob);
         fprintf(stderr,"[GRAPHICS] original AA2 vertex program reused from exact instruction cache: start=%u instructions=%u\n",
             first,count);
     } else {
-        hr=fut_native_vertex_compile_screen_aa2(state->device,state->kelvin.program+first,count,&vs,&vblob);
         if(timing) native_graphics_stage_timing_end(stage_started,"aa2-vertex-compile",0,0,0,0);
     }
     if(SUCCEEDED(hr)) {
         stage_started=timing?native_graphics_stage_timing_begin():0;
         int fragment_cache_hit=0;
-        if(cache_enabled)
+        if(native_fragment_cache_enabled())
             hr=fut_native_fragment_compile_aa2_affine_cached(state->device,&state->kelvin,
-                state->textures,1,&state->aa2_fragment_cache,&ps,&pblob,&fragment_cache_hit);
+                state->textures,1,&state->fragment_cache,&ps,&pblob,&fragment_cache_hit);
         else
             hr=fut_native_fragment_compile_aa2_affine(state->device,&state->kelvin,
                 state->textures,1,&ps,&pblob);
@@ -1050,15 +1063,6 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
     if(state->pixel_shader) ID3D11PixelShader_Release(state->pixel_shader);
     if(state->pixel_bytecode) ID3D10Blob_Release(state->pixel_bytecode);
     state->aa2_vertex_shader=vs;state->aa2_vertex_bytecode=vblob;
-    if(cache_enabled && !cached_vertex) {
-        memcpy(state->aa2_vertex_program_cache,state->kelvin.program+first,
-            count*sizeof(state->aa2_vertex_program_cache[0]));
-        state->aa2_vertex_program_cache_first=first;
-        state->aa2_vertex_program_cache_count=count;
-        state->aa2_vertex_program_cache_valid=1;
-    } else if(!cache_enabled) {
-        state->aa2_vertex_program_cache_valid=0;
-    }
     state->pixel_shader=ps;state->pixel_bytecode=pblob;
     state->kelvin.fragment.dirty=0;
     return 1;
@@ -1150,7 +1154,13 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x09A10E29u &&
         fut_graphics_bc2_c9df00_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_BC2_C9DF00_AA2_APPROXIMATION: exact offset=00C9DF00 FORMAT=09A10E29 1024x512 BC2, pitch=4096; existing 640x480 AA2 and depth-write mappings; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",stderr);
+    if(aa2 && fut_graphics_untextured_aa2_approximation_enabled() &&
+        state->kelvin.textures[0].format==0x06A10E29u &&
+        state->kelvin.textures[0].offset==0x00C6CF00u &&
+        state->kelvin.textures[0].control0==0 && state->kelvin.fragment.stage_program==0)
+        fputs("[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: captured disabled-texture draw; no retained BC2 sampling; AA2/depth fidelity unverified NOT_READY\n",stderr);
     if(aa2 && fut_graphics_bc2_aa2_family_approximation_enabled() &&
+        (state->kelvin.textures[0].control0&0x40000000u) &&
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u &&
         state->kelvin.textures[0].valid==0x3BFu && state->kelvin.draw.dither==1)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_BC2_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; one-mip BC2 under observed 640x480 AA2/depth-write/sampler baseline; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",
@@ -1423,9 +1433,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     &view_a,&view_b,state->kelvin.vertex_array_format,state->kelvin.vertex_array_offset,
                     state->kelvin.attributes,state->kelvin.attribute_valid,required);
                 if(!built) {
-                    fprintf(stderr,"[GRAPHICS] authorized LINES fetch refused: refs=%u/%u/%u required=%04X indices=%u; no draw/completion\n",
-                        has_refs,has_a,has_b,required,state->vertex_array.count);return 0;
+                    fprintf(stderr,"[GRAPHICS] authorized LINES fetch refused: refs=%u/%u/%u required=%04X indices=%u format0=%08X offset0=%08X constant0_valid=%u; no draw/completion\n",
+                        has_refs,has_a,has_b,required,state->vertex_array.count,
+                        state->kelvin.vertex_array_format[0],state->kelvin.vertex_array_offset[0],state->kelvin.attribute_valid[0]);return 0;
                 }
+                fprintf(stderr,"[GRAPHICS] observed LINES fetched transactionally: endpoints=%u format0=%08X offset0=%08X; no draw/completion yet\n",
+                    state->immediate.count,state->kelvin.vertex_array_format[0],state->kelvin.vertex_array_offset[0]);
                 if(state->native_surfaces.plan.samples!=2 || !native_prepare_immediate(state) || !native_prepare_draw(state)) {
                     fputs("[GRAPHICS] exact LINES experiment requires prepared captured AA2/P8/depth state; no draw/completion\n",stderr);return 0;
                 }
@@ -1743,6 +1756,31 @@ static int native_command_read(void *context, size_t offset, uint8_t *bytes, siz
     return read_guest(range->start + (uint32_t)offset, bytes, size);
 }
 
+static void native_capture_queue_wrap(uint32_t start,uint32_t end,uint32_t cursor,
+    uint32_t submitted,uint32_t write_ptr,uint32_t put)
+{
+    fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] ring=[%08X,%08X) cursor=%08X submitted=%08X write_ptr=%08X PUT=%08X; refused, no completion\n",
+        start,end,cursor,submitted,write_ptr,put);
+    if(start<0x80000000u || end>0x84000000u || start>=end ||
+        cursor<start || cursor>end || submitted<start || submitted>=cursor ||
+        ((start|end|cursor|submitted)&3u)) return;
+    uint8_t bytes[65536];
+    const uint32_t bases[2]={cursor,start},limits[2]={end,submitted};
+    const char *names[2]={"graphics-wrap-tail.bin","graphics-wrap-head.bin"};
+    for(unsigned i=0;i<2;++i) {
+        size_t size=limits[i]-bases[i];
+        if(!size || size>sizeof(bytes) || !read_guest(bases[i],bytes,size)) {
+            fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] capture refused: part=%u bytes=%zu\n",i,size);
+            continue;
+        }
+        FILE *file=fopen(names[i],"wb");
+        if(!file) continue;
+        size_t written=fwrite(bytes,1,size,file);int closed=fclose(file)==0;
+        fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] read-only non-atomic snapshot: part=%u base=%08X bytes=%zu saved=%d; no execution/completion\n",
+            i,bases[i],size,written==size && closed);
+    }
+}
+
 static DWORD WINAPI native_worker(void *unused)
 {
     (void)unused;
@@ -1818,19 +1856,26 @@ static DWORD WINAPI native_worker(void *unused)
             }
             continue;
         }
-        if (submitted < cursor || submitted > ring_end || (submitted - cursor) % 4u)
-            fail_backend("submission wrap or invalid range is not implemented");
+        if (submitted < ring_start || submitted > ring_end || (submitted & 3u)) {
+            native_capture_queue_wrap(ring_start,ring_end,cursor,submitted,write_ptr,put);
+            fail_backend("submission outside validated queue range");
+        }
+        int wrapped=submitted<cursor;
         uint8_t bytes[65536];
-        size_t size = submitted - cursor;
-        if (size > sizeof(bytes) || !read_guest(cursor, bytes, size))
+        size_t size = wrapped?0:submitted-cursor;
+        if (!wrapped && (size > sizeof(bytes) || !read_guest(cursor, bytes, size)))
             fail_backend("submission capture exceeds native decoder bounds");
         FutGraphicsDecodeResult decoded;
-        NativeCommandRange range = {cursor, size};
-        FutGraphicsDecodeStatus status = fut_graphics_decode_live(size, native_command_read, &range,
-            native_traced_method, &state, &decoded);
+        NativeCommandRange range = {wrapped?ring_start:cursor,wrapped?ring_end-ring_start:size};
+        size_t jump_offset=SIZE_MAX;
+        FutGraphicsDecodeStatus status = wrapped?
+            fut_graphics_decode_wrapped_live(ring_start,ring_end,cursor,submitted,
+                native_command_read,&range,native_traced_method,&state,&decoded,&jump_offset):
+            fut_graphics_decode_live(size,native_command_read,&range,native_traced_method,&state,&decoded);
         if (status != FUT_GRAPHICS_DECODED) {
-            FILE *capture = fopen("graphics-rejected.bin", "wb");
+            FILE *capture = wrapped?NULL:fopen("graphics-rejected.bin", "wb");
             if (capture) { fwrite(bytes, 1, size, capture); fclose(capture); }
+            if(wrapped) native_capture_queue_wrap(ring_start,ring_end,cursor,submitted,write_ptr,put);
             fprintf(stderr, "[GRAPHICS] submission blocked: start=%08X end=%08X "
                     "status=%d offset=%zu header=%08X bytes=%zu; completion unchanged\n",
                     cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size);
@@ -1838,11 +1883,14 @@ static DWORD WINAPI native_worker(void *unused)
         }
         if (!native_traced_finish(&state))
             fail_backend("native completion failed");
-        native_snapshot_command_changes(cursor,bytes,size);
+        if(!wrapped) native_snapshot_command_changes(cursor,bytes,size);
         if (!write32(channel + 0x44u, put))
             fail_backend("native completion or submission cursor update failed");
         fprintf(stderr, "[GRAPHICS] submission completed: start=%08X end=%08X methods=%zu\n",
                 cursor, submitted, decoded.methods);
+        if(wrapped)
+            fprintf(stderr,"[GRAPHICS] original ring jump completed after native GPU finish: jump=%08X target=%08X executed_bytes=%zu methods=%zu GET=%08X; no implicit padding execution\n",
+                cursor+(uint32_t)jump_offset,ring_start,decoded.decoded_bytes,decoded.methods,put);
         cursor = submitted;
     }
     if (state.host_vblank.state) {
@@ -1864,7 +1912,8 @@ static DWORD WINAPI native_worker(void *unused)
     if (state.vertex_bytecode) ID3D10Blob_Release(state.vertex_bytecode);
     if (state.aa2_vertex_shader) ID3D11VertexShader_Release(state.aa2_vertex_shader);
     if (state.aa2_vertex_bytecode) ID3D10Blob_Release(state.aa2_vertex_bytecode);
-    fut_native_fragment_cache_destroy(&state.aa2_fragment_cache);
+    fut_native_vertex_cache_destroy(&state.vertex_cache);
+    fut_native_fragment_cache_destroy(&state.fragment_cache);
     if (state.pixel_shader) ID3D11PixelShader_Release(state.pixel_shader);
     if (state.pixel_bytecode) ID3D10Blob_Release(state.pixel_bytecode);
     ID3D11DeviceContext_Release(context);

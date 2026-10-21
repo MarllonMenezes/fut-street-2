@@ -14,33 +14,65 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 19 de outubro de 2026
+## Estado verificável — 21 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** A build atual do host e o CTest focal passaram. O executável dessa build ainda não foi lançado após a correção do script de preparação do overlay.
+**NOT_READY — ainda não é um jogo recompilado jogável.** O host nativo foi compilado e executado com saída PCM experimental e captura de quadros. A tela original de carregamento já foi inspecionada em 640×480; menu, cenário e partida continuam sem comprovação.
+
+A integração mais recente durou 300 segundos e foi encerrada pelo timeout.
+Os caches de vértices e fragmentos agora retêm até 32 programas cada, por conteúdo
+exato, dispositivo e modo. A execução também ultrapassou dois saltos originais de
+retorno ao início da fila circular: os comandos concluíram na GPU antes da atualização de GET.
+Onze testes focais passaram. Houve 1.053 quadros com apresentação/ISR confirmados;
+a captura final ainda mostra o logotipo original e “LOADING…”. Menu e partida
+continuam pendentes. O próximo experimento rastreia a tela de carregamento no
+caminho original da interface e suas condições de transição.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Tradução e compilação | O código recompilado do host compilou; o teste no_emulation_runtime_support passou (1/1). Isso confirma build e gate focal, não boot funcional. |
-| Boot | O último launch, run 011520, usou o executável anterior à correção do script; expirou em 60 segundos e foi encerrado pelo runner. O executável da build atual ainda precisa de um launch limitado. Menu e boot completo continuam sem comprovação. |
-| Streaming e áudio | Durante o launch, o updater encheu o registro alvo até cursor 29 diante de highwater 30; o crédito ficou em zero e nenhum dos readers instrumentados foi chamado nessa janela. O ring do host não tinha espaço para outro bloco. Um bypass experimental completou 931 esperas artificialmente; DSP executado = 0 e áudio validado = 0. A relação causal entre esses registros e o avanço do boot ainda precisa ser confirmada. |
-| Rendering | O launch executou um caso capturado de AA2 LINELIST com 8 vértices, 16 vértices de IA, 5.507 pixel-shader invocations e writeback da superfície guest. A cobertura de linha D3D11, depth compression e apresentação/VBlank não foram validadas como equivalentes NV2A. Isso não comprova um quadro completo nem a resolução 1920×1080. |
-| Controles e gameplay | Menu utilizável, comandos chegando à lógica original, carregamento de cenário e partida curta ainda não foram comprovados. |
+| Compilação e testes | Build passou; onze testes focais passaram: caches/execução de shaders, texturas, alpha, AA2, backend, comandos e salto da fila, arrays, estados de software, pipeline e contratos de áudio. |
+| Streaming | O mixer original voltou a chamar os leitores. O registro alvo recebeu pelo menos 145 blocos, com consumo liberando slots; antes parava em 29. |
+| Saída PCM nativa | O Windows aceitou PCM de seis canais, 48 kHz e 16 bits. A posição real do dispositivo avançou e houve envio de pacotes não silenciosos produzidos pelo mixer original. Conteúdo audível, canais e latência ainda não foram validados. |
+| Boot e rendering | Capturas mostram a arte original e “LOADING…”. Antes do cache de fragmentos, foram 772 compilações em 60 segundos; depois, sete em toda a execução de 300 segundos, com reutilização por comparação integral do código gerado. Nas janelas de cerca de um minuto, os recibos DXGI/ISR passaram de 171 para 232. Menu e funcionamento em 1920×1080 ainda não comprovados. |
+| Controles e gameplay | Entrada na lógica original, cenário carregado e partida curta ainda não comprovados. |
 
-As aproximações de textura, AA2, resolve e linhas permanecem experimentais,
-restritas aos casos observados e opt-in. Não há alegação de fidelidade NV2A.
-A ISO/XBE original permaneceu intacta; builds, saves, logs, capturas e fontes
-recompilados proprietários ficam locais.
+A saída PCM exige `-NativePcmOutput` no runner e uma build com
+`FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK=ON`. A opção é desligada por padrão.
+Ela usa o buffer final do mixer original e a posição de reprodução do Windows.
+O avanço de 32 amostras do cursor de escrita e o mapeamento 5.1 são experimentais.
+Isso não implementa o DSP/APU nem comprova equivalência de áudio Xbox.
+O bypass de espera de efeitos ainda foi necessário e completou 2.195 esperas
+artificialmente na integração mais recente. Seu orçamento padrão continua 4.096;
+o experimento longo usou o limite explícito de 16.384.
+
+As aproximações gráficas permanecem experimentais e restritas aos casos
+observados. Não há alegação de fidelidade NV2A. ISO/XBE, assets, código
+recompilado proprietário, builds, saves e logs permanecem locais.
+
+A opção experimental `-HighResolutionGpuWait` reduz a pausa entre consultas de
+conclusão da GPU, preservando a exigência de conclusão real e os limites de espera.
+`-CapturePresentedFrames` salva até 64 superfícies enviadas à apresentação no
+diretório isolado do runner. Ambas são desligadas por padrão; as capturas ficam locais.
+`-UntexturedAa2Approximation` habilita somente o estado sem textura capturado e
+também é desligado por padrão. O timeout do runner é finito, com máximo de 300
+segundos; `-FrameCaptureIntervalMs` controla o intervalo após as oito primeiras
+capturas, preservando o teto de 64 arquivos.
+
+`RECOMP_FRAGMENT_SHADER_CACHE=0` permite comparar a execução sem o cache de
+fragmentos. `RECOMP_VERTEX_SHADER_CACHE=0` desabilita ambos os caches, preservando
+o controle de diagnóstico anterior. `RECOMP_FRAGMENT_COMPILER_PROFILE=1` registra
+custos e identificadores de compilação com saída limitada; os hashes do perfil
+não são usados como chaves do cache. O runner registra essas opções efetivas.
 
 ### O que falta
 
-1. Identificar por que o caminho de leitura do ring não foi acionado e verificar se ele realmente bloqueia a progressão. Não preencher cursores nem fabricar consumo.
-2. Repetir um boot limitado após resolver o primeiro bloqueio funcional observado e comprovar a chegada ao menu e ao cenário.
-3. Produzir e avaliar um quadro completo, incluindo apresentação e funcionamento em 1920×1080; os draws capturados ainda não provam isso.
-4. Validar entrada do controle e uma partida curta com jogadores, bola, regras e placar conduzidos pela lógica recompilada original.
-5. Retirar o bypass de áudio e demonstrar áudio funcional separadamente; o bypass atual apenas permite investigação limitada.
+1. Identificar a condição que mantém a tela LOADING e comprovar a transição para o menu e o cenário.
+2. Resolver o próximo bloqueio funcional observado em execuções limitadas, preservando o consumo original do streaming.
+3. Comprovar uma imagem completa em 1920×1080.
+4. Validar controles e uma partida curta com jogadores, bola, regras e placar conduzidos pela lógica recompilada original.
+5. Validar áudio, canais e latência, resolver as dependências restantes e retirar o bypass artificial de efeitos.
 
 Build, boot, rendering, resolução, áudio e gameplay são critérios separados.
-O estado permanece NOT_READY até comprovação funcional.
+O estado permanece **NOT_READY** até comprovação funcional.
 ## Abordagem
 
 - Usar o [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) como base para análise e tradução estática do código Xbox x86 para C, com uma pilha de patches versionada em [`native_recomp/patches`](native_recomp/patches).

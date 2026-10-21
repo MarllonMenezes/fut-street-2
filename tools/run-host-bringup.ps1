@@ -4,13 +4,15 @@ param(
     [Parameter(Mandatory = $true)][string]$XbePath,
     [Parameter(Mandatory = $true)][string]$GameDataDirectory,
     [string]$OutputRoot = 'D:\projeto zeta\artifacts\bringup',
-    [ValidateRange(1, 60)][int]$TimeoutSeconds = 20,
+    [ValidateRange(1, 300)][int]$TimeoutSeconds = 20,
     [ValidateRange(1, 400000)][int]$TraceBudget = 20000,
     [switch]$GraphicsSnapshot,
     [switch]$HostOutputVblank,
     [switch]$NativeDisplayOrigin,
     [switch]$GraphicsTrace,
+    [switch]$HighResolutionGpuWait,
     [switch]$Aa2Approximation,
+    [switch]$UntexturedAa2Approximation,
     [switch]$Dxt1NoiseApproximation,
     [switch]$P8Aa2Approximation,
     [switch]$P8_128x32Aa2Approximation,
@@ -25,11 +27,15 @@ param(
     [switch]$Yuy2FamilyBt601Approximation,
     [switch]$Yuy2FamilyAa2Approximation,
     [switch]$CaptureLcImage,
+    [switch]$CapturePresentedFrames,
+    [ValidateRange(1000, 10000)][int]$FrameCaptureIntervalMs = 1000,
     [switch]$Lines16segmentAa2Approximation,
     [switch]$Lines4segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Ac97ResetApproximation,
     [switch]$AudioEffectsBypass,
+    [ValidateRange(1, 16384)][int]$AudioEffectsBypassMaxCompletions = 4096,
+    [switch]$NativePcmOutput,
     [switch]$StreamCallbackTrace,
     [ValidateRange(1, 10000)][int]$StreamCallbackTraceLimit = 128,
     [switch]$TraceStreamWait,
@@ -50,6 +56,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($UntexturedAa2Approximation -and -not $Aa2Approximation) {
+    throw 'The captured untextured draw requires -Aa2Approximation.'
+}
 if ($Lines4segmentAa2Approximation -and -not $Aa2Approximation) {
     throw 'Four-segment LINES requires -Aa2Approximation.'
 }
@@ -117,6 +126,7 @@ $variables = @{
     RECOMP_DIAGNOSTIC_TRAP = '1'; RECOMP_UNIMPL_TRAP = '1'
     RECOMP_TRACE_BUDGET = [string]$TraceBudget
     RECOMP_AA2_APPROXIMATION = '0'
+    RECOMP_UNTEXTURED_AA2_APPROXIMATION = '0'
     RECOMP_DXT1_NOISE_APPROXIMATION = '0'
     RECOMP_P8_AA2_APPROXIMATION = '0'
     RECOMP_P8_128X32_AA2_APPROXIMATION = '0'
@@ -131,11 +141,16 @@ $variables = @{
     RECOMP_YUY2_FAMILY_BT601_APPROXIMATION = '0'
     RECOMP_YUY2_FAMILY_AA2_APPROXIMATION = '0'
     RECOMP_CAPTURE_LC_IMAGE = '0'
+    RECOMP_CAPTURE_PRESENTED_FRAMES = '0'
+    RECOMP_FRAME_CAPTURE_INTERVAL_MS = [string]$FrameCaptureIntervalMs
     RECOMP_LINES_16SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
+    RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = [string]$AudioEffectsBypassMaxCompletions
+    RECOMP_NATIVE_PCM_OUTPUT = '0'
+    RECOMP_GPU_HIGH_RES_WAIT = '0'
     RECOMP_STREAM_CALLBACK_TRACE = '0'
     RECOMP_STREAM_CALLBACK_TRACE_LIMIT = [string]$StreamCallbackTraceLimit
     RECOMP_TRACE_TARGET_STREAM_EVENTS = $null
@@ -162,6 +177,10 @@ $variables = @{
     RECOMP_EXPERIMENT_TARGET_STREAM_PUMP_AFTER_STATUS2 = $null
 }
 if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
+if ($UntexturedAa2Approximation) { $variables.RECOMP_UNTEXTURED_AA2_APPROXIMATION = '1' }
+if ($NativePcmOutput) { $variables.RECOMP_NATIVE_PCM_OUTPUT = '1' }
+if ($HighResolutionGpuWait) { $variables.RECOMP_GPU_HIGH_RES_WAIT = '1' }
+if ($CapturePresentedFrames) { $variables.RECOMP_CAPTURE_PRESENTED_FRAMES = '1' }
 if ($StreamCallbackTrace) {
     $variables.RECOMP_STREAM_CALLBACK_TRACE = '1'
     $variables.RECOMP_TRACE_TARGET_STREAM_EVENTS = '1'
@@ -263,6 +282,7 @@ try {
         native_display_origin = [bool]$NativeDisplayOrigin
         graphics_trace = [bool]$GraphicsTrace
         aa2_approximation = [bool]$Aa2Approximation
+        untextured_aa2_approximation = [bool]$UntexturedAa2Approximation
         dxt1_noise_approximation = [bool]$Dxt1NoiseApproximation
         p8_aa2_approximation = [bool]$P8Aa2Approximation
         p8_128x32_aa2_approximation = [bool]$P8_128x32Aa2Approximation
@@ -282,7 +302,15 @@ try {
         quincunx_approximation = [bool]$QuincunxApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass
-        audio_effects_bypass_max_completions = $(if ($AudioEffectsBypass) { 4096 } else { 0 })
+        native_pcm_output = [bool]$NativePcmOutput
+        high_resolution_gpu_wait = [bool]$HighResolutionGpuWait
+        vertex_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0')
+        fragment_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0' -and $childEnvironment['RECOMP_FRAGMENT_SHADER_CACHE'] -ne '0')
+        fragment_compiler_profile = ($childEnvironment['RECOMP_FRAGMENT_COMPILER_PROFILE'] -eq '1')
+        graphics_stage_timing = ($childEnvironment['RECOMP_GRAPHICS_STAGE_TIMING'] -eq '1')
+        capture_presented_frames = [bool]$CapturePresentedFrames
+        frame_capture_interval_ms = $FrameCaptureIntervalMs
+        audio_effects_bypass_max_completions = $(if ($AudioEffectsBypass) { $AudioEffectsBypassMaxCompletions } else { 0 })
         stream_callback_trace = [bool]$StreamCallbackTrace
         stream_callback_trace_local_limit_per_event = $(if ($StreamCallbackTrace) { $StreamCallbackTraceLimit } else { 0 })
         stream_wait_trace = [bool]$TraceStreamWait

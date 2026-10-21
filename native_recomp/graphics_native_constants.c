@@ -2,6 +2,7 @@
 #include "graphics_native_constants.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 HRESULT fut_native_constants_init(FutNativeConstants *native,
     ID3D11Device *device, ID3D11DeviceContext *context)
@@ -16,6 +17,20 @@ HRESULT fut_native_constants_init(FutNativeConstants *native,
     D3D11_QUERY_DESC query = {D3D11_QUERY_EVENT, 0};
     if (SUCCEEDED(hr))
         hr = ID3D11Device_CreateQuery(device, &query, &native->completion);
+    const char *high_res = getenv("RECOMP_GPU_HIGH_RES_WAIT");
+    const char *profile = getenv("RECOMP_GRAPHICS_STAGE_TIMING");
+    native->profile_waits = profile && !strcmp(profile, "1");
+    if (SUCCEEDED(hr) && high_res && strcmp(high_res, "0")) {
+        if (strcmp(high_res, "1")) hr = E_INVALIDARG;
+        else {
+            /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (Win10 1803+).
+             * Local timer only; does not request global timer resolution. */
+            native->poll_timer = CreateWaitableTimerExW(NULL, NULL, 0x2u,
+                TIMER_MODIFY_STATE | SYNCHRONIZE);
+            if (!native->poll_timer) hr = HRESULT_FROM_WIN32(GetLastError());
+            else fputs("[GRAPHICS] high-resolution GPU polling wait enabled; real query completion required\n", stderr);
+        }
+    }
     if (FAILED(hr))
         fut_native_constants_destroy(native);
     return hr;
@@ -61,7 +76,22 @@ int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*con
                 (unsigned long)last_hr);
             return 0;
         }
-        if (stop_event) {
+        LARGE_INTEGER wait_begin={0},wait_end={0},frequency={0};
+        if(native->profile_waits) QueryPerformanceCounter(&wait_begin);
+        if (native->poll_timer) {
+            LARGE_INTEGER due; due.QuadPart = -10000; /* Relative 1ms. */
+            if (!SetWaitableTimer(native->poll_timer, &due, 0, NULL, NULL, FALSE)) return 0;
+            HANDLE waits[2] = {stop_event, native->poll_timer};
+            const ULONGLONG now = GetTickCount64();
+            const DWORD remaining = now < deadline ? (DWORD)(deadline-now) : 0;
+            const DWORD result = WaitForMultipleObjects(stop_event ? 2u : 1u,
+                stop_event ? waits : waits+1, FALSE, remaining);
+            const DWORD timer_result = stop_event ? WAIT_OBJECT_0+1u : WAIT_OBJECT_0;
+            if (result != timer_result) {
+                fprintf(stderr,"[GRAPHICS] high-resolution GPU polling wait stopped: result=%lu; no completion accepted\n",result);
+                return 0;
+            }
+        } else if (stop_event) {
             if (WaitForSingleObject(stop_event, 1) != WAIT_TIMEOUT) {
                 fprintf(stderr, "[GRAPHICS] constants completion interrupted during wait: last_hr=%08lX complete=%u\n",
                     (unsigned long)last_hr, (unsigned)last_complete);
@@ -69,6 +99,20 @@ int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*con
             }
         } else {
             Sleep(1);
+        }
+        if(native->profile_waits && QueryPerformanceCounter(&wait_end) &&
+            QueryPerformanceFrequency(&frequency) && frequency.QuadPart>0 &&
+            wait_end.QuadPart>=wait_begin.QuadPart) {
+            uint64_t us=(uint64_t)(wait_end.QuadPart-wait_begin.QuadPart)*1000000u/
+                (uint64_t)frequency.QuadPart;
+            ++native->wait_count;native->wait_us+=us;
+            if(us>native->max_wait_us) native->max_wait_us=us;
+            if(native->wait_count<=8u || !(native->wait_count&(native->wait_count-1u)))
+                fprintf(stderr,"[GPU-POLL-WAIT] mode=%s count=%llu mean_us=%llu max_us=%llu\n",
+                    native->poll_timer?"high-resolution":"legacy",
+                    (unsigned long long)native->wait_count,
+                    (unsigned long long)(native->wait_us/native->wait_count),
+                    (unsigned long long)native->max_wait_us);
         }
     } while (GetTickCount64() < deadline);
     fprintf(stderr, "[GRAPHICS] constants completion query timed out: timeout_ms=%lu last_hr=%08lX complete=%u\n",
@@ -78,6 +122,7 @@ int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*con
 
 void fut_native_constants_destroy(FutNativeConstants *native)
 {
+    if (native->poll_timer) CloseHandle(native->poll_timer);
     if (native->completion) ID3D11Query_Release(native->completion);
     if (native->buffer) ID3D11Buffer_Release(native->buffer);
     memset(native, 0, sizeof(*native));

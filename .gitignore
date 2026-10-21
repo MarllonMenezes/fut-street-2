@@ -45,6 +45,7 @@
 
 !/native_recomp/
 /native_recomp/*
+!/native_recomp/audio_native_pcm.c
 !/native_recomp/CMakeLists.txt
 !/native_recomp/README.md
 !/native_recomp/zig-ar.cmd

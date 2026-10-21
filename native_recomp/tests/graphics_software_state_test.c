@@ -550,6 +550,63 @@ int main(void)
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 95;
     _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","0");
-    puts("Software controls: exact BC1/P8/BC2 and both YUY2 AA2 scopes, independent opt-ins and negative variants verified");
+    /* Retained BC2 state must not be sampled by the captured untextured
+     * shader. This separate scope leaves the old disabled-BC2 negatives. */
+    state=baseline;kelvin=(FutGraphicsKelvinState){0};
+    surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    kelvin.anti_aliasing_control=0xFFFF0001;kelvin.depth_test=1;
+    kelvin.draw.depth_write=1;kelvin.draw.dither=1;kelvin.compress_depth=1;
+    kelvin.control0=0x00100001;kelvin.fragment.valid=2;
+    kelvin.textures[0]=(FutGraphicsTextureState){.valid=0x3BF,.format=0x06A10E29,
+        .offset=0x00C6CF00,.address=0x10303,.control0=0,.control1=0x14000000,
+        .filter=0x02062000,.image_rect=0x050001E0};
+    _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","0");
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 98;
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","true");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 99;
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 100;
+    FutGraphicsKelvinState untextured=kelvin;
+    for(unsigned i=0;i<23;++i) {
+        state=baseline;kelvin=untextured;
+        surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
+            .logical_height=480,.samples=2};
+        switch(i) {
+        case 0:kelvin.textures[0].format^=0x100000;break;
+        case 1:kelvin.textures[0].offset+=16;break;
+        case 2:kelvin.textures[0].control0=0x40000000;break;
+        case 3:kelvin.textures[1].control0=1;break;
+        case 4:kelvin.fragment.stage_program=1;break;
+        case 5:kelvin.fragment.valid=0;break;
+        case 6:surface.samples=1;surface.width=640;break;
+        case 7:surface.logical_width=320;surface.width=640;break;
+        case 8:kelvin.depth_test=0;break;
+        case 9:kelvin.draw.depth_write=0;break;
+        case 10:kelvin.compress_depth=0;break;
+        case 11:kelvin.stencil_test=1;break;
+        case 12:kelvin.control0^=1;break;
+        case 13:kelvin.draw.dither=0;break;
+        case 14:kelvin.textures[0].valid^=1;break;
+        case 15:kelvin.textures[0].address^=1;break;
+        case 16:kelvin.textures[0].control1^=1;break;
+        case 17:kelvin.textures[0].filter^=0x10000;break;
+        case 18:kelvin.textures[0].image_rect^=1;break;
+        case 19:state.register_words[1]^=1;break;
+        case 20:state=(FutGraphicsSoftwareState){0};break;
+        case 21:state.rdi_value[1]^=1;break;
+        case 22:kelvin.anti_aliasing_control=0;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) {
+            fprintf(stderr,"Untextured negative admitted: %u\n",i);return 101;
+        }
+    }
+    state=baseline;kelvin=untextured;
+    _putenv_s("RECOMP_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 102;
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");
+    puts("Software controls: captured untextured draw and existing texture scopes, independent opt-ins and negative variants verified");
     return 0;
 }

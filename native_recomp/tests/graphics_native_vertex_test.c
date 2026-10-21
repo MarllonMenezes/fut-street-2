@@ -174,8 +174,73 @@ static int run_fixture(int mode)
     puts("Original-format shader recompiled and executed: paired issue, reciprocal, masks and outputs verified");
     return 0;
 }
+static int verify_cache(void)
+{
+#define CACHE_CHECK(x) do {if(!(x)){fprintf(stderr,"vertex cache contract failed at %d\n",__LINE__);return 40;}}while(0)
+    ID3D11Device *device=NULL,*other=NULL;D3D_FEATURE_LEVEL level;
+    CACHE_CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,
+        D3D11_SDK_VERSION,&device,&level,NULL)));
+    CACHE_CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,
+        D3D11_SDK_VERSION,&other,&level,NULL)));
+    FutNativeVertexCache cache={0};
+    /* MOV oPos,c0, then c1: only the complete instruction key distinguishes them. */
+    uint32_t a[1][4]={{0,(1u<<21)|0x1Bu,3u<<26,0xF801u}},b[1][4];
+    memcpy(b,a,sizeof(b));b[0][1]|=1u<<13;
+    ID3D11VertexShader *first=NULL,*shader=NULL;ID3DBlob *first_code=NULL,*code=NULL;
+    int hit=99;
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,a,1,0,&cache,&first,&first_code,&hit)) && !hit);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,b,1,0,&cache,&shader,&code,&hit)) && !hit);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,a,1,0,&cache,&shader,&code,&hit)) && hit && shader==first && code==first_code);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,a,1,1,&cache,&shader,&code,&hit)) && !hit);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(other,a,1,0,&cache,&shader,&code,&hit)) && !hit);
+    ID3D11Device *owner=NULL;ID3D11VertexShader_GetDevice(shader,&owner);
+    CACHE_CHECK(owner==other);ID3D11Device_Release(owner);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    unsigned next=cache.next;
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,a,1,0,NULL,&shader,&code,&hit)) && !hit && cache.next==next);
+    CACHE_CHECK(ID3D10Blob_GetBufferSize(code)==ID3D10Blob_GetBufferSize(first_code) &&
+        !memcmp(ID3D10Blob_GetBufferPointer(code),ID3D10Blob_GetBufferPointer(first_code),ID3D10Blob_GetBufferSize(code)));
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    for(unsigned mode=0;mode<6;++mode) {
+        uint32_t invalid[1][4];memcpy(invalid,a,sizeof(invalid));
+        if(mode==5) invalid[0][1]=(5u<<21)|0x1Bu; /* Unsupported opcode must still fail. */
+        CACHE_CHECK(FAILED(fut_native_vertex_compile_screen_cached(mode==0?NULL:device,
+            mode==1?NULL:invalid,mode==2?0:mode==3?137:1,mode==4?2:0,&cache,&shader,&code,&hit)) &&
+            !shader && !code && !hit && cache.next==next);
+    }
+    /* Count participates even when a previous successful instruction is a prefix. */
+    uint32_t pair[2][4];memcpy(pair[0],a[0],sizeof(a[0]));memcpy(pair[1],b[0],sizeof(b[0]));pair[0][3]&=~1u;
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,pair,2,0,&cache,&shader,&code,&hit)) && !hit);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    fut_native_vertex_cache_destroy(&cache);
+    /* FIFO fills exactly32 entries, then evicts the oldest. Held caller references survive. */
+    for(unsigned i=0;i<=FUT_NATIVE_VERTEX_CACHE_CAPACITY;++i) {
+        memcpy(b,a,sizeof(b));b[0][1]|=i<<13;
+        CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,b,1,0,&cache,&shader,&code,&hit)) && !hit);
+        ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    }
+    CACHE_CHECK(cache.next==1);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,b,1,0,&cache,&shader,&code,&hit)) && hit);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    CACHE_CHECK(SUCCEEDED(fut_native_vertex_compile_screen_cached(device,a,1,0,&cache,&shader,&code,&hit)) && !hit);
+    ID3D11VertexShader_Release(shader);ID3D10Blob_Release(code);
+    fut_native_vertex_cache_destroy(&cache);fut_native_vertex_cache_destroy(&cache);
+    CACHE_CHECK(!cache.next && ID3D10Blob_GetBufferSize(first_code)>0);
+    ID3D11VertexShader_GetDevice(first,&owner);CACHE_CHECK(owner==device);ID3D11Device_Release(owner);
+    for(unsigned i=0;i<FUT_NATIVE_VERTEX_CACHE_CAPACITY;++i)
+        CACHE_CHECK(!cache.entries[i].shader && !cache.entries[i].bytecode);
+    ID3D11VertexShader_Release(first);ID3D10Blob_Release(first_code);
+    ID3D11Device_Release(other);ID3D11Device_Release(device);
+    puts("Exact bounded vertex cache: alternation, modes, devices, failure, eviction and ownership verified");
+    return 0;
+#undef CACHE_CHECK
+}
 int main(void)
 {
+    int cache=verify_cache();if(cache)return cache;
     int mad=run_fixture(-2);
     if(mad) return mad;
     int paired=run_fixture(-1);
