@@ -36,6 +36,7 @@ param(
     [switch]$AudioEffectsBypass,
     [ValidateRange(1, 16384)][int]$AudioEffectsBypassMaxCompletions = 4096,
     [switch]$NativePcmOutput,
+    [switch]$FrontendLoadingTrace,
     [switch]$StreamCallbackTrace,
     [ValidateRange(1, 10000)][int]$StreamCallbackTraceLimit = 128,
     [switch]$TraceStreamWait,
@@ -150,6 +151,7 @@ $variables = @{
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = [string]$AudioEffectsBypassMaxCompletions
     RECOMP_NATIVE_PCM_OUTPUT = '0'
+    RECOMP_FRONTEND_LOADING_TRACE = '0'
     RECOMP_GPU_HIGH_RES_WAIT = '0'
     RECOMP_STREAM_CALLBACK_TRACE = '0'
     RECOMP_STREAM_CALLBACK_TRACE_LIMIT = [string]$StreamCallbackTraceLimit
@@ -178,6 +180,7 @@ $variables = @{
 }
 if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
 if ($UntexturedAa2Approximation) { $variables.RECOMP_UNTEXTURED_AA2_APPROXIMATION = '1' }
+if ($FrontendLoadingTrace) { $variables.RECOMP_FRONTEND_LOADING_TRACE = '1' }
 if ($NativePcmOutput) { $variables.RECOMP_NATIVE_PCM_OUTPUT = '1' }
 if ($HighResolutionGpuWait) { $variables.RECOMP_GPU_HIGH_RES_WAIT = '1' }
 if ($CapturePresentedFrames) { $variables.RECOMP_CAPTURE_PRESENTED_FRAMES = '1' }
@@ -303,6 +306,7 @@ try {
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass
         native_pcm_output = [bool]$NativePcmOutput
+        frontend_loading_trace = [bool]$FrontendLoadingTrace
         high_resolution_gpu_wait = [bool]$HighResolutionGpuWait
         vertex_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0')
         fragment_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0' -and $childEnvironment['RECOMP_FRAGMENT_SHADER_CACHE'] -ne '0')

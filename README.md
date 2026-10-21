@@ -18,18 +18,20 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** O host nativo foi compilado e executado com saída PCM experimental e captura de quadros. A tela original de carregamento já foi inspecionada em 640×480; menu, cenário e partida continuam sem comprovação.
 
-A integração mais recente durou 300 segundos e foi encerrada pelo timeout.
-Os caches de vértices e fragmentos agora retêm até 32 programas cada, por conteúdo
-exato, dispositivo e modo. A execução também ultrapassou dois saltos originais de
-retorno ao início da fila circular: os comandos concluíram na GPU antes da atualização de GET.
-Onze testes focais passaram. Houve 1.053 quadros com apresentação/ISR confirmados;
-a captura final ainda mostra o logotipo original e “LOADING…”. Menu e partida
-continuam pendentes. O próximo experimento rastreia a tela de carregamento no
-caminho original da interface e suas condições de transição.
+A integração de diagnóstico durou 120 segundos e foi encerrada pelo timeout.
+Uma execução final de 20 segundos confirmou o boot da build final, também limitada
+por timeout.
+O novo rastreamento opcional confirmou chamadas das rotinas originais de interface
+e atualização de variáveis, identificando seus chamadores. Os dois pontos
+monitorados de preparação da tela e transição geral de fase não foram observados
+nessa janela; isso ainda não identifica a causa da espera. A captura final
+continua mostrando “LOADING…”, sem menu comprovado. Dezesseis testes focais passaram.
+O próximo experimento acompanha a sequência original de boot identificada pelos
+chamadores, até localizar a condição que impede sua conclusão.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação e testes | Build passou; onze testes focais passaram: caches/execução de shaders, texturas, alpha, AA2, backend, comandos e salto da fila, arrays, estados de software, pipeline e contratos de áudio. |
+| Compilação e testes | Build passou; dezesseis testes focais passaram, incluindo o rastreamento de interface desligado/ligado, limites, preservação de registradores e recusa de pontos de inserção ausentes/duplicados, contratos de runtime e dispatch, além de caches/execução de shaders, texturas, alpha, AA2, backend, comandos e salto da fila, arrays, estados de software, pipeline e contratos de áudio. |
 | Streaming | O mixer original voltou a chamar os leitores. O registro alvo recebeu pelo menos 145 blocos, com consumo liberando slots; antes parava em 29. |
 | Saída PCM nativa | O Windows aceitou PCM de seis canais, 48 kHz e 16 bits. A posição real do dispositivo avançou e houve envio de pacotes não silenciosos produzidos pelo mixer original. Conteúdo audível, canais e latência ainda não foram validados. |
 | Boot e rendering | Capturas mostram a arte original e “LOADING…”. Antes do cache de fragmentos, foram 772 compilações em 60 segundos; depois, sete em toda a execução de 300 segundos, com reutilização por comparação integral do código gerado. Nas janelas de cerca de um minuto, os recibos DXGI/ISR passaram de 171 para 232. Menu e funcionamento em 1920×1080 ainda não comprovados. |
@@ -41,7 +43,7 @@ Ela usa o buffer final do mixer original e a posição de reprodução do Window
 O avanço de 32 amostras do cursor de escrita e o mapeamento 5.1 são experimentais.
 Isso não implementa o DSP/APU nem comprova equivalência de áudio Xbox.
 O bypass de espera de efeitos ainda foi necessário e completou 2.195 esperas
-artificialmente na integração mais recente. Seu orçamento padrão continua 4.096;
+artificialmente na integração anterior de 300 segundos. Seu orçamento padrão continua 4.096;
 o experimento longo usou o limite explícito de 16.384.
 
 As aproximações gráficas permanecem experimentais e restritas aos casos
@@ -62,6 +64,11 @@ fragmentos. `RECOMP_VERTEX_SHADER_CACHE=0` desabilita ambos os caches, preservan
 o controle de diagnóstico anterior. `RECOMP_FRAGMENT_COMPILER_PROFILE=1` registra
 custos e identificadores de compilação com saída limitada; os hashes do perfil
 não são usados como chaves do cache. O runner registra essas opções efetivas.
+
+O rastreamento de interface exige `FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK=ON`
+na build e `-FrontendLoadingTrace` no runner. É desligado por padrão e registra
+somente valores numéricos de entrada, com limite de 64 linhas por ponto.
+Ele não altera registradores, condições de fase ou resultados das rotinas.
 
 ### O que falta
 

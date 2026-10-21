@@ -14,6 +14,7 @@ void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
 int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 unsigned fut_audio_effects_bypass_limit(void);
+void recomp_frontend_loading_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);
 
 /* The unit target does not link the generated game code. The manual lookup
  * contract is tested by address identity; the native bring-up validates the
@@ -53,6 +54,14 @@ volatile uint64_t g_icall_count;
 int main(int argc, char **argv)
 {
     if (argc == 2) {
+        if (strcmp(argv[1], "frontend-trace") == 0) {
+            const uint32_t sites[] = {0x0015F7B0u,0x001606E0u,0x001630B0u,0x00163570u,0xDEADBEEFu};
+            g_eax = 123u; g_esp = 456u;
+            for (unsigned i = 0; i < 70; ++i)
+                for (unsigned j = 0; j < 5; ++j)
+                    recomp_frontend_loading_trace(sites[j], 1, 2, 3, 4, 5, 6);
+            return g_eax == 123u && g_esp == 456u && g_xbox_mem_offset == 0 ? 0 : 98;
+        }
         if (strncmp(argv[1], "audio-", 6) == 0) {
             if (strcmp(argv[1], "audio-limit-upper") == 0)
                 return fut_audio_effects_bypass_limit() == 16384u ? 0 : 97;

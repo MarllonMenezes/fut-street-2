@@ -17,6 +17,36 @@ static uint32_t diagnostic_thread_id(void)
     return g_diagnostic_thread_id;
 }
 
+int recomp_frontend_loading_trace_enabled(void)
+{
+    const char *value = getenv("RECOMP_FRONTEND_LOADING_TRACE");
+    return value && strcmp(value, "1") == 0;
+}
+
+/* Only numeric entry arguments; never dereference guest pointers or alter state. */
+void recomp_frontend_loading_trace(uint32_t site, uint32_t object, uint32_t stack,
+    uint32_t caller, uint32_t arg0, uint32_t arg1, uint32_t arg2)
+{
+    static atomic_uint counts[4];
+    unsigned index;
+    switch (site) {
+    case 0x0015F7B0u: index = 0; break;
+    case 0x001606E0u: index = 1; break;
+    case 0x001630B0u: index = 2; break;
+    case 0x00163570u: index = 3; break;
+    default: return;
+    }
+    if (!recomp_frontend_loading_trace_enabled()) return;
+    unsigned count = atomic_load_explicit(&counts[index], memory_order_relaxed);
+    do {
+        if (count >= 64u) return;
+    } while (!atomic_compare_exchange_weak_explicit(&counts[index], &count,
+        count + 1u, memory_order_relaxed, memory_order_relaxed));
+    fprintf(stderr, "[FRONTEND-LOADING-TRACE] thread=%u site=%08X sample=%u "
+        "object=%08X esp=%08X return=%08X arg0=%08X arg1=%08X arg2=%08X read-only=1\n",
+        diagnostic_thread_id(), site, count + 1u, object, stack, caller, arg0, arg1, arg2);
+}
+
 /* User-authorized boot exploration only. This fabricates bounded completions;
  * it implements neither DSP execution nor audio. Called by a separate,
  * explicitly selected generated-source overlay in the submitting thread. */

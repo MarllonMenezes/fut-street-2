@@ -40,6 +40,9 @@ option(FUT_STREET2_STREAM_WAIT_CLOCK_TRACE_HOOK
     "Build read-only trace for the game thread-clock timeout path (default-off at runtime)"
     OFF)
 
+option(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK
+    "Build bounded read-only original frontend entry tracing" OFF)
+
 if(RECOMP_ARCHIVER)
     # Some compiler distributions (including Zig's Windows Clang driver) do
     # not ship a standalone `ar.exe`; let callers provide a small wrapper.
@@ -88,6 +91,26 @@ if(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
         "${audio_original}" "${audio_overlay_script}")
     message(WARNING "Audio-wait overlay built; runtime opt-in still required. NOT_READY.")
+endif()
+if(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "Frontend trace requires the Windows host app")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(frontend_script "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-frontend-loading-trace.ps1")
+    set(frontend_output "${CMAKE_CURRENT_BINARY_DIR}/frontend-loading-trace")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+        -File "${frontend_script}" -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${frontend_output}" RESULT_VARIABLE frontend_result)
+    if(NOT frontend_result EQUAL 0)
+        message(FATAL_ERROR "Frontend trace overlay refused")
+    endif()
+    foreach(name recomp_0026.c recomp_0027.c)
+        list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${RECOMP_GENERATED_DIR}/${name}")
+        list(APPEND RECOMP_GENERATED_SOURCES "${frontend_output}/${name}")
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${RECOMP_GENERATED_DIR}/${name}" "${frontend_script}")
+    endforeach()
 endif()
 
 if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
@@ -338,6 +361,16 @@ if(BUILD_TESTING)
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/runtime-diagnostic-stop.ps1"
             "$<TARGET_FILE:no_emulation_runtime_support_test>")
+    add_test(NAME frontend_loading_overlay_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/frontend-loading-overlay-contract.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-frontend-loading-trace.ps1")
+    set_tests_properties(frontend_loading_overlay_contract PROPERTIES TIMEOUT 15)
+    add_test(NAME frontend_loading_trace_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/frontend-loading-trace-contract.ps1"
+            "$<TARGET_FILE:no_emulation_runtime_support_test>")
+    set_tests_properties(frontend_loading_trace_contract PROPERTIES TIMEOUT 15)
     add_test(NAME audio_effects_bypass_contract
         COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
             -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/audio-effects-bypass-contract.ps1"
@@ -429,6 +462,9 @@ if(FUT_STREET2_BUILD_HOST_APP)
     if(FUT_STREET2_AUDIO_EFFECTS_BYPASS_HOOK)
         target_compile_definitions(fut_street_2_recompiled_app PRIVATE
             FUT_AUDIO_EFFECTS_BYPASS_HOOK=1)
+    endif()
+    if(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK)
+        target_compile_definitions(fut_street_2_recompiled_app PRIVATE FUT_FRONTEND_LOADING_HOOK=1)
     endif()
     if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
         target_compile_definitions(fut_street_2_recompiled_app PRIVATE

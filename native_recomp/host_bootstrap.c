@@ -463,6 +463,21 @@ int main(int argc, char **argv)
 #endif
         }
     }
+    {
+        const char *trace = getenv("RECOMP_FRONTEND_LOADING_TRACE");
+        if (trace && strcmp(trace, "0") != 0) {
+            if (strcmp(trace, "1") != 0) {
+                fputs("Invalid RECOMP_FRONTEND_LOADING_TRACE; use 0 or 1.\n", stderr);
+                return 2;
+            }
+#ifndef FUT_FRONTEND_LOADING_HOOK
+            fputs("Frontend trace requested without compiled hooks.\n", stderr);
+            return 2;
+#else
+            fputs("[FRONTEND-TRACE] armed: read-only, 64 entries/site; NOT_READY\n", stderr);
+#endif
+        }
+    }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
         environment_variable_is_set("RECOMP_AC97_RESET_ONLY") ||
         environment_variable_is_set("RECOMP_PB_EXEC") ||
