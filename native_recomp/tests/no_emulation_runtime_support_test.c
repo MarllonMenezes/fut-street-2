@@ -17,6 +17,8 @@ void recomp_xbox_sti(void);
 uint8_t recomp_xbox_interrupts_enabled(void);
 int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 unsigned fut_audio_effects_bypass_limit(void);
+int recomp_frontend_preload_trace_active(void);
+void recomp_frontend_preload_vm_trace(uint32_t,uint32_t,uint32_t);
 void recomp_frontend_command_trace(uint32_t,uint32_t,uint32_t,uint32_t);
 void recomp_frontend_loading_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);
 
@@ -92,6 +94,21 @@ int main(int argc, char **argv)
                 g_xbox_mem_offset == saved_offset && strcmp(text, "boot\n\"\\command") == 0;
             g_xbox_mem_offset = 0;
             return ok ? 0 : 98;
+        }
+        if (strcmp(argv[1], "frontend-vm") == 0) {
+            uint32_t memory[] = {1,0,0x1000Cu,0x10010u,0,0x02000000u,0x11223344u,0x55667788u};
+            g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)memory - (ptrdiff_t)0x10000u;
+            g_eax = 123; g_esp = 456;
+            recomp_frontend_preload_vm_trace(1,2,0x10000u);
+            if (recomp_frontend_preload_trace_active()) return 91;
+            recomp_frontend_command_trace(0x00160840u,0,0,0);
+            for (unsigned i=0;i<600u;++i) recomp_frontend_preload_vm_trace(1,2,0x10000u);
+            recomp_frontend_command_trace(0x00160859u,0,0,0);
+            for (unsigned i=0;i<10u;++i) recomp_frontend_preload_vm_trace(1,2,0x10000u);
+            int ok = !recomp_frontend_preload_trace_active() && g_eax==123u && g_esp==456u &&
+                memory[0]==1 && memory[6]==0x11223344u;
+            g_xbox_mem_offset=0;
+            return ok ? 0 : 92;
         }
         if (strcmp(argv[1], "frontend-trace") == 0) {
             const uint32_t sites[] = {0x0015F7B0u,0x001606E0u,0x001630B0u,0x00163570u,0xDEADBEEFu};

@@ -14,79 +14,90 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 21 de outubro de 2026
+## Estado verificável — 22 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** O host nativo foi compilado e executado com saída PCM experimental e captura de quadros. A tela original de carregamento já foi inspecionada em 640×480; menu, cenário e partida continuam sem comprovação.
+**NOT_READY — ainda não é um jogo recompilado jogável.** O código original
+recompilado executa o boot e apresenta superfícies em 640×480. A captura final
+ainda mostra “LOADING…”. Menu, cenário, controles, partida e 1920×1080 continuam
+sem comprovação.
 
-Foi corrigida a ordem de envio do PCM: a saída nativa agora recebe o cursor
-que a rotina original acabou de atualizar, em vez do valor anterior ao refill.
-O teste de regressão rejeita a ordem antiga e verifica a nova no código regenerado.
+O rastreamento confirmou que a notificação original do preload chega à função
+`feShowActiveScreen`: o destino existe e a chamada retorna. A condição restante
+para sair da tela ainda precisa ser identificada; não foi forçada nenhuma flag
+para simular esse avanço. O rastreamento adicional do interpretador passou nos
+contratos, mas não produziu eventos na integração; isso não prova ausência de
+execução do script.
 
-Na integração de 300 segundos, os scripts originais navegaram por quatro telas
-de boot. A chegada ao último estágio observado ocorreu por volta de 115 segundos,
-contra 140 segundos na execução anterior com as mesmas opções. Essa comparação
-entre builds não isola toda a variação de desempenho. Houve 1.016 apresentações
-com retirada pela ISR confirmada; a captura final ainda mostra “LOADING…”.
-Dezessete testes focais passaram. Uma execução adicional de 20 segundos confirmou
-o boot da build final. Ambas foram encerradas pelo timeout.
+Foi implementado um cache limitado a quatro alocações de texturas de readback,
+com descritor exato e dispositivo conferido. Cada leitura continua fazendo uma
+nova cópia, esperando a conclusão real da GPU e lendo os pixels atuais.
+A reutilização não armazena resultados anteriores nem elimina validações.
 
-O próximo experimento acompanha a notificação original de conclusão do preload
-e a condição de navegação da tela atual para o menu. A causa da espera restante
-ainda não está demonstrada.
+Na comparação com o mesmo binário, em execuções de 60 segundos, o cache
+registrou 2.048 reutilizações com três alocações. A última amostra de
+apresentação retirou 204 quadros sem cache e 202 com cache. Isso comprova
+menos alocações; não comprova aumento de FPS.
+
+A integração de 180 segundos terminou pelo timeout, com 585 apresentações
+retiradas na última amostra e 4.096 reutilizações observadas com três alocações.
+A chamada original do preload retornou; a captura final ainda contém “LOADING”.
+O bypass de áudio completou artificialmente 1.508 esperas; áudio/DSP permanecem
+sem validação funcional.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação e testes | Build passou; 17 testes focais passaram, incluindo ordem de refill PCM, rastreamento, ponteiros inválidos, limites de texto e registradores, runtime/dispatch e integração gráfica. |
-| Streaming | O mixer original continua ativo e alimenta a saída nativa. O envio PCM passou a ocorrer após a atualização original do cursor de preenchimento. |
-| Saída PCM nativa | PCM experimental de seis canais, 48 kHz e 16 bits, com posição real de reprodução e pacotes não silenciosos. Conteúdo audível, canais, latência e continuidade ainda não foram validados. |
-| Boot e rendering | Os comandos originais comprovam navegação entre telas de boot; houve 1.016 apresentações/ISR na execução de 300 segundos. A captura final ainda contém “LOADING…”. Menu e funcionamento em 1920×1080 não comprovados. |
-| Controles e gameplay | Entrada na lógica original, cenário carregado e partida curta ainda não comprovados. |
+| Compilação e testes | Host compilado; 19 testes focais passaram, incluindo pixels, cancelamento, referências e descarte do cache, rastreamento, PCM e integração gráfica. |
+| Preload | Notificação e retorno originais observados; saída da tela ainda sem comprovação. |
+| Rendering | Superfícies do boot capturadas em 640×480; menu e 1920×1080 não comprovados. |
+| Controles e gameplay | Entrada na lógica original, cenário e partida curta ainda não comprovados. |
+| Áudio | Mixer original alimenta PCM experimental; canais, latência e continuidade ainda não validados. Bypass artificial de espera de efeitos continua necessário; DSP/APU não implementado. |
+
+### Opções de diagnóstico e reprodução
 
 A saída PCM exige `-NativePcmOutput` no runner e uma build com
-`FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK=ON`. A opção é desligada por padrão.
-Ela usa o buffer final do mixer original e a posição de reprodução do Windows.
-O avanço de 32 amostras do cursor de escrita e o mapeamento 5.1 são experimentais.
-Isso não implementa o DSP/APU nem comprova equivalência de áudio Xbox.
-O bypass de espera de efeitos ainda foi necessário e completou 1.943 esperas
-artificialmente na integração de 300 segundos. Seu orçamento padrão continua 4.096;
-o experimento longo usou o limite explícito de 16.384.
+`FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK=ON`. É desligada por padrão e usa o
+buffer final do mixer original: seis canais, 48 kHz e 16 bits. O avanço de 32
+amostras do cursor de escrita e o mapeamento 5.1 são experimentais.
 
-As aproximações gráficas permanecem experimentais e restritas aos casos
-observados. Não há alegação de fidelidade NV2A. ISO/XBE, assets, código
-recompilado proprietário, builds, saves e logs permanecem locais.
+`RECOMP_READBACK_RESOURCE_CACHE=0` desliga o novo cache de alocações para
+comparações no mesmo binário. `RECOMP_GRAPHICS_STAGE_TIMING=1` registra seus
+contadores com limite de saída. A retenção fica restrita a quatro texturas
+BGRA8/R24G8, com dimensões máximas de 1920×1080; isso não habilita novos modos
+de rendering nem comprova suporte funcional a essa resolução.
 
-A opção experimental `-HighResolutionGpuWait` reduz a pausa entre consultas de
-conclusão da GPU, preservando a exigência de conclusão real e os limites de espera.
-`-CapturePresentedFrames` salva até 64 superfícies enviadas à apresentação no
-diretório isolado do runner. Ambas são desligadas por padrão; as capturas ficam locais.
-`-UntexturedAa2Approximation` habilita somente o estado sem textura capturado e
-também é desligado por padrão. O timeout do runner é finito, com máximo de 300
-segundos; `-FrameCaptureIntervalMs` controla o intervalo após as oito primeiras
-capturas, preservando o teto de 64 arquivos.
+`RECOMP_FRAGMENT_SHADER_CACHE=0` permite comparar sem o cache de fragmentos.
+`RECOMP_VERTEX_SHADER_CACHE=0` desabilita ambos os caches de shaders.
+`RECOMP_FRAGMENT_COMPILER_PROFILE=1` registra custos e identificadores limitados;
+os hashes do perfil não são usados como chaves. O runner registra essas opções.
 
-`RECOMP_FRAGMENT_SHADER_CACHE=0` permite comparar a execução sem o cache de
-fragmentos. `RECOMP_VERTEX_SHADER_CACHE=0` desabilita ambos os caches, preservando
-o controle de diagnóstico anterior. `RECOMP_FRAGMENT_COMPILER_PROFILE=1` registra
-custos e identificadores de compilação com saída limitada; os hashes do perfil
-não são usados como chaves do cache. O runner registra essas opções efetivas.
+`-HighResolutionGpuWait` reduz a pausa entre consultas, exigindo conclusão real
+da GPU. `-CapturePresentedFrames` salva até 64 superfícies no diretório isolado;
+`-FrameCaptureIntervalMs` controla o intervalo após as oito primeiras capturas.
+Essas opções são desligadas por padrão. O timeout máximo é de 300 segundos.
+`-UntexturedAa2Approximation` também permanece desligado por padrão.
 
-O rastreamento de interface exige `FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK=ON`
-na build e `-FrontendLoadingTrace` no runner. É desligado por padrão e registra
-valores de entrada e nomes de comandos, com limite de 64 linhas por ponto.
-Os nomes são lidos com proteção contra ponteiros inválidos, limitados a 96 bytes
-e escapados para não introduzir linhas adicionais nos logs.
-Ele não altera registradores, condições de fase ou resultados das rotinas.
+O rastreamento da interface exige `FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK=ON`
+e `-FrontendLoadingTrace`. É desligado por padrão, com até 64 linhas por ponto
+e até 512 passos do interpretador dentro da chamada de preload. Leituras de
+texto e da pilha da VM são protegidas e limitadas. Não altera registradores,
+condições de fase ou resultados das rotinas.
+
+As aproximações gráficas e o bypass de áudio permanecem experimentais, sem
+alegação de fidelidade NV2A ou DSP. O orçamento padrão de conclusões artificiais
+é 4.096; as integrações longas usam explicitamente 16.384. ISO/XBE, assets,
+código recompilado proprietário, builds, saves e logs permanecem locais no D:.
 
 ### O que falta
 
-1. Acompanhar a notificação original de conclusão do preload e identificar a condição restante para sair da tela atual; comprovar menu e cenário.
-2. Resolver o próximo bloqueio funcional observado em execuções limitadas, preservando o consumo original do streaming.
+1. Identificar a condição de ativação/visibilidade da tela após a notificação de preload e comprovar a passagem ao menu.
+2. Carregar um cenário e resolver o próximo bloqueio funcional observado com execuções limitadas.
 3. Comprovar uma imagem completa em 1920×1080.
-4. Validar controles e uma partida curta com jogadores, bola, regras e placar conduzidos pela lógica recompilada original.
-5. Validar áudio, canais e latência, resolver as dependências restantes e retirar o bypass artificial de efeitos.
+4. Validar controles e uma partida curta conduzida pela lógica recompilada original.
+5. Validar áudio, canais e latência e retirar o bypass artificial de efeitos.
 
 Build, boot, rendering, resolução, áudio e gameplay são critérios separados.
 O estado permanece **NOT_READY** até comprovação funcional.
+
 ## Abordagem
 
 - Usar o [XboxRecomp](https://github.com/sp00nznet/xboxrecomp) como base para análise e tradução estática do código Xbox x86 para C, com uma pilha de patches versionada em [`native_recomp/patches`](native_recomp/patches).

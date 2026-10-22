@@ -307,6 +307,7 @@ try {
         audio_effects_bypass = [bool]$AudioEffectsBypass
         native_pcm_output = [bool]$NativePcmOutput
         frontend_loading_trace = [bool]$FrontendLoadingTrace
+        readback_resource_cache_enabled = ($env:RECOMP_READBACK_RESOURCE_CACHE -ne '0')
         high_resolution_gpu_wait = [bool]$HighResolutionGpuWait
         vertex_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0')
         fragment_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0' -and $childEnvironment['RECOMP_FRAGMENT_SHADER_CACHE'] -ne '0')

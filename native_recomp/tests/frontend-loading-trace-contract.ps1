@@ -42,4 +42,16 @@ try {
     -not $output.Contains(('X'*95)+'" text_status=terminated')) {
   throw 'Protected page, text length boundary, or Win32 error preservation failed.'
  }
+ foreach($mode in @($null,'0','2','1')) {
+  $env:RECOMP_FRONTEND_LOADING_TRACE=$mode
+  $ErrorActionPreference='Continue'
+  $lines=@(& $Executable frontend-vm 2>&1 | ForEach-Object { "$_" })
+  $code=$LASTEXITCODE
+  $ErrorActionPreference='Stop'
+  if($code -ne 0){throw 'Preload scope/register/input preservation failed.'}
+  $trace=@($lines | Where-Object {$_ -match '^\[PRELOAD-VM-TRACE\]'})
+  $expected=if($mode -eq '1'){512}else{0}
+  if($trace.Count -ne $expected){throw 'Preload VM opt-in, scope, or bound failed.'}
+  if($mode -eq '1' -and @($trace | Where-Object {$_ -notlike '*readable=1 top=00010010/02000000/11223344/55667788*'}).Count){throw 'Protected VM stack read failed.'}
+ }
 } finally {$env:RECOMP_FRONTEND_LOADING_TRACE=$old}

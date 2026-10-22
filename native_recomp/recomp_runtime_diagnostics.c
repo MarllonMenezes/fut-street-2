@@ -85,18 +85,65 @@ static const char *frontend_trace_text(uint32_t address, char text[385])
 #endif
 }
 
+static _Thread_local unsigned frontend_preload_scope;
+int recomp_frontend_preload_trace_active(void)
+{
+    return frontend_preload_scope && recomp_frontend_loading_trace_enabled();
+}
+
+void recomp_frontend_preload_vm_trace(uint32_t pc, uint32_t opcode, uint32_t vm)
+{
+#ifdef _WIN32
+    static atomic_uint count;
+    if (!recomp_frontend_preload_trace_active()) return;
+    unsigned sample = atomic_load_explicit(&count, memory_order_relaxed);
+    do { if (sample >= 512u) return; }
+    while (!atomic_compare_exchange_weak_explicit(&count, &sample, sample+1u,
+        memory_order_relaxed, memory_order_relaxed));
+    DWORD saved_error = GetLastError();
+    uint32_t fields[3] = {0}, cells[3] = {0}, words[3][4] = {{0}};
+    SIZE_T read = 0;
+    int ok = g_xbox_mem_offset && vm >= 0x10000u && vm <= 0x83FFFFF3u &&
+        ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(vm),
+            fields, sizeof(fields), &read) && read == sizeof(fields) && fields[0] <= 4096u;
+    if (ok) for (unsigned i = 0; i < 3u && i < fields[0]; ++i) {
+        uint32_t address = fields[2] + (fields[0]-1u-i)*4u;
+        if (address < fields[2] || address > 0x83FFFFFBu || address < 0x10000u ||
+            !ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(address),
+                &cells[i], 4, &read) || read != 4 || cells[i] < 0x10000u || cells[i] > 0x83FFFFEFu ||
+            !ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(cells[i]),
+                words[i], sizeof(words[i]), &read) || read != sizeof(words[i])) { ok = 0; break; }
+    }
+    fprintf(stderr, "[PRELOAD-VM-TRACE] sample=%u pc=%08X op=%02X vm=%08X count=%u readable=%d "
+        "top=%08X/%08X/%08X/%08X next=%08X/%08X/%08X/%08X third=%08X/%08X/%08X/%08X read-only=1\n",
+        sample+1u, pc, opcode, vm, fields[0], ok,
+        cells[0],words[0][1],words[0][2],words[0][3],
+        cells[1],words[1][1],words[1][2],words[1][3],
+        cells[2],words[2][1],words[2][2],words[2][3]);
+    SetLastError(saved_error);
+#else
+    (void)pc; (void)opcode; (void)vm;
+#endif
+}
+
 void recomp_frontend_command_trace(uint32_t site, uint32_t name,
                                    uint32_t detail, uint32_t result)
 {
-    static atomic_uint counts[3];
+    static atomic_uint counts[7];
     unsigned index;
     switch (site) {
     case 0x00160DF0u: index = 0; break;
     case 0x00160E2Eu: index = 1; break;
     case 0x00160ED0u: index = 2; break;
+    case 0x00160840u: index = 3; break;
+    case 0x00160859u: index = 4; break;
+    case 0x001D3F13u: index = 5; break;
+    case 0x001D3F2Bu: index = 6; break;
     default: return;
     }
     if (!recomp_frontend_loading_trace_enabled()) return;
+    if (site == 0x00160840u) ++frontend_preload_scope;
+    if (site == 0x00160859u && frontend_preload_scope) --frontend_preload_scope;
     unsigned count = atomic_load_explicit(&counts[index], memory_order_relaxed);
     do {
         if (count >= 64u) return;

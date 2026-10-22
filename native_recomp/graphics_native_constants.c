@@ -120,8 +120,57 @@ int fut_native_constants_finish(FutNativeConstants *native, const uint32_t (*con
     return 0;
 }
 
+HRESULT fut_native_readback_texture(FutNativeConstants *native, ID3D11Device *device,
+    const D3D11_TEXTURE2D_DESC *desc, ID3D11Texture2D **texture)
+{
+    if (!texture) return E_INVALIDARG;
+    *texture = NULL;
+    if (!native || !native->context || !device || !desc ||
+        desc->Usage != D3D11_USAGE_STAGING || desc->BindFlags ||
+        desc->CPUAccessFlags != D3D11_CPU_ACCESS_READ || desc->MiscFlags ||
+        desc->MipLevels != 1 || desc->ArraySize != 1 ||
+        desc->SampleDesc.Count != 1 || desc->SampleDesc.Quality) return E_INVALIDARG;
+    ID3D11Device *owner = NULL;
+    ID3D11DeviceContext_GetDevice(native->context, &owner);
+    int same_device = owner == device;
+    if (owner) ID3D11Device_Release(owner);
+    if (!same_device) return E_INVALIDARG;
+    const char *option = getenv("RECOMP_READBACK_RESOURCE_CACHE");
+    /* Keep retention bounded to the existing image sizes/formats. Other
+     * valid staging descriptions retain the uncached allocation behavior. */
+    int cache = (!option || strcmp(option,"0")) && desc->Width && desc->Height &&
+        desc->Width <= 1920 && desc->Height <= 1080 &&
+        (desc->Format == DXGI_FORMAT_B8G8R8A8_UNORM || desc->Format == DXGI_FORMAT_R24G8_TYPELESS);
+    if (cache) for (unsigned i=0; i<4; ++i) {
+        if (native->readbacks[i].texture && !memcmp(&native->readbacks[i].desc, desc, sizeof(*desc))) {
+            *texture = native->readbacks[i].texture;
+            ID3D11Texture2D_AddRef(*texture);
+            ++native->readback_hits;
+            if (native->profile_waits && (native->readback_hits<=4 ||
+                !(native->readback_hits & (native->readback_hits-1))))
+                fprintf(stderr,"[READBACK-CACHE] hits=%llu creations=%llu; allocation reuse only, fresh copy required\n",
+                    (unsigned long long)native->readback_hits, (unsigned long long)native->readback_creations);
+            return S_OK;
+        }
+    }
+    HRESULT hr = ID3D11Device_CreateTexture2D(device, desc, NULL, texture);
+    if (FAILED(hr)) return hr;
+    ++native->readback_creations;
+    if (cache) {
+        unsigned slot = native->readback_next;
+        if (native->readbacks[slot].texture) ID3D11Texture2D_Release(native->readbacks[slot].texture);
+        native->readbacks[slot].desc = *desc;
+        native->readbacks[slot].texture = *texture;
+        ID3D11Texture2D_AddRef(*texture);
+        native->readback_next = (slot+1u)%4u;
+    }
+    return S_OK;
+}
+
 void fut_native_constants_destroy(FutNativeConstants *native)
 {
+    for (unsigned i=0; i<4; ++i)
+        if (native->readbacks[i].texture) ID3D11Texture2D_Release(native->readbacks[i].texture);
     if (native->poll_timer) CloseHandle(native->poll_timer);
     if (native->completion) ID3D11Query_Release(native->completion);
     if (native->buffer) ID3D11Buffer_Release(native->buffer);

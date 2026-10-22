@@ -105,7 +105,7 @@ if(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK)
     if(NOT frontend_result EQUAL 0)
         message(FATAL_ERROR "Frontend trace overlay refused")
     endif()
-    foreach(name recomp_0026.c recomp_0027.c)
+    foreach(name recomp_0026.c recomp_0027.c recomp_0036.c recomp_0037.c)
         list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${RECOMP_GENERATED_DIR}/${name}")
         list(APPEND RECOMP_GENERATED_SOURCES "${frontend_output}/${name}")
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS

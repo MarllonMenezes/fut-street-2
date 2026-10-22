@@ -91,7 +91,7 @@ static HRESULT download_pixels(ID3D11Device *device, ID3D11DeviceContext *contex
     D3D11_TEXTURE2D_DESC desc; ID3D11Texture2D_GetDesc(texture, &desc);
     desc.Usage = D3D11_USAGE_STAGING; desc.BindFlags = 0; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     ID3D11Texture2D *staging = NULL;
-    HRESULT hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &staging);
+    HRESULT hr = fut_native_readback_texture(completion, device, &desc, &staging);
     if (FAILED(hr)) return hr;
     ID3D11DeviceContext_CopyResource(context, (ID3D11Resource *)staging, (ID3D11Resource *)texture);
     if (!fut_native_constants_finish(completion, NULL, 2000, stop)) hr = E_FAIL;

@@ -2,6 +2,7 @@
 #include "graphics_native_surfaces.h"
 #include "graphics_native_constants.h"
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr, "surface test failed: %d\n", code); return code; } } while (0)
 
@@ -241,7 +242,53 @@ int main(void)
     CHECK(FAILED(fut_native_surfaces_prepare(&native,device,&next_plan,memory_read,&memory)) &&
         native.color==saved && !memcmp(&native.plan,&plan,sizeof(plan)),63);
     memory.fail=0;
+    /* Allocation reuse must retain independent caller references and must not
+     * permit invalid descriptors. Existing checks above validate fresh pixels. */
+    char previous_cache[128]={0};
+    const char *previous=getenv("RECOMP_READBACK_RESOURCE_CACHE");
+    int had_previous=previous!=NULL;
+    if(previous) snprintf(previous_cache,sizeof(previous_cache),"%s",previous);
+    _putenv_s("RECOMP_READBACK_RESOURCE_CACHE","1");
+    D3D11_TEXTURE2D_DESC read_desc={0};
+    read_desc.Width=17; read_desc.Height=3; read_desc.MipLevels=1;
+    read_desc.ArraySize=1; read_desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;
+    read_desc.SampleDesc.Count=1; read_desc.Usage=D3D11_USAGE_STAGING;
+    read_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *held=NULL,*again=NULL;
+    uint64_t creations=completion.readback_creations, hits=completion.readback_hits;
+    CHECK(fut_native_readback_texture(&completion,device,&read_desc,&held)==S_OK,73);
+    CHECK(fut_native_readback_texture(&completion,device,&read_desc,&again)==S_OK &&
+        held==again && completion.readback_creations==creations+1 &&
+        completion.readback_hits==hits+1,74);
+    ID3D11Texture2D_Release(again);
+    for(unsigned i=0;i<4;++i) {
+        read_desc.Width=18+i;
+        CHECK(fut_native_readback_texture(&completion,device,&read_desc,&again)==S_OK,75);
+        ID3D11Texture2D_Release(again);
+    }
+    D3D11_TEXTURE2D_DESC held_desc;
+    ID3D11Texture2D_GetDesc(held,&held_desc);
+    CHECK(held_desc.Width==17,76);
+    read_desc.Width=17;
+    CHECK(fut_native_readback_texture(&completion,device,&read_desc,&again)==S_OK &&
+        held!=again,77);
+    ID3D11Texture2D_Release(again);
+    creations=completion.readback_creations;
+    read_desc.BindFlags=D3D11_BIND_SHADER_RESOURCE; again=held;
+    CHECK(fut_native_readback_texture(&completion,device,&read_desc,&again)==E_INVALIDARG &&
+        !again && completion.readback_creations==creations,78);
+    read_desc.BindFlags=0;
+    _putenv_s("RECOMP_READBACK_RESOURCE_CACHE","0");
+    ID3D11Texture2D *uncached=NULL;
+    CHECK(fut_native_readback_texture(&completion,device,&read_desc,&again)==S_OK &&
+        fut_native_readback_texture(&completion,device,&read_desc,&uncached)==S_OK &&
+        again!=uncached && completion.readback_creations==creations+2,79);
+    ID3D11Texture2D_Release(again); ID3D11Texture2D_Release(uncached);
+    _putenv_s("RECOMP_READBACK_RESOURCE_CACHE",had_previous?previous_cache:"");
     fut_native_surfaces_destroy(&native); fut_native_constants_destroy(&completion);
+    ID3D11Texture2D_GetDesc(held,&held_desc);
+    CHECK(held_desc.Width==17,80);
+    ID3D11Texture2D_Release(held);
     ID3D11DeviceContext_Release(context); ID3D11Device_Release(device);
     puts("Pitched storage: native clear, dirty writeback, CPU refresh and coherent plan transitions OK; no original draw claimed");
     return 0;
