@@ -109,8 +109,10 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
         (family_baseline || family_lc_retained_baseline) &&
         (t0->address==0x10303u || t0->address==0x10101u);
     int p8_format=(t0->format&~0x0FF00000u)==0x00010B29u;
-    int p8_family=p8_format && fut_graphics_p8_aa2_family_approximation_enabled() &&
-        family_dimensions && (family_baseline || family_lc_retained_baseline) && k->draw.depth_write==1 &&
+    /* The first two captured P8 layouts retain their independent opt-ins. */
+    int p8_family=p8_format && t0->format!=0x05510B29u && t0->format!=0x05710B29u &&
+        fut_graphics_p8_aa2_family_approximation_enabled() &&
+        family_dimensions && (family_baseline || family_lc_retained_baseline) && k->draw.depth_write<=1 &&
         t0->address==0x30303u &&
         !(t0->offset&3u) && t0->offset<=0x04000000u &&
         (1u<<texture_u)*(1u<<texture_v)<=0x04000000u-t0->offset &&
@@ -170,7 +172,8 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int yuy2=yuy2_first || yuy2_second || yuy2_family;
                 yuy2=yuy2 && t->image_rect==0x028001E0u &&
                     t->control1==0x05000000u && t->valid==0x3BFu;
-                int depth_write_matches=(p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;
+                int depth_write_matches=p8_family ? k->draw.depth_write<=1 :
+                    (p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;
                 unsigned valid_mask=bc2?0x9Bu:0x2Fu;
                 int texture_state_matches=yuy2 ? t->control0==0x4003FFC0u &&
                     t->address==0x00030303u && t->filter==0x02062000u : bc2 ?

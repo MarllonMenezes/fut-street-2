@@ -216,6 +216,37 @@ int main(void)
         a.active=1;a.ready=0;a.count=n;
         CHECK(!fut_graphics_vertex_array_end(&a));
     }
+    fut_graphics_vertex_array_reset(&a);
+    CHECK(!fut_graphics_vertex_array_index32(&a,3));
+    CHECK(fut_graphics_vertex_array_begin(&a,6));
+    CHECK(fut_graphics_vertex_array_indices(&a,0));
+    CHECK(fut_graphics_vertex_array_indices(&a,0x00020001));
+    CHECK(fut_graphics_vertex_array_index32(&a,3));
+    CHECK(a.count==5 && a.indices[0]==0 && a.indices[1]==0 && a.indices[2]==1 && a.indices[3]==2 && a.indices[4]==3);
+    CHECK(fut_graphics_vertex_array_end(&a));
+    memcpy(memory,positions,sizeof(positions));
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
+        formats,offsets,attrs,valid,1));
+    CHECK(out.count==9 && out.vertices[0][0][0]==10 && out.vertices[1][0][0]==10 &&
+        out.vertices[3][0][0]==40 && out.vertices[4][0][0]==10 &&
+        out.vertices[6][0][0]==40 && out.vertices[7][0][0]==70 && out.vertices[8][0][0]==100);
+    before=out;a.active=1;a.ready=0;a.count=4;
+    CHECK(fut_graphics_vertex_array_index32(&a,0x00010003u) && a.indices[4]==0x00010003u);
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
+        formats,offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&before,sizeof(out)));
+    a.active=1;a.ready=0;a.count=4;
+    CHECK(fut_graphics_vertex_array_index32(&a,UINT32_MAX) && a.indices[4]==UINT32_MAX);
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
+        formats,offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&before,sizeof(out)));
+    fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,6));
+    CHECK(fut_graphics_vertex_array_inline(&a,0));
+    CHECK(!fut_graphics_vertex_array_index32(&a,3));
+    fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin_observed_lines(&a));
+    CHECK(!fut_graphics_vertex_array_index32(&a,3));
     /* Large profile strip: keep degenerate indices and parity exactly as
      * supplied, including beyond the old 256-index diagnostic limit. */
     memcpy(memory,positions,sizeof(positions));
@@ -223,7 +254,8 @@ int main(void)
         fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,6));
         for(unsigned i=0;i<length;i+=2)
             CHECK(fut_graphics_vertex_array_indices(&a,(i%4)|(((i+1)%4)<<16)));
-        if(length==1024) CHECK(!fut_graphics_vertex_array_indices(&a,0));
+        if(length==1024) CHECK(!fut_graphics_vertex_array_indices(&a,0) &&
+            !fut_graphics_vertex_array_index32(&a,0));
         CHECK(fut_graphics_vertex_array_end(&a));
         CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
             formats,offsets,attrs,valid,1));

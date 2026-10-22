@@ -5,7 +5,7 @@
 
 #define FUT_VERTEX_ARRAY_INDEX_CAPACITY 1024u
 typedef struct {
-    uint16_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
+    uint32_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
     uint32_t inline_words[FUT_IMMEDIATE_CAPACITY*6u];
     unsigned count, inline_count, input_mode, active, ready, primitive;
 } FutGraphicsVertexArray;
@@ -14,6 +14,7 @@ void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned primitive);
 int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
+int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *array, uint32_t index);
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);
 /* Transactionally builds the existing triangle-list input. Only the observed

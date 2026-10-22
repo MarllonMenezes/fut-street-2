@@ -532,8 +532,16 @@ int main(void)
     kelvin.textures[0].format=0x06710B29u;kelvin.textures[0].offset=0x20000;
     kelvin.textures[0].palette=0x30000;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 93;
-    for(unsigned scope=0;scope<2;++scope) for(unsigned i=0;i<24;++i) {
-        state=baseline;kelvin=scope?p8_retained:p8_family;
+    FutGraphicsKelvinState p8_no_zwrite=p8_family;
+    p8_no_zwrite.textures[0].format=0x07710B29;
+    p8_no_zwrite.textures[0].offset=0x01E6F200;
+    p8_no_zwrite.draw.depth_write=0;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&p8_no_zwrite,&surface)) return 134;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&p8_no_zwrite,&surface)) return 135;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","1");
+    for(unsigned scope=0;scope<3;++scope) for(unsigned i=0;i<24;++i) {
+        state=baseline;kelvin=scope==2?p8_no_zwrite:scope?p8_retained:p8_family;
         surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
             .logical_height=480,.samples=2};
         switch(i) {
@@ -552,7 +560,7 @@ int main(void)
         case 12:kelvin.textures[0].image_rect^=0x10000;break;
         case 13:kelvin.textures[0].valid^=0x100;break;
         case 14:kelvin.draw.dither=0;break;
-        case 15:kelvin.draw.depth_write=0;break;
+        case 15:kelvin.draw.depth_write=2;break;
         case 16:kelvin.depth_test=0;break;
         case 17:kelvin.stencil_test=1;break;
         case 18:kelvin.compress_depth=0;break;

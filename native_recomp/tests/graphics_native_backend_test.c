@@ -160,6 +160,22 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !state->immediate.ready && !state->native_immediate.submitted &&
         !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==3,123);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,124);
+    FutGraphicsObject vertex_dma={0};vertex_dma.words[0]=0xB03D;
+    vertex_dma.words[1]=sizeof(guest_memory)-1;
+    state->bindings.references[0][7]=state->bindings.references[0][8]=vertex_dma;
+    state->bindings.reference_masks[0]|=(1u<<7)|(1u<<8);
+    state->bindings.read=object_memory_read;
+    int16_t indexed_points[4][3]={{0,0,0},{8,0,0},{0,6,0},{8,6,0}};
+    memcpy(guest_memory+0x9000,indexed_points,sizeof(indexed_points));
+    for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,i?0x602:0x635,0),125);
+    CHECK(native_method(state,0,0x1720,0x9000,0),126);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,6,0) && native_method(state,0,0x1800,0,0) &&
+        native_method(state,0,0x1800,0x00020001,0) && native_method(state,0,0x1808,3,0),127);
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->vertex_array.ready && state->native_immediate.ia_vertices==9 &&
+        state->native_immediate.ps_invocations>0,128);
+    for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,129);
     for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
         i==0?0x32:i==3?0x40:i==9?0x22:2,0),92);
     memset(guest_memory+0x3000,0xCD,48);

@@ -35,6 +35,13 @@ int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *a,uint32_t word)
     a->input_mode=2;a->inline_words[a->inline_count++]=word;return 1;
 }
 
+int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *a,uint32_t index)
+{
+    if(!a || !a->active || a->ready || a->primitive!=6 || a->input_mode==2 ||
+        a->count>=FUT_VERTEX_ARRAY_INDEX_CAPACITY) return 0;
+    a->input_mode=1;a->indices[a->count++]=index;return 1;
+}
+
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
 {
     if(!a || !a->active || a->ready) return 0;

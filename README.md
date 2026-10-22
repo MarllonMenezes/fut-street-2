@@ -18,7 +18,7 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** O host compila e
 executa código original recompilado, com superfícies em 640×480. A entrada
-experimental já aciona navegação original de boot e criação de perfil. Menu
+experimental já aciona navegação original de boot e entrada em `f_MAIN_0100`. Menu
 completo, cenário, controle físico, partida e 1920×1080 continuam sem comprovação.
 
 A nova ponte opcional de entrada atende sete funções SDK verificadas do jogo.
@@ -29,6 +29,11 @@ com Start automatizado, foram observados `kSTART_ENTER_GAME`, a navegação de
 Uma entrada A sintética pela janela nativa também chegou a `mc?cmd=setautosave`
 e à confirmação original. Isso comprova entrada na navegação, sem comprovar gameplay.
 
+Um Start curto também percorreu `f_MAIN_0100`, com foco original no primeiro
+botão e consultas de música. A captura mudou para o fundo dessa tela, mas ainda
+mostra “LOADING” e não contém os botões do menu. Uma confirmação curta enviada
+nessa fase não foi observada na amostragem de entrada; a causa está em investigação.
+
 O caminho com controle conectado revelou bloqueios gráficos corrigidos:
 estado retido em texturas P8, desenhos com todos os estágios de textura
 desativados e realocação dos vértices da lista de 16 segmentos. Os triângulos
@@ -38,6 +43,11 @@ desenhadas; o limite anterior de 256 foi ampliado para 1.024, com saída limitad
 a 3.072 vértices. O sampler BC2 com repetição U/V observado foi exercitado
 sob a opção experimental existente. Texturas ativas, shaders, profundidade e limites de memória
 continuam validados separadamente.
+
+O caminho da tela principal usa também índices mistos de 16 e 32 bits e uma
+textura P8 de 128×128 com escrita de profundidade desativada. Ambos passaram
+na execução nativa, com limites de memória e estado preservados. A integração
+mais recente terminou pelo timeout de 300 segundos sem nova recusa gráfica.
 
 A compilação inclui a ponte na geração efetivamente usada pelo executável.
 Os 45 gates existentes passaram. Os testes verificam contratos do overlay, estruturas SDK, pilha,
@@ -54,8 +64,8 @@ atuais e aguarda a GPU. Menos alocações não comprova aumento de FPS.
 | Etapa | Evidência mais recente |
 | --- | --- |
 | Compilação | Host e overlay de entrada recompilados; testes focais passaram. |
-| Boot e entrada | Start automatizado percorreu os handlers e a navegação originais até criação de perfil. |
-| Rendering | Desenhos originais XYZW/ARGB8 e malhas de 912/854 índices concluíram na GPU; opções de salvamento parcialmente visíveis. |
+| Boot e entrada | Start automatizado chegou à tela original `f_MAIN_0100`; confirmação curta nessa fase ainda não observada na amostragem. |
+| Rendering | Índices mistos, malhas de 912/854 índices e P8 com Z-write desativado desenhados; fundo de MAIN apresentado, botões ainda ausentes. |
 | Gameplay | Menu completo, cenário, controle físico e partida curta ainda não comprovados. |
 | Áudio | PCM experimental do mixer original; bypass artificial de efeitos ainda necessário. DSP, canais, latência e continuidade não validados. |
 
@@ -110,7 +120,7 @@ código recompilado proprietário, builds, saves e logs permanecem locais no D:.
 
 ### O que falta
 
-1. Resolver a composição parcial das opções de salvamento e o fluxo original que indica `nomem=1`; comprovar o menu completo.
+1. Identificar o estado do preload e do polling de entrada em MAIN; concluir a composição e comprovar o menu completo.
 2. Carregar um cenário e resolver o próximo bloqueio funcional observado com execuções limitadas.
 3. Comprovar uma imagem completa em 1920×1080.
 4. Validar controles e uma partida curta conduzida pela lógica recompilada original.

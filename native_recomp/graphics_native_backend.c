@@ -1166,11 +1166,11 @@ static int native_prepare_draw(NativeGraphicsState *state)
             state->textures[0].plan.width,state->textures[0].plan.height);
     if(aa2 && fut_graphics_p8_aa2_family_approximation_enabled() &&
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010B29u &&
-        state->kelvin.draw.depth_write==1 && state->kelvin.draw.dither==1 &&
+        state->kelvin.draw.depth_write<=1 && state->kelvin.draw.dither==1 &&
         state->kelvin.textures[0].valid==0x3BFu)
-        fprintf(stderr,"[GRAPHICS] AUTHORIZED_P8_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; lossless palette expansion under observed AA2/depth-write baseline; NV2A fidelity unverified; NOT_READY\n",
+        fprintf(stderr,"[GRAPHICS] AUTHORIZED_P8_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u depth_write=%u; lossless palette expansion under observed AA2 baseline; NV2A fidelity unverified; NOT_READY\n",
             state->kelvin.textures[0].format,state->kelvin.textures[0].offset,
-            state->textures[0].plan.width,state->textures[0].plan.height);
+            state->textures[0].plan.width,state->textures[0].plan.height,state->kelvin.draw.depth_write);
     if(aa2 && yuy2_texture->format==0x00012429u && yuy2_aa2_enabled && yuy2_bt601_enabled &&
         (yuy2_first || yuy2_second))
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_YUY2_%sAA2_APPROXIMATION: exact captured 640x480 state using existing host AA2 mapping and BT.601 candidate; depth/compress-depth and NV2A fidelity unverified; NOT_READY\n",
@@ -1317,7 +1317,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
 {
     NativeGraphicsState *state = context;
     if(state->vertex_array.active && (subchannel!=0 ||
-        (method!=0x1800u && method!=0x1818u && method!=0x17FCu))) {
+        (method!=0x1800u && method!=0x1808u && method!=0x1818u && method!=0x17FCu))) {
         fprintf(stderr,"[GRAPHICS] command refused inside indexed triangle strip: sub=%u method=%04X\n",subchannel,method);
         return 0;
     }
@@ -1405,6 +1405,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         if(subchannel==0 && method==0x1800u && state->vertex_array.active) {
             if(!fut_graphics_vertex_array_indices(&state->vertex_array,value)) {
                 fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT16 refused: value=%08X count=%u\n",value,state->vertex_array.count);return 0;
+            }
+            return 1;
+        }
+        if(subchannel==0 && method==0x1808u && state->vertex_array.active) {
+            if(!fut_graphics_vertex_array_index32(&state->vertex_array,value)) {
+                fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT32 refused: value=%08X count=%u\n",value,state->vertex_array.count);return 0;
             }
             return 1;
         }
