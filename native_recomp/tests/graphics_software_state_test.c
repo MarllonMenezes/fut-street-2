@@ -449,11 +449,19 @@ int main(void)
     _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 86;
     FutGraphicsKelvinState bc2_family=kelvin;
+    FutGraphicsKelvinState bc2_wrap=bc2_family;
+    bc2_wrap.textures[0].format=0x07910E29;
+    bc2_wrap.textures[0].offset=0x00CFBD00;
+    bc2_wrap.textures[0].address=0x10101;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&bc2_wrap,&surface)) return 132;
+    _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&bc2_wrap,&surface)) return 133;
+    _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","1");
     /* Storage data may vary without granting other raster/sampler modes. */
     kelvin.textures[0].format=0x07710E29u;kelvin.textures[0].offset=0x10000u;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 87;
-    for(unsigned i=0;i<24;++i) {
-        state=baseline;kelvin=bc2_family;
+    for(unsigned scope=0;scope<2;++scope) for(unsigned i=0;i<24;++i) {
+        state=baseline;kelvin=scope?bc2_wrap:bc2_family;
         surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
             .logical_height=480,.samples=2};
         switch(i) {
@@ -500,6 +508,20 @@ int main(void)
     _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 92;
     FutGraphicsKelvinState p8_family=kelvin;
+    FutGraphicsKelvinState p8_retained=p8_family;
+    p8_retained.textures[0].format=0x05910B29u;
+    p8_retained.textures[0].offset=0x001CBB80u;
+    p8_retained.textures[0].control1=0x05000000u;
+    p8_retained.textures[0].image_rect=0x028001E0u;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&p8_retained,&surface)) return 121;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&p8_retained,&surface)) return 122;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","1");
+    p8_retained.textures[0].offset+=4;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&p8_retained,&surface)) return 123;
+    p8_retained.textures[0].offset-=4;p8_retained.textures[0].format=0x06910B29u;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&p8_retained,&surface)) return 124;
+    p8_retained.textures[0].format=0x05910B29u;
     kelvin.textures[0].format=0x05510B29;kelvin.textures[0].offset=0x15080;
     kelvin.draw.depth_write=0;
     _putenv_s("RECOMP_P8_AA2_APPROXIMATION","1");
@@ -510,8 +532,8 @@ int main(void)
     kelvin.textures[0].format=0x06710B29u;kelvin.textures[0].offset=0x20000;
     kelvin.textures[0].palette=0x30000;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 93;
-    for(unsigned i=0;i<24;++i) {
-        state=baseline;kelvin=p8_family;
+    for(unsigned scope=0;scope<2;++scope) for(unsigned i=0;i<24;++i) {
+        state=baseline;kelvin=scope?p8_retained:p8_family;
         surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
             .logical_height=480,.samples=2};
         switch(i) {
@@ -570,13 +592,20 @@ int main(void)
     _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 100;
     FutGraphicsKelvinState untextured=kelvin;
-    for(unsigned i=0;i<23;++i) {
-        state=baseline;kelvin=untextured;
+    FutGraphicsKelvinState untextured_retained=untextured;
+    untextured_retained.textures[0].control1=0x05000000;
+    untextured_retained.textures[0].image_rect=0x028001E0;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&untextured_retained,&surface)) return 125;
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&untextured_retained,&surface)) return 126;
+    _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","1");
+    for(unsigned scope=0;scope<2;++scope) for(unsigned i=0;i<23;++i) {
+        state=baseline;kelvin=scope?untextured_retained:untextured;
         surface=(FutGraphicsSurfacePlan){.width=1280,.height=480,.logical_width=640,
             .logical_height=480,.samples=2};
         switch(i) {
-        case 0:kelvin.textures[0].format^=0x100000;break;
-        case 1:kelvin.textures[0].offset+=16;break;
+        case 0:kelvin.textures[0].format^=0x100;break;
+        case 1:kelvin.textures[0].offset+=1;break;
         case 2:kelvin.textures[0].control0=0x40000000;break;
         case 3:kelvin.textures[1].control0=1;break;
         case 4:kelvin.fragment.stage_program=1;break;
@@ -599,11 +628,25 @@ int main(void)
         case 21:state.rdi_value[1]^=1;break;
         case 22:kelvin.anti_aliasing_control=0;break;
         }
-        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) {
-            fprintf(stderr,"Untextured negative admitted: %u\n",i);return 101;
+        int unused=(i==0 || i==1 || (i>=14 && i<=18));
+        if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)!=unused) {
+            fprintf(stderr,"Untextured variant mismatch: %u\n",i);return 101;
         }
     }
     state=baseline;kelvin=untextured;
+    kelvin.textures[0].format=0x06710E29;
+    kelvin.textures[0].offset=0x00CF9C00;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 127;
+    kelvin.textures[0].offset+=16;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 128;
+    kelvin.textures[0].format=0x09A10E29;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 129;
+    kelvin.textures[0].format=0x06710E29;
+    kelvin.textures[0].offset=0x04000000u-8192u;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 130;
+    kelvin.textures[0].offset+=16;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 131;
+    kelvin=untextured;
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 102;
     _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");

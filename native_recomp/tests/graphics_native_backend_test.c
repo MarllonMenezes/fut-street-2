@@ -145,6 +145,21 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
         state->native_immediate.ia_vertices==3,90);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,91);
+    /* Captured triangle INLINE_ARRAY layout through the real receiver and
+     * GPU completion/writeback, using independent synthetic vertex data. */
+    for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
+        i==0?0x642:i==3?0x640:0x602,0),120);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,5,0),121);
+    for(unsigned i=0;i<3;++i) {
+        float position[4]={points[i][0],points[i][1],0,1};uint32_t data[5];
+        memcpy(data,position,16);data[4]=0xFFFF00FF;
+        for(unsigned j=0;j<5;++j) CHECK(native_method(state,0,0x1818,data[j],0),122);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->immediate.ready && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==3,123);
+    for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,124);
     for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
         i==0?0x32:i==3?0x40:i==9?0x22:2,0),92);
     memset(guest_memory+0x3000,0xCD,48);

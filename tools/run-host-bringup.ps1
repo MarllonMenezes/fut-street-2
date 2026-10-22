@@ -37,6 +37,10 @@ param(
     [ValidateRange(1, 16384)][int]$AudioEffectsBypassMaxCompletions = 4096,
     [switch]$NativePcmOutput,
     [switch]$FrontendLoadingTrace,
+    [switch]$NativeGamepadInput,
+    [switch]$NativeKeyboardInput,
+    [switch]$NativeInputVirtualOnly,
+    [ValidateLength(0,512)][string]$NativeInputScript='',
     [switch]$StreamCallbackTrace,
     [ValidateRange(1, 10000)][int]$StreamCallbackTraceLimit = 128,
     [switch]$TraceStreamWait,
@@ -57,6 +61,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if(($NativeKeyboardInput -or $NativeInputVirtualOnly -or $NativeInputScript) -and -not $NativeGamepadInput){throw 'Native keyboard/script/provider requires -NativeGamepadInput.'}
 if ($UntexturedAa2Approximation -and -not $Aa2Approximation) {
     throw 'The captured untextured draw requires -Aa2Approximation.'
 }
@@ -151,6 +156,10 @@ $variables = @{
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = [string]$AudioEffectsBypassMaxCompletions
     RECOMP_NATIVE_PCM_OUTPUT = '0'
+    RECOMP_NATIVE_INPUT = '0'
+    RECOMP_NATIVE_KEYBOARD_INPUT = '0'
+    RECOMP_NATIVE_INPUT_PHYSICAL = '1'
+    RECOMP_NATIVE_INPUT_SCRIPT = ''
     RECOMP_FRONTEND_LOADING_TRACE = '0'
     RECOMP_GPU_HIGH_RES_WAIT = '0'
     RECOMP_STREAM_CALLBACK_TRACE = '0'
@@ -181,6 +190,10 @@ $variables = @{
 if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
 if ($UntexturedAa2Approximation) { $variables.RECOMP_UNTEXTURED_AA2_APPROXIMATION = '1' }
 if ($FrontendLoadingTrace) { $variables.RECOMP_FRONTEND_LOADING_TRACE = '1' }
+if ($NativeGamepadInput) { $variables.RECOMP_NATIVE_INPUT = '1' }
+if ($NativeKeyboardInput) { $variables.RECOMP_NATIVE_KEYBOARD_INPUT = '1' }
+if ($NativeInputVirtualOnly) { $variables.RECOMP_NATIVE_INPUT_PHYSICAL = '0' }
+if ($NativeInputScript) { $variables.RECOMP_NATIVE_INPUT_SCRIPT = $NativeInputScript }
 if ($NativePcmOutput) { $variables.RECOMP_NATIVE_PCM_OUTPUT = '1' }
 if ($HighResolutionGpuWait) { $variables.RECOMP_GPU_HIGH_RES_WAIT = '1' }
 if ($CapturePresentedFrames) { $variables.RECOMP_CAPTURE_PRESENTED_FRAMES = '1' }
@@ -307,6 +320,10 @@ try {
         audio_effects_bypass = [bool]$AudioEffectsBypass
         native_pcm_output = [bool]$NativePcmOutput
         frontend_loading_trace = [bool]$FrontendLoadingTrace
+        native_gamepad_input = [bool]$NativeGamepadInput
+        native_keyboard_input = [bool]$NativeKeyboardInput
+        native_input_virtual_only = [bool]$NativeInputVirtualOnly
+        native_input_script = $NativeInputScript
         readback_resource_cache_enabled = ($env:RECOMP_READBACK_RESOURCE_CACHE -ne '0')
         high_resolution_gpu_wait = [bool]$HighResolutionGpuWait
         vertex_shader_cache_enabled = ($childEnvironment['RECOMP_VERTEX_SHADER_CACHE'] -ne '0')

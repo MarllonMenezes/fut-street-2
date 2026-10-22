@@ -3,11 +3,16 @@
 #include <string.h>
 static uint8_t memory[128];
 static unsigned fail_read_at,read_calls;
+static uint32_t relocated_base;
 static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
 {
     (void)ctx;
     ++read_calls;
     if(fail_read_at && read_calls==fail_read_at) return 0;
+    if(relocated_base && address>=relocated_base && address-relocated_base<96 &&
+        size<=96-(address-relocated_base)) {
+        memcpy(data,memory+(address-relocated_base),size);return 1;
+    }
     if(address>=0x801688B4u && address-0x801688B4u<24 &&
         size<=24-(address-0x801688B4u)) {
         memcpy(data,memory+(address-0x801688B4u),size);return 1;
@@ -128,6 +133,23 @@ int main(void)
     CHECK(out.vertices[0][0][0]==0 && out.vertices[1][0][0]==10 &&
         out.vertices[30][0][0]==150 && out.vertices[31][0][0]==0);
     FutGraphicsImmediate line_before=out;
+    relocated_base=0x801641A4u;line_offsets[0]=0x001641A4u;
+    CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));
+    relocated_base=0x83FFFFA0u;line_offsets[0]=0x03FFFFA0u;
+    CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));
+    line_offsets[0]+=4;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));
+    line_offsets[0]=0x001641A5;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
+        &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1)&&!read_calls);
+    CHECK(!memcmp(&out,&line_before,sizeof(out)));
+    relocated_base=0;
     line_offsets[0]=0x00163D24u;
     CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
         &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
@@ -193,6 +215,29 @@ int main(void)
     for(unsigned n=0;n<=32;n+=2) if(n!=8 && n!=32) {
         a.active=1;a.ready=0;a.count=n;
         CHECK(!fut_graphics_vertex_array_end(&a));
+    }
+    /* Large profile strip: keep degenerate indices and parity exactly as
+     * supplied, including beyond the old 256-index diagnostic limit. */
+    memcpy(memory,positions,sizeof(positions));
+    for(unsigned length=912;length<=1024;length+=112) {
+        fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,6));
+        for(unsigned i=0;i<length;i+=2)
+            CHECK(fut_graphics_vertex_array_indices(&a,(i%4)|(((i+1)%4)<<16)));
+        if(length==1024) CHECK(!fut_graphics_vertex_array_indices(&a,0));
+        CHECK(fut_graphics_vertex_array_end(&a));
+        CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
+            formats,offsets,attrs,valid,1));
+        CHECK(out.count==(length-2)*3 && out.ready && out.primitive==5);
+        for(unsigned tri=0;tri<length-2;++tri) {
+            unsigned first=tri+(tri&1u),second=tri+!(tri&1u);
+            CHECK(out.vertices[tri*3][0][0]==positions[first%4][0] &&
+                out.vertices[tri*3+1][0][0]==positions[second%4][0] &&
+                out.vertices[tri*3+2][0][0]==positions[(tri+2)%4][0]);
+        }
+        before=out;a.indices[length-1]=65535;
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,
+            formats,offsets,attrs,valid,1));
+        CHECK(!memcmp(&out,&before,sizeof(out)));
     }
     return 0;
 }

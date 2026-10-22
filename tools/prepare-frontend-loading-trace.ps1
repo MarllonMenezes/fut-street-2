@@ -48,6 +48,11 @@ foreach($name in @('recomp_0026.c','recomp_0027.c','recomp_0036.c','recomp_0037.
         $text=Replace-Unique $text '#include "recomp_funcs.h"' ('#include "recomp_funcs.h"'+"`nextern int recomp_frontend_preload_trace_active(void);`nextern void recomp_frontend_preload_vm_trace(uint32_t,uint32_t,uint32_t);`n")
         $anchor="loc_001DE510: ;`n"
         $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_preload_trace_active()) recomp_frontend_preload_vm_trace(MEM32(ebp-28u)-1u, eax, esi);`n")
+        $text=Replace-Unique $text '#include "recomp_funcs.h"' ('#include "recomp_funcs.h"'+"`nextern void recomp_frontend_member_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);`n")
+        foreach($site in @('001E6CAD','001E6CC9')) {
+            $anchor="loc_${site}: ;`n"
+            $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_preload_trace_active()) recomp_frontend_member_trace(0x${site}u, ebx, MEM32(ebp-4u), MEM32(ebp-8u), eax);`n")
+        }
     }
     $results[$name]=$text
 }

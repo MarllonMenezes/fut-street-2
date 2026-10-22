@@ -126,6 +126,46 @@ void recomp_frontend_preload_vm_trace(uint32_t pc, uint32_t opcode, uint32_t vm)
 #endif
 }
 
+/* String object layout here is the output of original 001D7A23: characters
+ * follow its eight-byte header. Target/value words are raw observations. */
+void recomp_frontend_member_trace(uint32_t site, uint32_t target,
+    uint32_t name, uint32_t value, uint32_t result)
+{
+#ifdef _WIN32
+    static atomic_uint counts[2];
+    unsigned index;
+    if (!recomp_frontend_preload_trace_active()) return;
+    if (site == 0x001E6CADu) index = 0;
+    else if (site == 0x001E6CC9u) index = 1;
+    else return;
+    unsigned sample = atomic_load_explicit(&counts[index], memory_order_relaxed);
+    do { if (sample >= 16u) return; }
+    while (!atomic_compare_exchange_weak_explicit(&counts[index], &sample, sample+1u,
+        memory_order_relaxed, memory_order_relaxed));
+    DWORD saved_error = GetLastError();
+    uint32_t object[16] = {0}, cell[4] = {0};
+    SIZE_T read = 0;
+    int object_ok = g_xbox_mem_offset && target >= 0x10000u && target <= 0x83FFFFBFu &&
+        ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(target),
+            object, sizeof(object), &read) && read == sizeof(object);
+    int value_ok = g_xbox_mem_offset && value >= 0x10000u && value <= 0x83FFFFEFu &&
+        ReadProcessMemory(GetCurrentProcess(), (const void *)XBOX_PTR(value),
+            cell, sizeof(cell), &read) && read == sizeof(cell);
+    char text[385];
+    const char *status = frontend_trace_text(name <= 0xFFFFFFF7u ? name+8u : 0u, text);
+    fprintf(stderr, "[PRELOAD-MEMBER-TRACE] site=%08X sample=%u target=%08X name=%08X "
+        "text=\"%s\" text_status=%s value=%08X result=%08X object_readable=%d value_readable=%d "
+        "cell=%08X/%08X/%08X/%08X words=",
+        site, sample+1u, target, name, text, status, value, result, object_ok, value_ok,
+        cell[0],cell[1],cell[2],cell[3]);
+    for (unsigned i=0;i<16u;++i) fprintf(stderr, "%s%08X", i?"/":"", object[i]);
+    fprintf(stderr, " read-only=1\n");
+    SetLastError(saved_error);
+#else
+    (void)site; (void)target; (void)name; (void)value; (void)result;
+#endif
+}
+
 void recomp_frontend_command_trace(uint32_t site, uint32_t name,
                                    uint32_t detail, uint32_t result)
 {

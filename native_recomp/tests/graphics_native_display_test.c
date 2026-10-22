@@ -2,6 +2,7 @@
 #include "graphics_native_display.h"
 #include "graphics_native_vblank.h"
 #include "graphics_native_constants.h"
+#include "native_input.h"
 #include <stdio.h>
 #include <string.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"native display test failed: %d\n",n);return n;}}while(0)
@@ -53,7 +54,7 @@ static int verify_backbuffer(FutNativeDisplay *d,ID3D11Device *device,
     ID3D11Texture2D_Release(staging);ID3D11Texture2D_Release(back);
     return good?0:34;
 }
-int main(void)
+int main(int argc,char **argv)
 {
     ID3D11Device *device=NULL;ID3D11DeviceContext *context=NULL;D3D_FEATURE_LEVEL level;
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_HARDWARE,NULL,0,NULL,0,
@@ -66,6 +67,19 @@ int main(void)
     if(unavailable_environment(hr)) {fprintf(stderr,"Display unavailable HRESULT=%08lX; no presentation validation\n",hr);
         fut_native_constants_destroy(&completion);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);return 77;}
     CHECK(hr==S_OK,35);
+    if(argc==2 && !strcmp(argv[1],"--native-input")){
+        FutNativeInputSample sample;
+        CHECK(fut_native_input_enabled(),60);
+        SendMessageA(d.window,WM_KEYDOWN,VK_RETURN,0);
+        CHECK(fut_native_input_sample(0,&sample)==ERROR_SUCCESS && sample.state[4]==0x10,61);
+        SendMessageA(d.window,WM_KEYUP,VK_RETURN,0);
+        CHECK(fut_native_input_sample(0,&sample)==ERROR_SUCCESS && !sample.state[4],62);
+        SendMessageA(d.window,WM_KEYDOWN,VK_RETURN,0);
+        SendMessageA(d.window,WM_KILLFOCUS,0,0);
+        CHECK(fut_native_input_sample(0,&sample)==ERROR_SUCCESS && !sample.state[4],63);
+        fut_native_display_close(&d);fut_native_constants_destroy(&completion);
+        ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);return 0;
+    }
     /* First presentation on a fresh immediate context must work without a
      * diagnostic Map/GetData forcing submission of the backbuffer copy. */
     uint32_t first_pixels[128*64];

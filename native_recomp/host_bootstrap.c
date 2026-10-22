@@ -478,6 +478,17 @@ int main(int argc, char **argv)
 #endif
         }
     }
+    {
+        const char *input=getenv("RECOMP_NATIVE_INPUT");
+        if(input && strcmp(input,"0")!=0){
+            if(strcmp(input,"1")!=0){fputs("Invalid RECOMP_NATIVE_INPUT; use 0 or 1.\n",stderr);return 2;}
+#ifndef FUT_NATIVE_INPUT_HOOK
+            fputs("Native input requested without compiled SDK hooks.\n",stderr);return 2;
+#else
+            fputs("[NATIVE-INPUT] armed: verified gamepad SDK boundary; keyboard/script providers experimental; NOT_READY\n",stderr);
+#endif
+        }
+    }
     if (environment_variable_is_set("RECOMP_AC97_READY") ||
         environment_variable_is_set("RECOMP_AC97_RESET_ONLY") ||
         environment_variable_is_set("RECOMP_PB_EXEC") ||

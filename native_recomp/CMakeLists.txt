@@ -7,6 +7,16 @@ include(CTest)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Transactional captured profile geometry and synthetic fixtures use bounded
+# host buffers. Reserve stack address space; pages commit only as used.
+if(WIN32)
+    if(MSVC)
+        add_link_options("/STACK:16777216")
+    else()
+        add_link_options("LINKER:--stack,16777216")
+    endif()
+endif()
+
 set(RECOMP_GENERATED_DIR "" CACHE PATH
     "Directory containing XboxRecomp-generated C and headers")
 set(RECOMP_ARCHIVER "" CACHE FILEPATH
@@ -42,6 +52,8 @@ option(FUT_STREET2_STREAM_WAIT_CLOCK_TRACE_HOOK
 
 option(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK
     "Build bounded read-only original frontend entry tracing" OFF)
+option(FUT_STREET2_NATIVE_INPUT_HOOK
+    "Build opt-in native services at verified Xbox gamepad SDK entries" OFF)
 
 if(RECOMP_ARCHIVER)
     # Some compiler distributions (including Zig's Windows Clang driver) do
@@ -111,6 +123,25 @@ if(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK)
         set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
             "${RECOMP_GENERATED_DIR}/${name}" "${frontend_script}")
     endforeach()
+endif()
+
+if(FUT_STREET2_NATIVE_INPUT_HOOK)
+    if(NOT WIN32 OR NOT FUT_STREET2_BUILD_HOST_APP)
+        message(FATAL_ERROR "Native input requires the Windows host app")
+    endif()
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    set(input_script "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-native-input.ps1")
+    set(input_output "${CMAKE_CURRENT_BINARY_DIR}/native-input")
+    execute_process(COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+        -File "${input_script}" -GeneratedDirectory "${RECOMP_GENERATED_DIR}"
+        -OutputDirectory "${input_output}" RESULT_VARIABLE input_result)
+    if(NOT input_result EQUAL 0)
+        message(FATAL_ERROR "Native input overlay refused")
+    endif()
+    list(REMOVE_ITEM RECOMP_GENERATED_SOURCES "${RECOMP_GENERATED_DIR}/recomp_0060.c")
+    list(APPEND RECOMP_GENERATED_SOURCES "${input_output}/recomp_0060.c")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+        "${RECOMP_GENERATED_DIR}/recomp_0060.c" "${input_script}")
 endif()
 
 if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
@@ -417,6 +448,25 @@ if(FUT_STREET2_BUILD_HOST_APP)
             "Set RECOMP_HOST_LIBRARIES and RECOMP_XBOXRECOMP_SOURCE_DIR from the audited no-emulation runtime build")
     endif()
 
+    add_library(fut_street_2_native_input STATIC native_input_backend.c native_input_bridge.c)
+    target_include_directories(fut_street_2_native_input PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}" "${RECOMP_GENERATED_DIR}")
+    target_link_libraries(fut_street_2_native_input PUBLIC xinput user32)
+    target_link_libraries(fut_street_2_no_emulation_runtime_support PUBLIC fut_street_2_native_input)
+    if(BUILD_TESTING)
+    find_program(FUT_STREET2_POWERSHELL powershell.exe powershell REQUIRED)
+    add_executable(native_input_test tests/native_input_test.c)
+    target_link_libraries(native_input_test PRIVATE fut_street_2_native_input)
+    add_test(NAME native_input COMMAND native_input_test)
+    set_tests_properties(native_input PROPERTIES TIMEOUT 10
+        ENVIRONMENT "RECOMP_NATIVE_INPUT=1;RECOMP_NATIVE_INPUT_PHYSICAL=0;RECOMP_NATIVE_KEYBOARD_INPUT=1")
+    add_test(NAME native_input_overlay_contract
+        COMMAND "${FUT_STREET2_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/tests/native-input-overlay-contract.ps1"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../tools/prepare-native-input.ps1")
+    set_tests_properties(native_input_overlay_contract PROPERTIES TIMEOUT 15)
+    endif()
+
     set(RECOMP_NO_EMULATION_KERNEL_SOURCES
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_path.c"
         "${RECOMP_XBOXRECOMP_SOURCE_DIR}/src/kernel/kernel_pool.c"
@@ -471,6 +521,9 @@ if(FUT_STREET2_BUILD_HOST_APP)
     endif()
     if(FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK)
         target_compile_definitions(fut_street_2_recompiled_app PRIVATE FUT_FRONTEND_LOADING_HOOK=1)
+    endif()
+    if(FUT_STREET2_NATIVE_INPUT_HOOK)
+        target_compile_definitions(fut_street_2_recompiled_app PRIVATE FUT_NATIVE_INPUT_HOOK=1)
     endif()
     if(FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK)
         target_compile_definitions(fut_street_2_recompiled_app PRIVATE
@@ -532,10 +585,13 @@ if(FUT_STREET2_BUILD_HOST_APP)
         set_tests_properties(graphics_native_scanout_dispatch PROPERTIES TIMEOUT 10)
         add_executable(graphics_native_display_test tests/graphics_native_display_test.c graphics_native_display.c graphics_native_constants.c graphics_native_vblank.c)
         target_include_directories(graphics_native_display_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-        target_link_libraries(graphics_native_display_test PRIVATE d3d11 dxgi dxguid user32)
+        target_link_libraries(graphics_native_display_test PRIVATE d3d11 dxgi dxguid user32 fut_street_2_native_input)
         add_test(NAME graphics_native_display COMMAND graphics_native_display_test)
         set_tests_properties(graphics_native_display PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
             ENVIRONMENT "RECOMP_NATIVE_DISPLAY_ORIGIN=1")
+        add_test(NAME native_input_window COMMAND graphics_native_display_test --native-input)
+        set_tests_properties(native_input_window PROPERTIES TIMEOUT 15 SKIP_RETURN_CODE 77
+            ENVIRONMENT "RECOMP_NATIVE_INPUT=1;RECOMP_NATIVE_INPUT_PHYSICAL=0;RECOMP_NATIVE_KEYBOARD_INPUT=1;RECOMP_NATIVE_INPUT_SCRIPT=")
         add_executable(graphics_native_vblank_test tests/graphics_native_vblank_test.c graphics_native_vblank.c)
         target_include_directories(graphics_native_vblank_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(graphics_native_vblank_test PRIVATE dxgi dxguid user32)

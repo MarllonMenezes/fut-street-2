@@ -1,10 +1,12 @@
 #define COBJMACROS
 #include "graphics_native_display.h"
+#include "native_input.h"
 #include <string.h>
 #include <stdlib.h>
 
 static LRESULT CALLBACK display_proc(HWND window,UINT message,WPARAM w,LPARAM l)
 {
+    fut_native_input_message(message,w);
     if(message==WM_CLOSE) {DestroyWindow(window);return 0;}
     return DefWindowProcA(window,message,w,l);
 }

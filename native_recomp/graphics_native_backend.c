@@ -1155,10 +1155,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fut_graphics_bc2_c9df00_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_BC2_C9DF00_AA2_APPROXIMATION: exact offset=00C9DF00 FORMAT=09A10E29 1024x512 BC2, pitch=4096; existing 640x480 AA2 and depth-write mappings; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && fut_graphics_untextured_aa2_approximation_enabled() &&
-        state->kelvin.textures[0].format==0x06A10E29u &&
-        state->kelvin.textures[0].offset==0x00C6CF00u &&
         state->kelvin.textures[0].control0==0 && state->kelvin.fragment.stage_program==0)
-        fputs("[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: captured disabled-texture draw; no retained BC2 sampling; AA2/depth fidelity unverified NOT_READY\n",stderr);
+        fputs("[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: disabled texture stages; no retained resource sampling; AA2/depth fidelity unverified NOT_READY\n",stderr);
     if(aa2 && fut_graphics_bc2_aa2_family_approximation_enabled() &&
         (state->kelvin.textures[0].control0&0x40000000u) &&
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u &&

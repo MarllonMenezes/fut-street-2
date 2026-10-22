@@ -33,27 +33,33 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
         b->active=0;b->ready=1;return FUT_IMMEDIATE_READY;
     }
     if(method==0x1818) {
-        if(!b->active || b->ready || b->primitive!=8 || b->input_kind==1 ||
+        unsigned triangle_color=b->primitive==5;
+        unsigned words=triangle_color?5u:6u;
+        if(!b->active || b->ready || (b->primitive!=8 && !triangle_color) || b->input_kind==1 ||
             b->pending_x || b->pending_position || b->count>=FUT_IMMEDIATE_CAPACITY ||
-            b->inline_pending>=6 || s->vertex_array_format_valid!=0xFFFFu)
+            b->inline_pending>=words || s->vertex_array_format_valid!=0xFFFFu)
             return FUT_IMMEDIATE_REJECTED;
         for(unsigned i=0;i<16;++i) {
-            uint32_t format=i==0?0x32u:i==3?0x40u:i==9?0x22u:2u;
+            uint32_t format=triangle_color?(i==0?0x642u:i==3?0x640u:0x602u):
+                (i==0?0x32u:i==3?0x40u:i==9?0x22u:2u);
             if(s->vertex_array_format[i]!=format) return FUT_IMMEDIATE_REJECTED;
         }
         b->input_kind=2;
         b->inline_words[b->inline_pending++]=value;
-        if(b->inline_pending==6) {
+        if(b->inline_pending==words) {
             float (*v)[4]=b->vertices[b->count];
             memcpy(v,s->attributes,sizeof(s->attributes));
-            memcpy(v[0],b->inline_words,12);v[0][3]=1;
-            uint32_t color=b->inline_words[3];
+            memcpy(v[0],b->inline_words,triangle_color?16u:12u);
+            if(!triangle_color) v[0][3]=1;
+            uint32_t color=b->inline_words[triangle_color?4u:3u];
             v[3][0]=(float)((color>>16)&255u)/255.0f;
             v[3][1]=(float)((color>>8)&255u)/255.0f;
             v[3][2]=(float)(color&255u)/255.0f;
             v[3][3]=(float)(color>>24)/255.0f;
-            memcpy(v[9],b->inline_words+4,8);v[9][2]=0;v[9][3]=1;
-            unsigned defined=0x209u;
+            if(!triangle_color) {
+                memcpy(v[9],b->inline_words+4,8);v[9][2]=0;v[9][3]=1;
+            }
+            unsigned defined=triangle_color?0x9u:0x209u;
             for(unsigned i=0;i<16;++i) if(s->attribute_valid[i]==15) defined|=1u<<i;
             b->defined[b->count++]=(uint16_t)defined;b->inline_pending=0;
         }

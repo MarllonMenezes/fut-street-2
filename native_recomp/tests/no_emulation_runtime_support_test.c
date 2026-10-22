@@ -19,6 +19,7 @@ int fut_audio_effects_bypass(uint32_t, uint32_t, volatile uint32_t *);
 unsigned fut_audio_effects_bypass_limit(void);
 int recomp_frontend_preload_trace_active(void);
 void recomp_frontend_preload_vm_trace(uint32_t,uint32_t,uint32_t);
+void recomp_frontend_member_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);
 void recomp_frontend_command_trace(uint32_t,uint32_t,uint32_t,uint32_t);
 void recomp_frontend_loading_trace(uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t);
 
@@ -61,6 +62,37 @@ int main(int argc, char **argv)
 {
     if (argc == 2) {
 #ifdef _WIN32
+        if (strcmp(argv[1], "frontend-member") == 0) {
+            uint32_t memory[64] = {0}, saved[64];
+            memory[0]=0x12345678u; memory[1]=0x1A040191u;
+            memory[16]=0xCAFEBABEu; memory[17]=0x0A000077u; memory[18]=1u;
+            memcpy((char *)memory+136, "_visible", 9);
+            memcpy(saved,memory,sizeof(memory));
+            g_xbox_mem_offset=(ptrdiff_t)(uintptr_t)memory-(ptrdiff_t)0x10000u;
+            g_eax=123; g_esp=456;
+            recomp_frontend_member_trace(0x001E6CADu,0x10000u,0x10080u,0x10040u,7u);
+            recomp_frontend_command_trace(0x00160840u,0,0,0);
+            void *guard=VirtualAlloc(NULL,4096,MEM_COMMIT|MEM_RESERVE,PAGE_NOACCESS);
+            if (!guard) return 93;
+            g_xbox_mem_offset=(ptrdiff_t)(uintptr_t)guard-(ptrdiff_t)0x10000u;
+            recomp_frontend_member_trace(0x001E6CADu,0x10000u,0xFFFFFFFFu,0x10000u,7u);
+            VirtualFree(guard,0,MEM_RELEASE);
+            g_xbox_mem_offset=(ptrdiff_t)(uintptr_t)memory-(ptrdiff_t)0x10000u;
+            recomp_frontend_member_trace(0x001E6CC9u,0,0xFFFFFFFFu,0xFFFFFFFFu,7u);
+            SetLastError(0x1234u);
+            for (unsigned i=0;i<24u;++i) {
+                recomp_frontend_member_trace(0x001E6CADu,0x10000u,0x10080u,0x10040u,7u);
+                recomp_frontend_member_trace(0x001E6CC9u,0x10000u,0x10080u,0x10040u,7u);
+                recomp_frontend_member_trace(0xDEADBEEFu,0x10000u,0x10080u,0x10040u,7u);
+            }
+            DWORD error=GetLastError();
+            recomp_frontend_command_trace(0x00160859u,0,0,0);
+            recomp_frontend_member_trace(0x001E6CC9u,0x10000u,0x10080u,0x10040u,7u);
+            int ok=error==0x1234u && g_eax==123 && g_esp==456 &&
+                !recomp_frontend_preload_trace_active() && !memcmp(saved,memory,sizeof(memory));
+            g_xbox_mem_offset=0;
+            return ok ? 0 : 94;
+        }
         if (strcmp(argv[1], "frontend-text-boundaries") == 0) {
             void *guard = VirtualAlloc(NULL, 4096, MEM_COMMIT|MEM_RESERVE, PAGE_NOACCESS);
             if (!guard) return 96;

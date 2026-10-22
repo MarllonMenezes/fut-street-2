@@ -16,43 +16,63 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 22 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** O código original
-recompilado executa o boot e apresenta superfícies em 640×480. A captura final
-ainda mostra “LOADING…”. Menu, cenário, controles, partida e 1920×1080 continuam
-sem comprovação.
+**NOT_READY — ainda não é um jogo recompilado jogável.** O host compila e
+executa código original recompilado, com superfícies em 640×480. A entrada
+experimental já aciona navegação original de boot e criação de perfil. Menu
+completo, cenário, controle físico, partida e 1920×1080 continuam sem comprovação.
 
-O rastreamento confirmou que a notificação original do preload chega à função
-`feShowActiveScreen`: o destino existe e a chamada retorna. A condição restante
-para sair da tela ainda precisa ser identificada; não foi forçada nenhuma flag
-para simular esse avanço. O rastreamento adicional do interpretador passou nos
-contratos, mas não produziu eventos na integração; isso não prova ausência de
-execução do script.
+A nova ponte opcional de entrada atende sete funções SDK verificadas do jogo.
+Mantém o processamento, os eventos e a navegação originais. Em execução nativa
+com Start automatizado, foram observados `kSTART_ENTER_GAME`, a navegação de
+`f_BOOT_0900` para `f_BOOT_0100`, `mc?cmd=startgame` e a inicialização de
+`f_BOOT_0300`. Nenhuma flag de fase ou propriedade de tela foi forçada.
+Uma entrada A sintética pela janela nativa também chegou a `mc?cmd=setautosave`
+e à confirmação original. Isso comprova entrada na navegação, sem comprovar gameplay.
 
-Foi implementado um cache limitado a quatro alocações de texturas de readback,
-com descritor exato e dispositivo conferido. Cada leitura continua fazendo uma
-nova cópia, esperando a conclusão real da GPU e lendo os pixels atuais.
-A reutilização não armazena resultados anteriores nem elimina validações.
+O caminho com controle conectado revelou bloqueios gráficos corrigidos:
+estado retido em texturas P8, desenhos com todos os estágios de textura
+desativados e realocação dos vértices da lista de 16 segmentos. Os triângulos
+originais com posição XYZW e cor ARGB8 já concluíram desenho na GPU e gravação
+da superfície, preservando W. As faixas originais de 912 e 854 índices também foram
+desenhadas; o limite anterior de 256 foi ampliado para 1.024, com saída limitada
+a 3.072 vértices. O sampler BC2 com repetição U/V observado foi exercitado
+sob a opção experimental existente. Texturas ativas, shaders, profundidade e limites de memória
+continuam validados separadamente.
 
-Na comparação com o mesmo binário, em execuções de 60 segundos, o cache
-registrou 2.048 reutilizações com três alocações. A última amostra de
-apresentação retirou 204 quadros sem cache e 202 com cache. Isso comprova
-menos alocações; não comprova aumento de FPS.
+A compilação inclui a ponte na geração efetivamente usada pelo executável.
+Os 45 gates existentes passaram. Os testes verificam contratos do overlay, estruturas SDK, pilha,
+ponteiros inválidos, handles, desconexão, teclado e perda de foco. Os testes
+gráficos verificam perfis positivos, recusas independentes e limites. Entradas
+sintéticas não validam um controle físico.
 
-A integração de 180 segundos terminou pelo timeout, com 585 apresentações
-retiradas na última amostra e 4.096 reutilizações observadas com três alocações.
-A chamada original do preload retornou; a captura final ainda contém “LOADING”.
-O bypass de áudio completou artificialmente 1.508 esperas; áudio/DSP permanecem
-sem validação funcional.
+As execuções usam timeout finito de até 300 segundos e logs/saves isolados no
+D:. As aproximações de AA2/quincunx e o bypass artificial de espera de efeitos
+permanecem identificados. A ISO e o XBE originais permanecem intactos. O cache
+de readback reutiliza até quatro alocações; cada leitura ainda copia os pixels
+atuais e aguarda a GPU. Menos alocações não comprova aumento de FPS.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação e testes | Host compilado; 19 testes focais passaram, incluindo pixels, cancelamento, referências e descarte do cache, rastreamento, PCM e integração gráfica. |
-| Preload | Notificação e retorno originais observados; saída da tela ainda sem comprovação. |
-| Rendering | Superfícies do boot capturadas em 640×480; menu e 1920×1080 não comprovados. |
-| Controles e gameplay | Entrada na lógica original, cenário e partida curta ainda não comprovados. |
-| Áudio | Mixer original alimenta PCM experimental; canais, latência e continuidade ainda não validados. Bypass artificial de espera de efeitos continua necessário; DSP/APU não implementado. |
+| Compilação | Host e overlay de entrada recompilados; testes focais passaram. |
+| Boot e entrada | Start automatizado percorreu os handlers e a navegação originais até criação de perfil. |
+| Rendering | Desenhos originais XYZW/ARGB8 e malhas de 912/854 índices concluíram na GPU; opções de salvamento parcialmente visíveis. |
+| Gameplay | Menu completo, cenário, controle físico e partida curta ainda não comprovados. |
+| Áudio | PCM experimental do mixer original; bypass artificial de efeitos ainda necessário. DSP, canais, latência e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução
+
+A ponte de entrada exige `FUT_STREET2_NATIVE_INPUT_HOOK=ON` na build e
+`-NativeGamepadInput` no runner. É desligada por padrão. O provedor físico usa
+Windows XInput. `-NativeKeyboardInput` adiciona o teclado na porta 0: Enter
+para Start, Backspace para Back, setas para direcional, Z/X/C/V para A/B/X/Y,
+WASD para analógico esquerdo e IJKL para direito. A janela nativa precisa ter
+foco; perder o foco solta todas as teclas.
+
+`-NativeInputVirtualOnly` desliga o provedor físico. Para reprodução limitada,
+`-NativeInputScript '140000:start:1800,150000:start:1800'` gera Start nos
+tempos indicados, em milissegundos desde a primeira consulta de entrada.
+O runner identifica essas entradas como automatizadas e registra as opções.
+Isso não substitui validação com um controle físico.
 
 A saída PCM exige `-NativePcmOutput` no runner e uma build com
 `FUT_STREET2_STREAM_CALLBACK_TRACE_HOOK=ON`. É desligada por padrão e usa o
@@ -80,7 +100,8 @@ O rastreamento da interface exige `FUT_STREET2_FRONTEND_LOADING_TRACE_HOOK=ON`
 e `-FrontendLoadingTrace`. É desligado por padrão, com até 64 linhas por ponto
 e até 512 passos do interpretador dentro da chamada de preload. Leituras de
 texto e da pilha da VM são protegidas e limitadas. Não altera registradores,
-condições de fase ou resultados das rotinas.
+condições de fase ou resultados das rotinas. O setter de propriedades também
+registra até 16 entradas por ponto, somente dentro da chamada de preload.
 
 As aproximações gráficas e o bypass de áudio permanecem experimentais, sem
 alegação de fidelidade NV2A ou DSP. O orçamento padrão de conclusões artificiais
@@ -89,7 +110,7 @@ código recompilado proprietário, builds, saves e logs permanecem locais no D:.
 
 ### O que falta
 
-1. Identificar a condição de ativação/visibilidade da tela após a notificação de preload e comprovar a passagem ao menu.
+1. Resolver a composição parcial das opções de salvamento e o fluxo original que indica `nomem=1`; comprovar o menu completo.
 2. Carregar um cenário e resolver o próximo bloqueio funcional observado com execuções limitadas.
 3. Comprovar uma imagem completa em 1920×1080.
 4. Validar controles e uma partida curta conduzida pela lógica recompilada original.

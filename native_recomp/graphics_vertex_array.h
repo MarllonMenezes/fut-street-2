@@ -3,7 +3,7 @@
 #include "graphics_immediate.h"
 #include "graphics_objects.h"
 
-#define FUT_VERTEX_ARRAY_INDEX_CAPACITY 256u
+#define FUT_VERTEX_ARRAY_INDEX_CAPACITY 1024u
 typedef struct {
     uint16_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
     uint32_t inline_words[FUT_IMMEDIATE_CAPACITY*6u];
@@ -30,7 +30,8 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, const uint32_t formats[16],
     const float attributes[16][4], const uint8_t attribute_valid[16],
     uint16_t required_mask);
-/* Expands only captured 16/4-segment line lists with exact indices/offsets. */
+/* Expands captured 16/4-segment line lists with exact indices and bounded
+ * S16x3 fetches. The 4-segment profile retains its captured fixed offset. */
 int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, FutGraphicsMemoryRead read, void *memory_context,
     const FutGraphicsDmaView *view_a, const FutGraphicsDmaView *view_b,

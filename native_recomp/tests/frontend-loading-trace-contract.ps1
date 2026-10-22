@@ -54,4 +54,22 @@ try {
   if($trace.Count -ne $expected){throw 'Preload VM opt-in, scope, or bound failed.'}
   if($mode -eq '1' -and @($trace | Where-Object {$_ -notlike '*readable=1 top=00010010/02000000/11223344/55667788*'}).Count){throw 'Protected VM stack read failed.'}
  }
+ foreach($mode in @($null,'0','2','1')) {
+  $env:RECOMP_FRONTEND_LOADING_TRACE=$mode
+  $ErrorActionPreference='Continue'
+  $lines=@(& $Executable frontend-member 2>&1 | ForEach-Object { "$_" })
+  $code=$LASTEXITCODE
+  $ErrorActionPreference='Stop'
+  if($code -ne 0){throw 'Member trace changed registers, memory, scope or LastError.'}
+  $trace=@($lines | Where-Object {$_ -match '^\[PRELOAD-MEMBER-TRACE\]'})
+  $expected=if($mode -eq '1'){32}else{0}
+  if($trace.Count -ne $expected){throw 'Member trace opt-in/scope/budget failed.'}
+  if($mode -eq '1') {
+   foreach($site in @('001E6CAD','001E6CC9')) {
+    if(@($trace | Where-Object {$_ -match "site=$site "}).Count -ne 16){throw 'Member per-site budget failed.'}
+   }
+   if(@($trace | Where-Object {$_ -like '*text="_visible" text_status=terminated*object_readable=1 value_readable=1 cell=CAFEBABE/0A000077/00000001/00000000 words=12345678/1A040191/*read-only=1'}).Count -ne 30){throw 'Member safe snapshot fields failed.'}
+   if(@($trace | Where-Object {$_ -like '*text_status=unreadable*object_readable=0 value_readable=0*'}).Count -ne 2){throw 'Member invalid/guard-page handling failed.'}
+  }
+ }
 } finally {$env:RECOMP_FRONTEND_LOADING_TRACE=$old}

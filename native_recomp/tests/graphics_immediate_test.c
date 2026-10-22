@@ -106,6 +106,35 @@ int main(void)
     for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*6;++i)
         CHECK(fut_graphics_immediate_method(&b,&s,0x1818,0)==FUT_IMMEDIATE_APPLIED,40);
     CHECK(b.count==FUT_IMMEDIATE_CAPACITY && rejected(0x1818,0),41);
-    puts("Immediate attributes and restricted inline quads: layout, BGRA, defaults, masks and bounds verified");
+    memset(&b,0,sizeof(b));memset(&s,0,sizeof(s));
+    for(unsigned i=0;i<16;++i) CHECK(fut_graphics_kelvin_state(&s,0x1760+i*4,
+        i==0?0x642:i==3?0x640:0x602)==FUT_KELVIN_APPLIED,42);
+    s.attributes[9][0]=0.25f;s.attribute_valid[9]=15;
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,5)==FUT_IMMEDIATE_APPLIED,43);
+    s.vertex_array_format[0]=0x632;CHECK(rejected(0x1818,0),44);s.vertex_array_format[0]=0x642;
+    s.vertex_array_format[9]=0x622;CHECK(rejected(0x1818,0),45);s.vertex_array_format[9]=0x602;
+    saved=s;
+    for(unsigned v=0;v<6;++v) {
+        float position[4]={(float)v,480.0f,3.0f,2.0f};uint32_t data[5];
+        memcpy(data,position,16);data[4]=0x80402010;
+        for(unsigned j=0;j<5;++j) {
+            CHECK(fut_graphics_immediate_method(&b,&s,0x1818,data[j])==FUT_IMMEDIATE_APPLIED,46);
+            if(j<4) CHECK(rejected(0x17FC,0) && rejected(0x1880,0),47);
+        }
+        CHECK(b.count==v+1 && b.vertices[v][0][0]==(float)v &&
+            b.vertices[v][0][1]==480 && b.vertices[v][0][2]==3 && b.vertices[v][0][3]==2 &&
+            b.vertices[v][3][0]==64.0f/255 && b.vertices[v][3][1]==32.0f/255 &&
+            b.vertices[v][3][2]==16.0f/255 && b.vertices[v][3][3]==128.0f/255 &&
+            b.vertices[v][9][0]==0.25f && b.defined[v]==0x209,48);
+        if(v==3) CHECK(rejected(0x17FC,0),49);
+    }
+    CHECK(!memcmp(&s,&saved,sizeof(s)) &&
+        fut_graphics_immediate_method(&b,&s,0x17FC,0)==FUT_IMMEDIATE_READY && b.count==6,50);
+    CHECK(fut_graphics_immediate_consume(&b),51);
+    CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,5)==FUT_IMMEDIATE_APPLIED,52);
+    for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*5;++i)
+        CHECK(fut_graphics_immediate_method(&b,&s,0x1818,0)==FUT_IMMEDIATE_APPLIED,53);
+    CHECK(b.count==FUT_IMMEDIATE_CAPACITY && rejected(0x1818,0),54);
+    puts("Immediate attributes and captured inline quads/triangles: layout, W, BGRA, defaults, masks and bounds verified");
     return 0;
 }
