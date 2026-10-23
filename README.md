@@ -21,28 +21,34 @@ recompilada atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, com B
 e Inglaterra, e iniciou o carregamento seguinte. Cenário jogável, partida,
 controle físico e 1920×1080 ainda não foram comprovados.
 
-O caminho projetivo concluiu um desenho original na GPU: **96 vértices,
-192 entradas nas duas passagens AA2 e 245.101 invocações de pixel shader**,
-seguidas de gravação nas superfícies do jogo. Isso comprova o lote
-rasterizado; o frame novo completo ainda não foi apresentado.
+O carregamento atravessou materiais BC1 com mipmaps e gravou novos desenhos
+nas superfícies originais. Uma textura BC1 de 128×128 com dois níveis foi
+usada em lotes de **24 e 6 vértices**, com **9.800 e 305.871 invocações de
+pixel shader**, respectivamente. O frame novo completo ainda não foi apresentado.
 
-O host preserva os streams float3/float2/ARGB8 nos slots originais 0/1/2,
-o backing 640×480, o clip deslocado via scissor e os valores assinados de W.
-A interpolação em perspectiva usa um experimento separado, desligado por
-padrão. Os mipmaps ARGB8 e BC1 são carregados integralmente; o sampler traduz
-trilinear e bias assinado, com gradientes calculados antes dos descartes.
-O ruído BC1 desconhecido é omitido somente com as opções experimentais.
-Precisão, interpolação e AA2 do NV2A permanecem sem medição de fidelidade.
+O armazenamento BC3/DXT45 agora preserva os blocos originais de cor e alpha
+em todos os mipmaps. O caso 1024×512 de três níveis exige 688.128 bytes.
+Upload, readback de ambos os níveis de uma textura sintética, sampler e
+limites passaram na GPU. **BC3 ainda não foi exercitado pela integração
+nativa deste incremento**: a ordem de materiais encontrou outros bloqueios antes.
 
-**Bloqueio atual:** o material seguinte usa BC3 `0x09A30F29`, 1024×512 com
-três mips, ainda recusado. O próximo incremento implementa esse armazenamento
-com os dados originais. Não houve substituição de textura ou conclusão falsa.
+O experimento BC1 valida dimensões, quantidade de níveis e spans, substituindo
+a lista de tamanhos; mantém os opt-ins conjuntos, filtro e controles observados.
+Wrap/clamp são traduzidos pelo sampler existente. Streams originais, clip e W
+assinado permanecem preservados. Interpolação, LOD, dithering e AA2 do NV2A
+continuam sem medição de fidelidade; o ruído BC1 desconhecido é omitido.
 
-Os testes focais na GPU conferiram interpolação afim e em perspectiva contra
-referências independentes, cobertura, scissor, preservação dos pixels externos
-e mipmaps. Os 45 gates obrigatórios passaram. A integração nativa usou timeout
-de 300 segundos e logs/saves isolados no D:, encerrando no bloqueio BC3.
-Clears parciais ainda são recusados; zero, NaN e W extremos continuam protegidos.
+**Bloqueio da execução final:** ARGB8 `0x07830629`, 256×128 com três mipmaps.
+O upload dos 172.032 bytes foi concluído, mas o gate experimental ainda admite
+somente o tamanho ARGB8 anterior. O próximo experimento valida essa família
+por dimensões e spans, como em BC1. Outra rodada encontrou BC2 `0x07720E29`
+com dois níveis, ainda pendente. A ordem dos materiais varia entre execuções.
+
+Os **45 gates obrigatórios passaram**. A validação essencial conferiu mipmaps
+BC3 na GPU, recusa de alinhamento/span inválidos e os limites do experimento
+BC1. A integração nativa usou timeout de 300 segundos e logs/saves isolados
+no D:, encerrando de forma diagnóstica. Clears parciais, zero, NaN e W extremos
+continuam protegidos. Não houve substituição de textura nem conclusão falsa.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações de
 texturas, PCM e bypass artificial de espera de efeitos continuam experimentais,
@@ -52,7 +58,7 @@ sem alegação de fidelidade NV2A ou DSP. Gameplay e navegação não foram for�
 | --- | --- |
 | Compilação | Executável nativo atualizado; 45 gates aprovados. |
 | Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | Lote projetivo rasterizado e gravado na superfície; BC3 seguinte bloqueia o frame completo. |
+| Rendering | BC1 com mipmaps rasterizado e gravado; ARGB8 256×128 bloqueou a execução final. |
 | Gameplay | Cenário jogável e partida curta ainda não comprovados. |
 | Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
 

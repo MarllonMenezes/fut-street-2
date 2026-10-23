@@ -87,15 +87,27 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
      * retained separately. Both observed register pairs keep all other gates. */
     int family_lc_retained_baseline=family_common_baseline &&
         t0->control1==0x05000000u && t0->image_rect==0x028001E0u;
-    int projective_bc1=(t0->format==0x06510C29u || t0->format==0x07620C29u) &&
-        fut_graphics_dxt1_noise_approximation_enabled();
-    unsigned projective_span=t0->format==0x07730629u?86016u:t0->format==0x06510C29u?1024u:5120u;
+    unsigned u=(t0->format>>20)&15u,v=(t0->format>>24)&15u;
+    unsigned levels=(t0->format>>16)&15u,largest=u>v?u:v;
+    int bc1_header=(t0->format&~0x0FFF0000u)==0x00000C29u;
+    int projective_bc1=bc1_header && u>=2 && u<=12 && v>=2 && v<=12 &&
+        levels && levels<=largest+1 && fut_graphics_dxt1_noise_approximation_enabled();
+    int projective_bc3=t0->format==0x09A30F29u;
+    unsigned projective_span=projective_bc3?688128u:86016u;
+    if(projective_bc1) {
+        projective_span=0;
+        for(unsigned level=0;level<levels;++level) {
+            unsigned w=(1u<<u)>>level,h=(1u<<v)>>level;
+            projective_span+=((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*8u;
+        }
+    }
     int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
-        (t0->format==0x07730629u || projective_bc1) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        (t0->format==0x07730629u || projective_bc1 || projective_bc3) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
         t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
-        t0->filter==0x02063F1Bu && t0->address==0x10101u &&
-        !(t0->offset&(projective_bc1?7u:3u)) && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
-    if((t0->format==0x07730629u || t0->format==0x06510C29u || t0->format==0x07620C29u) &&
+        t0->filter==0x02063F1Bu && (t0->address==0x10101u ||
+            (projective_bc1 && t0->address==0x10303u)) &&
+        !(t0->offset&(projective_bc3?15u:projective_bc1?7u:3u)) && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
+    if((t0->format==0x07730629u || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
         (!observed_projective_texture || fut_graphics_software_draw_ready(s)))return 0;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&

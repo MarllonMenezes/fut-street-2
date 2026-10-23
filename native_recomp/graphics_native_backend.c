@@ -1110,7 +1110,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
         fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan);
     int projective_format=state->kelvin.textures[0].format==0x07730629u ||
-        state->kelvin.textures[0].format==0x06510C29u || state->kelvin.textures[0].format==0x07620C29u;
+        state->kelvin.textures[0].format==0x09A30F29u ||
+        ((state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000C29u &&
+         state->kelvin.textures[0].filter==0x02063F1Bu);
     if(aa2 && projective_format && state->surfaces.format!=0x1128u)
         software_ready=0;
     if(aa2 && (state->kelvin.textures[0].format==0x09A10E29u ||

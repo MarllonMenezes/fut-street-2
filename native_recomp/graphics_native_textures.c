@@ -13,31 +13,32 @@ void fut_native_texture_destroy(FutNativeTexture *native)
 static HRESULT upload_mip_chain(FutNativeTexture *native,ID3D11Device *device,
     const FutGraphicsTexturePlan *p,FutGraphicsMemoryRead read,void *context)
 {
-    int bc1=p->storage==1;
+    int compressed=p->storage==1 || p->storage==6;
+    unsigned block_bytes=p->storage==6?16u:8u;
     if(!native || !device || !read || !p->width || !p->height || p->width>4096 || p->height>4096 ||
         (p->width&(p->width-1)) || (p->height&(p->height-1)) || !p->mip_levels || p->mip_levels>13 ||
-        p->bytes_per_pixel!=(bc1?0u:4u) || p->pitch!=(bc1?(p->width+3u)/4u*8u:p->width*4u) ||
-        (bc1 && ((p->address&7u) || p->width<4 || p->height<4)) || (p->dma_context!=1 && p->dma_context!=2) ||
+        p->bytes_per_pixel!=(compressed?0u:4u) || p->pitch!=(compressed?(p->width+3u)/4u*block_bytes:p->width*4u) ||
+        (compressed && ((p->address&(block_bytes-1u)) || p->width<4 || p->height<4)) || (p->dma_context!=1 && p->dma_context!=2) ||
         (p->address&0xFC000003u)!=0x80000000u || p->span>0x84000000u-p->address) return E_INVALIDARG;
     uint64_t span=0;unsigned largest=p->width>p->height?p->width:p->height;
     if((largest>>(p->mip_levels-1))==0) return E_INVALIDARG;
     for(unsigned level=0;level<p->mip_levels;++level) {
         unsigned w=p->width>>level,h=p->height>>level;
         w=w?w:1u;h=h?h:1u;
-        span+=bc1?(uint64_t)((w+3u)/4u)*((h+3u)/4u)*8u:(uint64_t)w*h*4u;
+        span+=compressed?(uint64_t)((w+3u)/4u)*((h+3u)/4u)*block_bytes:(uint64_t)w*h*4u;
     }
     if(span!=p->span) return E_INVALIDARG;
-    uint8_t *raw=HeapAlloc(GetProcessHeap(),0,p->span),*linear=bc1?NULL:HeapAlloc(GetProcessHeap(),0,p->span);
+    uint8_t *raw=HeapAlloc(GetProcessHeap(),0,p->span),*linear=compressed?NULL:HeapAlloc(GetProcessHeap(),0,p->span);
     HRESULT hr=E_OUTOFMEMORY;FutNativeTexture next={0};
-    if(!raw || (!bc1 && !linear)) goto done;
+    if(!raw || (!compressed && !linear)) goto done;
     hr=E_FAIL;if(!read(context,p->address,raw,p->span)) goto done;
     D3D11_SUBRESOURCE_DATA initial[13]={0};size_t offset=0;
-    next.texel_and=bc1?0:UINT32_MAX;next.texel_or=bc1?UINT32_MAX:0;
+    next.texel_and=compressed?0:UINT32_MAX;next.texel_or=compressed?UINT32_MAX:0;
     for(unsigned level=0;level<p->mip_levels;++level) {
         unsigned w=p->width>>level,h=p->height>>level;w=w?w:1u;h=h?h:1u;
-        initial[level].pSysMem=bc1?raw+offset:linear+offset;
-        initial[level].SysMemPitch=bc1?(w+3u)/4u*8u:w*4u;
-        if(bc1) {offset+=(size_t)((w+3u)/4u)*((h+3u)/4u)*8u;continue;}
+        initial[level].pSysMem=compressed?raw+offset:linear+offset;
+        initial[level].SysMemPitch=compressed?(w+3u)/4u*block_bytes:w*4u;
+        if(compressed) {offset+=(size_t)((w+3u)/4u)*((h+3u)/4u)*block_bytes;continue;}
         for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
             unsigned index=0,out_bit=1;
             for(unsigned bit=1;bit<w || bit<h;bit<<=1) {
@@ -52,7 +53,7 @@ static HRESULT upload_mip_chain(FutNativeTexture *native,ID3D11Device *device,
     }
     D3D11_TEXTURE2D_DESC desc={0};desc.Width=p->width;desc.Height=p->height;
     desc.MipLevels=p->mip_levels;desc.ArraySize=1;desc.SampleDesc.Count=1;
-    desc.Format=bc1?DXGI_FORMAT_BC1_UNORM:DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.Format=compressed?(p->storage==6?DXGI_FORMAT_BC3_UNORM:DXGI_FORMAT_BC1_UNORM):DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
     hr=ID3D11Device_CreateTexture2D(device,&desc,initial,&next.texture);
     if(SUCCEEDED(hr))hr=ID3D11Device_CreateShaderResourceView(device,(ID3D11Resource*)next.texture,NULL,&next.view);
@@ -66,7 +67,7 @@ done:
 HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context)
 {
-    if(plan && (plan->storage==5 || (plan->storage==1 && plan->mip_levels>1)))
+    if(plan && (plan->storage==5 || plan->storage==6 || (plan->storage==1 && plan->mip_levels>1)))
         return upload_mip_chain(native,device,plan,read,context);
     int bc1=plan && plan->storage==1;
     int p8=plan && plan->storage==2;
@@ -171,7 +172,7 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     if (!device || !state || !native->valid || (state->valid & 0x2C) != 0x2C) return E_INVALIDARG;
     unsigned min=(state->filter>>16)&255, mag=(state->filter>>24)&15;
     unsigned levels=(state->format>>16)&15;
-    int mipped=levels>1 && (native->plan.storage==5 || native->plan.storage==1) && native->plan.mip_levels==levels;
+    int mipped=levels>1 && (native->plan.storage==5 || native->plan.storage==1 || native->plan.storage==6) && native->plan.mip_levels==levels;
     /* A one-level texture cannot select between mip levels. MIN=3..6 therefore
      * reduces exactly to the corresponding within-level nearest/linear mode.
      * Never turn convolution MIN=7/MAG=4 into ordinary filtering. */
@@ -184,7 +185,7 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
          * the NV2A LOD-bias mask excludes it, so it has no represented effect. */
         (state->filter & ~0x0F3F3FFFu) || (!mipped && levels!=1) || !spatial_min ||
         (mipped && (state->control0!=0x4003FFC0u || min!=6 || mag!=2 ||
-            (state->format&~0x0FFF0003u)!=(native->plan.storage==1?0x00000C28u:0x00000628u) ||
+            (state->format&~0x0FFF0003u)!=(native->plan.storage==1?0x00000C28u:native->plan.storage==6?0x00000F28u:0x00000628u) ||
             (1u<<((state->format>>20)&15u))!=native->plan.width ||
             (1u<<((state->format>>24)&15u))!=native->plan.height ||
             (state->format&3u)!=native->plan.dma_context)) ||

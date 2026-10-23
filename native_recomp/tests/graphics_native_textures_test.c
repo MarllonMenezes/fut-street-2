@@ -245,7 +245,32 @@ static int verify_bc1(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     good=!memcmp(mapped.pData,memory.bytes+32,8);
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)mip_readback,1);ID3D11Texture2D_Release(mip_readback);
     CHECK(good && SUCCEEDED(fut_native_texture_sampler(&native,device,&state)),205);
-    fut_native_texture_destroy(&native);return 0;
+    fut_native_texture_destroy(&native);
+    state.format=0x09A30F29;state.offset=0x0151A100;dma.size=0x04000000;
+    CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY &&
+        plan.storage==6 && plan.span==688128 && plan.width==1024 && plan.height==512,206);
+    state.offset++;sentinel.width=99;
+    CHECK(fut_graphics_texture_plan(&state,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==99,207);
+    state.format=0x02320F29;state.offset=0x1000;dma.size=0x1030;
+    CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY && plan.span==48 && plan.pitch==32,208);
+    for(unsigned i=0;i<48;++i)memory.bytes[i]=(uint8_t)(i*7u+3u);
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)),209);
+    ID3D11Texture2D_GetDesc(native.texture,&mip_desc);
+    CHECK(mip_desc.MipLevels==2 && mip_desc.Format==DXGI_FORMAT_BC3_UNORM,210);
+    mip_desc.Usage=D3D11_USAGE_STAGING;mip_desc.BindFlags=0;mip_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&mip_desc,NULL,&mip_readback)),211);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)mip_readback,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),212);
+    for(unsigned level=0;level<2;++level) {
+        CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)mip_readback,level,D3D11_MAP_READ,0,&mapped)),213);
+        good=!memcmp(mapped.pData,memory.bytes+level*32u,level?16:32);
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)mip_readback,level);
+        CHECK(good,214);
+    }
+    CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,&state)),215);
+    old=native.texture;invalid=plan;invalid.span--;
+    CHECK(fut_native_texture_upload(&native,device,&invalid,memory_read,&memory)==E_INVALIDARG && native.texture==old,216);
+    ID3D11Texture2D_Release(mip_readback);fut_native_texture_destroy(&native);return 0;
 }
 static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
 {
@@ -274,7 +299,7 @@ static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     FutGraphicsDmaView unaligned=dma;unaligned.guest_address+=4;
     CHECK(fut_graphics_texture_plan(&state,&unaligned,&sentinel)==FUT_TEXTURE_INVALID_RANGE,165);
     const uint32_t unsupported[]={0x06110E29u,0x06D10E29u,0x01610E29u,0x0D610E29u,
-        0x06620E29u,0x06610E2Du,0x06610E2Bu,0x06610F29u};
+        0x06620E29u,0x06610E2Du,0x06610E2Bu,0x06610F2Du};
     for(unsigned i=0;i<sizeof(unsupported)/sizeof(unsupported[0]);++i) {
         bad=state;bad.format=unsupported[i];
         CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED &&
