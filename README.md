@@ -32,19 +32,22 @@ descritores de stride retidos, preservando o mesmo layout de posição, cor e
 UV. Perfis mistos continuam recusados. Os dois perfis passaram pela GPU nos
 testes focais, e a integração atravessou a recusa anterior.
 
-Dois callbacks originais ausentes, `0x000DDBE0` e `0x000F4520`, foram
+Três callbacks originais ausentes, `0x000DDBE0`, `0x000F4520` e `0x00100160`, foram
 recuperados do XBE, traduzidos e incluídos no executável efetivamente usado.
 Referências literais, limites e destinos foram conferidos; a geração
-preservou os 71 arquivos C anteriores. Validações isoladas conferiram pilha,
-argumentos e memória. Ambos executaram no jogo; para `0x000F4520`, a execução
+preservou os 72 arquivos C anteriores. Validações isoladas conferiram pilha,
+argumentos e memória. Os três executaram no jogo; para `0x000F4520`, a execução
 nativa observou o retorno antecipado, enquanto os caminhos de alocação foram
-validados com os callees isolados.
+validados com os callees isolados. `0x00100160` executou repetidamente no
+jogo, inclusive pelo caminho aleatório, e retornou. Suas duas chamadas
+indiretas mantêm o dispatcher e o diagnóstico de alvos ausentes.
 
-Os 29 testes da ferramenta de recuperação e os 45 gates existentes passaram.
+Os 31 testes da ferramenta de recuperação e os 45 gates existentes passaram.
 A última integração usou timeout de 300 segundos, entradas automatizadas e
-logs/saves isolados no D:. Terminou com diagnóstico de alvo indireto ausente
-`0x00100160`, durante o carregamento posterior à seleção de equipes. Esse é
-o próximo bloqueio a investigar e recuperar com evidência.
+logs/saves isolados no D:. Terminou ao recusar uma submissão circular da fila gráfica: o trecho após
+a volta tem 999.440 bytes, acima do limite atual de 65.532 bytes. Nenhuma
+conclusão foi simulada. O próximo experimento trata esse lote maior com
+limites, salto explícito validado e conclusão real da GPU.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
 de texturas, PCM e o bypass artificial de espera de efeitos continuam
@@ -53,10 +56,10 @@ não validam um controle físico.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação | Executável com os dois novos callbacks; 45 gates aprovados. |
+| Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
 | Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
 | Rendering | QUADS observado aceito e seleção de equipes parcialmente composta; cenário ainda pendente. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual `0x00100160`. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual na fila gráfica circular. |
 | Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução
@@ -137,8 +140,8 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
 
-O gate da geração privada validada exige exatamente 15.613 entradas de
-dispatch, incluindo os treze pontos de entrada indiretos recuperados. Uma
+O gate da geração privada validada exige exatamente 15.614 entradas de
+dispatch, incluindo os quatorze pontos de entrada indiretos recuperados. Uma
 geração anterior não satisfaz esse contrato; confirme a regeneração e o
 executável realmente utilizado nos testes.
 

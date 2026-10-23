@@ -230,7 +230,26 @@ class SlotCallbackTests(unittest.TestCase):
             validate_slot_callback_gap(self.body+b"\x90"*3,0x1000,0x100A,0x100D,
                 self.reference,0x3000,0x224,{0x2000})
         with self.assertRaises(ValueError):
-            self.proof(body=b"\x90"*256+b"\xC3")
+            self.proof(body=b"\x90"*512+b"\xC3")
+
+    def test_memory_calls_require_explicit_opt_in_and_preserve_flow(self):
+        body=bytes.fromhex("ff17ff912c020000c3")
+        args=(body+b"\xCC"*3,0x1000,0x1000+len(body),0x1003+len(body),
+              self.reference,0x3000,0x224,set())
+        with self.assertRaises(ValueError):
+            validate_slot_callback_gap(*args)
+        instructions,_=validate_slot_callback_gap(*args,allow_indirect_calls=True)
+        self.assertEqual([i.mnemonic for i in instructions],["call","call","ret"])
+        for body in (bytes.fromhex("ffd0c3"),bytes.fromhex("ff27c3")):
+            with self.subTest(body=body),self.assertRaises(ValueError):
+                validate_slot_callback_gap(body+b"\xCC"*3,0x1000,0x1000+len(body),
+                    0x1003+len(body),self.reference,0x3000,0x224,set(),True)
+
+    def test_larger_callback_remains_bounded_to_512_bytes(self):
+        body=b"\x90"*300+b"\xC3"
+        instructions,_=validate_slot_callback_gap(body+b"\xCC"*3,0x1000,0x112D,0x1130,
+            self.reference,0x3000,0x224,set())
+        self.assertEqual(len(instructions),301)
 
 
 class LinearLeafTests(unittest.TestCase):

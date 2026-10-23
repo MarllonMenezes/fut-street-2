@@ -162,10 +162,10 @@ def validate_int3_padding_gap(code: bytes, start: int, end: int, gap_end: int,
 
 def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
                                reference_code: bytes, reference_start: int,
-                               slot: int, registered: set[int]):
+                               slot: int, registered: set[int], allow_indirect_calls: bool = False):
     """Prove an observed object-slot callback with a complete multi-exit CFG."""
     import capstone
-    if (not start < end < gap_end or gap_end-start > 256
+    if (not start < end < gap_end or gap_end-start > 512
             or not 1 <= gap_end-end <= 15 or len(code) != gap_end-start
             or not 0 <= slot <= 0xFFC or slot & 3):
         raise ValueError("Slot callback requires an exact bounded padded gap and aligned slot")
@@ -191,6 +191,12 @@ def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
         if ins.mnemonic == "ret":
             continue
         if ins.mnemonic == "call" or ins.mnemonic.startswith("j"):
+            if (allow_indirect_calls and ins.mnemonic == "call"
+                    and len(ins.operands) == 1
+                    and ins.operands[0].type == capstone.x86.X86_OP_MEM
+                    and ins.operands[0].size == 4):
+                pending.append(following)
+                continue
             if len(ins.operands) != 1 or ins.operands[0].type != capstone.x86.X86_OP_IMM:
                 raise ValueError("Slot callback control flow must be direct")
             target = ins.operands[0].imm & 0xFFFFFFFF
@@ -337,7 +343,7 @@ def recover(args: argparse.Namespace) -> dict:
         if not following or args.reference_function not in known or args.contained_owner is not None:
             raise ValueError("Slot callback requires known following and reference functions")
         slot_gap_end = min(following)
-        if not args.start < args.end < slot_gap_end or slot_gap_end-args.start > 256:
+        if not args.start < args.end < slot_gap_end or slot_gap_end-args.start > 512:
             raise ValueError("Slot callback must end inside a bounded following-function gap")
     elif args.end not in known:
         raise ValueError("Expected an omitted start bounded by a known following function")
@@ -383,7 +389,7 @@ def recover(args: argparse.Namespace) -> dict:
             raise ValueError("Slot callback gap or reference is not contiguous in executable XBE sections")
         slot_proof = validate_slot_callback_gap(data[offset:offset+slot_gap_end-args.start],
             args.start,args.end,slot_gap_end,data[ref_offset:ref_offset+ref_end-ref_start],
-            ref_start,args.reference_slot,set(registered))
+            ref_start,args.reference_slot,set(registered),args.allow_indirect_calls)
     if args.int3_padding_gap:
         reference = known[args.reference_function]
         ref_start, ref_end = int(reference["start"], 16), int(reference["end"], 16)
