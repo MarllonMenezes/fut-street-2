@@ -627,6 +627,9 @@ static int native_prepare_textures(NativeGraphicsState *state)
         fprintf(stderr,"[GRAPHICS] native texture uploaded: stage=%u size=%ux%u pitch=%u source=%08X OR=%08X AND=%08X; no sample/draw\n",
             stage,plan.width,plan.height,plan.pitch,plan.address,state->textures[stage].texel_or,state->textures[stage].texel_and);
         hr=fut_native_texture_sampler(&state->textures[stage],state->device,texture);
+        if(SUCCEEDED(hr) && plan.storage==5) fprintf(stderr,
+            "[GRAPHICS] ARGB8 mip chain uploaded: stage=%u levels=%u bytes=%u; native trilinear LOD/bias translation, NV2A precision unverified NOT_READY\n",
+            stage,plan.mip_levels,plan.span);
         if(FAILED(hr) && state->immediate.ready && !state->immediate.active &&
             (state->constant_coordinates&(1u<<stage)))
             hr=fut_native_texture_zero_rgb_candidate(&state->textures[stage],texture,1);

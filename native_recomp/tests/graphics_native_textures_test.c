@@ -349,6 +349,75 @@ static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNative
     ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
     CHECK(good,150);return 0;
 }
+typedef struct {uint8_t bytes[84];int fail;} MipMemory;
+static int mip_read(void *context,uint32_t address,void *bytes,size_t size)
+{
+    MipMemory *m=context;
+    if(m->fail || address!=0x80001000 || size!=sizeof(m->bytes))return 0;
+    memcpy(bytes,m->bytes,size);return 1;
+}
+static int verify_argb_mips(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
+{
+    FutGraphicsTextureState state={.valid=0x3BF,.offset=0x1000,.format=0x02230629,
+        .control0=0x4003FFC0,.filter=0x02063F1B,.address=0x10101};
+    FutGraphicsDmaView dma={0x80000000,0x1054};FutGraphicsTexturePlan plan={0},unchanged={.width=99};
+    CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY && plan.mip_levels==3 && plan.span==84 && plan.storage==5,180);
+    dma.size--;CHECK(fut_graphics_texture_plan(&state,&dma,&unchanged)==FUT_TEXTURE_INVALID_RANGE && unchanged.width==99,181);dma.size++;
+    MipMemory memory={0};unsigned offset=0;const unsigned red[3]={0,128,255};
+    for(unsigned level=0;level<3;++level) {
+        unsigned w=4u>>level;
+        for(unsigned y=0;y<w;++y)for(unsigned x=0;x<w;++x) {
+            unsigned index=(x&1u)|((y&1u)<<1)|((x&2u)<<1)|((y&2u)<<2);
+            uint32_t pixel=0xFF000000u|(red[level]<<16)|(y*16u<<8)|(x*16u);
+            memcpy(memory.bytes+offset+index*4,&pixel,4);
+        }
+        offset+=w*w*4;
+    }
+    FutNativeTexture native={0};
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,mip_read,&memory)),182);
+    ID3D11Texture2D *saved=native.texture;memory.fail=1;
+    CHECK(FAILED(fut_native_texture_upload(&native,device,&plan,mip_read,&memory)) && native.texture==saved,183);memory.fail=0;
+    D3D11_TEXTURE2D_DESC desc;ID3D11Texture2D_GetDesc(native.texture,&desc);
+    CHECK(desc.Width==4 && desc.Height==4 && desc.MipLevels==3,184);
+    desc.Usage=D3D11_USAGE_STAGING;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;desc.BindFlags=0;
+    ID3D11Texture2D *staging=NULL;CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),185);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),186);
+    for(unsigned level=0;level<3;++level) {
+        D3D11_MAPPED_SUBRESOURCE map;CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,level,D3D11_MAP_READ,0,&map)),187);
+        unsigned w=4u>>level;int good=1;
+        for(unsigned y=0;y<w;++y)for(unsigned x=0;x<w;++x) {
+            uint32_t pixel;memcpy(&pixel,(uint8_t*)map.pData+y*map.RowPitch+x*4,4);
+            if(pixel!=(0xFF000000u|(red[level]<<16)|(y*16u<<8)|(x*16u)))good=0;
+        }
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,level);CHECK(good,188);
+    }
+    ID3D11Texture2D_Release(staging);CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,&state)),189);
+    D3D11_SAMPLER_DESC sampler;ID3D11SamplerState_GetDesc(native.sampler,&sampler);
+    CHECK(sampler.Filter==D3D11_FILTER_MIN_MAG_MIP_LINEAR && sampler.MinLOD==0 && sampler.MaxLOD==2 && sampler.MipLODBias==-229.0f/256,190);
+    char source[4096];snprintf(source,sizeof(source),"%sTexture2D<float4> t:register(t0);SamplerState s:register(s0);"
+        "RWStructuredBuffer<float4> o:register(u0);[numthreads(1,1,1)]void main(){"
+        "o[0]=fut_mip_texture(t,s,float2(.5,.5),float2(exp2(1.5+229.0/256.0)/4,0),float2(0,0));}",fut_native_texture_hlsl());
+    ID3DBlob *blob=NULL;ID3D11ComputeShader *shader=NULL;
+    CHECK(SUCCEEDED(D3DCompile(source,strlen(source),"mip_probe",NULL,NULL,"main","cs_5_0",0,0,&blob,NULL)),191);
+    CHECK(SUCCEEDED(ID3D11Device_CreateComputeShader(device,ID3D10Blob_GetBufferPointer(blob),ID3D10Blob_GetBufferSize(blob),NULL,&shader)),192);
+    D3D11_BUFFER_DESC buffer={.ByteWidth=16,.Usage=D3D11_USAGE_DEFAULT,.BindFlags=D3D11_BIND_UNORDERED_ACCESS,
+        .MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED,.StructureByteStride=16};
+    ID3D11Buffer *output=NULL,*readback=NULL;ID3D11UnorderedAccessView *uav=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&buffer,NULL,&output)) && SUCCEEDED(ID3D11Device_CreateUnorderedAccessView(device,(ID3D11Resource*)output,NULL,&uav)),193);
+    buffer.Usage=D3D11_USAGE_STAGING;buffer.BindFlags=buffer.MiscFlags=buffer.StructureByteStride=0;buffer.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&buffer,NULL,&readback)),194);
+    ID3D11DeviceContext_CSSetShader(context,shader,NULL,0);ID3D11DeviceContext_CSSetShaderResources(context,0,1,&native.view);
+    ID3D11DeviceContext_CSSetSamplers(context,0,1,&native.sampler);ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&uav,NULL);
+    ID3D11DeviceContext_Dispatch(context,1,1,1);ID3D11DeviceContext_ClearState(context);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)readback,(ID3D11Resource*)output);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),195);
+    D3D11_MAPPED_SUBRESOURCE map;CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)readback,0,D3D11_MAP_READ,0,&map)),196);
+    float value[4];memcpy(value,map.pData,sizeof(value));ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
+    CHECK(fabsf(value[0]-191.5f/255)<.01f && fabsf(value[3]-1)<.0001f,197);
+    ID3D11Buffer_Release(readback);ID3D11Buffer_Release(output);ID3D11UnorderedAccessView_Release(uav);
+    ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);fut_native_texture_destroy(&native);return 0;
+}
 int main(void)
 {
     FutGraphicsKelvinState kelvin={0};FutGraphicsDmaView dma={0x80000000,0x4000};
@@ -371,7 +440,7 @@ int main(void)
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_INVALID_RANGE && sentinel.width==123,6);
     bad=*state;bad.format=0x1122A;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&plan)==FUT_TEXTURE_READY && plan.dma_context==2,7);
-    bad.format=0x10629;
+    bad.format=0x1062D;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED && sentinel.width==123,8);
     bad=*state;bad.format=0x11F29;bad.control1=8u<<16;
     CHECK(fut_graphics_texture_plan(&bad,&dma,&plan)==FUT_TEXTURE_READY && plan.bytes_per_pixel==1 &&
@@ -395,6 +464,7 @@ int main(void)
     CHECK(verify_bc1(device,context,&completion)==0,133);
     CHECK(verify_bc2(device,context,&completion)==0,174);
     CHECK(verify_p8(device,context,&completion)==0,151);
+    CHECK(verify_argb_mips(device,context,&completion)==0,198);
     FutNativeTexture native={0};
     FutGraphicsTexturePlan invalid=plan;invalid.span++;
     CHECK(fut_native_texture_upload(&native,device,&invalid,memory_read,&memory)==E_INVALIDARG && !memory.reads,15);

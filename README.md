@@ -52,9 +52,17 @@ logs/saves isolados no D:. O limite circular é de 2 MiB, com leituras de
 até 8 KiB por pacote. Capturas de recusa agora salvam um prefixo limitado e
 identificam explicitamente o que foi truncado, sem executar nem concluir
 comandos. A integração passou pelo clip `(0,59,639,359)` e pela validação de
-posições. A recusa seguinte é no armazenamento da textura `0x07730629`,
-offset `0x01476300`, com seus níveis e filtro originais. Esse é o próximo
-bloqueio; não houve substituição da textura nem conclusão simulada.
+posições. A textura `0x07730629` agora carrega os três mipmaps originais
+(128×128, 64×64 e 32×32; 86.016 bytes). Cada nível é convertido sem perdas do
+layout swizzled e enviado à GPU. O sampler traduz MIN6/MAG2 trilinear e bias
+assinado de 5.8 bits; a amostragem usa gradientes antes dos descartes. A
+precisão de LOD do NV2A permanece sem validação.
+
+A última integração comprovou upload e sampler dessa textura, mas o desenho
+continua recusado pela configuração AA2 com interpolação em perspectiva.
+Os valores observados são profundidade/leitura/escrita ativas, stencil
+inativo, superfície 640×480 e os mesmos controles de base. O próximo
+experimento implementa a interpolação em perspectiva sem fingir W=1.
 
 O teste focal na GPU conferiu scissor com viewport completo e preservação de
 cor/profundidade fora do clip. A conferência da matriz original confirmou os
@@ -71,8 +79,8 @@ não validam um controle físico.
 | --- | --- |
 | Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
 | Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | Streams, clip e execução dos vértices comprovados; textura `0x07730629` ainda bloqueia a rasterização. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual na textura `0x07730629`. |
+| Rendering | Streams, clip, vértices e mipmaps comprovados; AA2 em perspectiva ainda bloqueia a rasterização. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no desenho AA2 em perspectiva. |
 | Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução

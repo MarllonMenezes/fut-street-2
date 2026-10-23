@@ -15,7 +15,8 @@ typedef struct {
  * overlapping GPU render targets. Failure preserves the existing resources. */
 HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context);
-/* Matching point/linear MIN/MAG, one mip, wrap/mirror/clamp/border only.
+/* Matching point/linear MIN/MAG, one mip, wrap/mirror/clamp/border;
+ * captured swizzled ARGB8 also supports trilinear MIN6/MAG2 and signed5.8 bias.
  * Convolution (including the observed quincunx), signed channels, color key,
  * alpha kill and unsupported controls are explicitly refused, not approximated.
  * Failure preserves objects but sets sampling_ready=0: do not use old sampler. */
@@ -33,7 +34,9 @@ HRESULT fut_native_texture_zero_rgb_candidate(FutNativeTexture *native,
 HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *native,
     const FutGraphicsTextureState *state,int resolve_verified);
 void fut_native_texture_destroy(FutNativeTexture *native);
-/* Projected coordinates, level zero. Extent is dimensions for linear storage,
+/* Sampling helpers: projected level zero, or normalized explicit gradients
+ * for mip chains. Gradients must precede discards and use logical pixels.
+ * Extent is dimensions for linear storage,
  * or (1,1) for BC1/BC2/P8 normalized coordinates.
  * Only valid with an approved sampler; not an original fragment program. */
 const char *fut_native_texture_hlsl(void);

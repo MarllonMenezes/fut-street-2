@@ -107,9 +107,24 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
         n=snprintf(source+used,sizeof(source)-used,
             "input.col0=fut_sample_center(input.col0);input.col1=fut_sample_center(input.col1);"
             "input.t0=fut_sample_center(input.t0);input.t1=fut_sample_center(input.t1);"
-            "input.t2=fut_sample_center(input.t2);input.t3=fut_sample_center(input.t3);"
-            "if(!fut_sample_column(input.pos.x))discard;\n");
+            "input.t2=fut_sample_center(input.t2);input.t3=fut_sample_center(input.t3);\n");
         if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+        used+=n;
+    }
+    /* Derivatives precede all discards. The AA2 raster grid has two stored
+     * columns per logical pixel; restore logical-pixel gradients for LOD. */
+    for(unsigned stage=0;stage<4;++stage) if(((state->fragment.stage_program>>(stage*5))&31)==1 &&
+        textures[stage].plan.storage==5 && textures[stage].plan.mip_levels>1) {
+        n=snprintf(source+used,sizeof(source)-used,
+            "float2 mipUv%u=input.t%u.xy/input.t%u.w;"
+            "float2 mipDx%u=ddx(mipUv%u)*%u.0,mipDy%u=ddy(mipUv%u);\n",
+            stage,stage,stage,stage,stage,aa2?2u:1u,stage,stage);
+        if(n<0 || (size_t)n>=sizeof(source)-used)return E_OUTOFMEMORY;
+        used+=n;
+    }
+    if(aa2) {
+        n=snprintf(source+used,sizeof(source)-used,"if(!fut_sample_column(input.pos.x))discard;\n");
+        if(n<0 || (size_t)n>=sizeof(source)-used)return E_OUTOFMEMORY;
         used+=n;
     }
     n=snprintf(source+used,sizeof(source)-used,"if(!fut_window_visible(input.pos.xy))discard;\n");
@@ -139,7 +154,11 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
                     "float4 T%u=fut_quincunx_experiment(tex%u,input.t%u);\n",stage,stage,stage);
             } else {
                 if(!native->sampling_ready || !native->sampler) return E_NOTIMPL;
-                n=snprintf(source+used,sizeof(source)-used,
+                if(native->plan.storage==5 && native->plan.mip_levels>1)
+                    n=snprintf(source+used,sizeof(source)-used,
+                        "float4 T%u=fut_mip_texture(tex%u,samp%u,mipUv%u,mipDx%u,mipDy%u);\n",
+                        stage,stage,stage,stage,stage,stage);
+                else n=snprintf(source+used,sizeof(source)-used,
                     "float4 T%u=fut_linear_texture(tex%u,samp%u,input.t%u,float2(%u,%u));\n",
                     stage,stage,stage,stage,native->plan.storage?1:native->plan.width,
                     native->plan.storage?1:native->plan.height);

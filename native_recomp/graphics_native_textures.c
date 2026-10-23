@@ -10,9 +10,57 @@ void fut_native_texture_destroy(FutNativeTexture *native)
     if (native->texture) ID3D11Texture2D_Release(native->texture);
     memset(native, 0, sizeof(*native));
 }
+static HRESULT upload_argb_mips(FutNativeTexture *native,ID3D11Device *device,
+    const FutGraphicsTexturePlan *p,FutGraphicsMemoryRead read,void *context)
+{
+    if(!native || !device || !read || !p->width || !p->height || p->width>4096 || p->height>4096 ||
+        (p->width&(p->width-1)) || (p->height&(p->height-1)) || !p->mip_levels || p->mip_levels>13 ||
+        p->bytes_per_pixel!=4 || p->pitch!=p->width*4 || (p->dma_context!=1 && p->dma_context!=2) ||
+        (p->address&0xFC000003u)!=0x80000000u || p->span>0x84000000u-p->address) return E_INVALIDARG;
+    uint64_t span=0;unsigned largest=p->width>p->height?p->width:p->height;
+    if((largest>>(p->mip_levels-1))==0) return E_INVALIDARG;
+    for(unsigned level=0;level<p->mip_levels;++level) {
+        unsigned w=p->width>>level,h=p->height>>level;
+        span+=(uint64_t)(w?w:1u)*(h?h:1u)*4u;
+    }
+    if(span!=p->span) return E_INVALIDARG;
+    uint8_t *raw=HeapAlloc(GetProcessHeap(),0,p->span),*linear=HeapAlloc(GetProcessHeap(),0,p->span);
+    HRESULT hr=E_OUTOFMEMORY;FutNativeTexture next={0};
+    if(!raw || !linear) goto done;
+    hr=E_FAIL;if(!read(context,p->address,raw,p->span)) goto done;
+    D3D11_SUBRESOURCE_DATA initial[13]={0};size_t offset=0;
+    next.texel_and=UINT32_MAX;
+    for(unsigned level=0;level<p->mip_levels;++level) {
+        unsigned w=p->width>>level,h=p->height>>level;w=w?w:1u;h=h?h:1u;
+        initial[level].pSysMem=linear+offset;initial[level].SysMemPitch=w*4u;
+        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+            unsigned index=0,out_bit=1;
+            for(unsigned bit=1;bit<w || bit<h;bit<<=1) {
+                if(bit<w) {if(x&bit)index|=out_bit;out_bit<<=1;}
+                if(bit<h) {if(y&bit)index|=out_bit;out_bit<<=1;}
+            }
+            uint32_t pixel;memcpy(&pixel,raw+offset+index*4u,4);
+            memcpy(linear+offset+((size_t)y*w+x)*4u,&pixel,4);
+            next.texel_or|=pixel;next.texel_and&=pixel;
+        }
+        offset+=(size_t)w*h*4u;
+    }
+    D3D11_TEXTURE2D_DESC desc={0};desc.Width=p->width;desc.Height=p->height;
+    desc.MipLevels=p->mip_levels;desc.ArraySize=1;desc.SampleDesc.Count=1;
+    desc.Format=DXGI_FORMAT_B8G8R8A8_UNORM;desc.Usage=D3D11_USAGE_DEFAULT;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+    hr=ID3D11Device_CreateTexture2D(device,&desc,initial,&next.texture);
+    if(SUCCEEDED(hr))hr=ID3D11Device_CreateShaderResourceView(device,(ID3D11Resource*)next.texture,NULL,&next.view);
+    if(SUCCEEDED(hr)) {
+        next.plan=*p;next.valid=1;fut_native_texture_destroy(native);*native=next;memset(&next,0,sizeof(next));
+    }
+done:
+    if(raw)HeapFree(GetProcessHeap(),0,raw);if(linear)HeapFree(GetProcessHeap(),0,linear);
+    fut_native_texture_destroy(&next);return hr;
+}
 HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context)
 {
+    if(plan && plan->storage==5) return upload_argb_mips(native,device,plan,read,context);
     int bc1=plan && plan->storage==1;
     int p8=plan && plan->storage==2;
     int bc2=plan && plan->storage==3;
@@ -116,6 +164,7 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     if (!device || !state || !native->valid || (state->valid & 0x2C) != 0x2C) return E_INVALIDARG;
     unsigned min=(state->filter>>16)&255, mag=(state->filter>>24)&15;
     unsigned levels=(state->format>>16)&15;
+    int mipped=levels>0 && native->plan.storage==5 && native->plan.mip_levels==levels;
     /* A one-level texture cannot select between mip levels. MIN=3..6 therefore
      * reduces exactly to the corresponding within-level nearest/linear mode.
      * Never turn convolution MIN=7/MAG=4 into ordinary filtering. */
@@ -126,7 +175,12 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     if (!(state->control0 & 0x40000000u) || (state->control0 & ~0x4003FFC0u) ||
         /* The captured single-level A8 state sets reserved filter bit 13;
          * the NV2A LOD-bias mask excludes it, so it has no represented effect. */
-        (state->filter & ~0x0F3F2000u) || levels!=1 || !spatial_min ||
+        (state->filter & ~(mipped?0x0F3F3FFFu:0x0F3F2000u)) || (!mipped && levels!=1) || !spatial_min ||
+        (mipped && (state->control0!=0x4003FFC0u || min!=6 || mag!=2 ||
+            (state->format&~0x0FFF0003u)!=0x00000628u ||
+            (1u<<((state->format>>20)&15u))!=native->plan.width ||
+            (1u<<((state->format>>24)&15u))!=native->plan.height ||
+            (state->format&3u)!=native->plan.dma_context)) ||
         (mag!=1 && mag!=2) || mag!=spatial_min ||
         (state->address & ~0x00070707u)) return E_NOTIMPL;
     D3D11_SAMPLER_DESC desc = {0};
@@ -147,6 +201,11 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     desc.AddressU=addresses[0]; desc.AddressV=addresses[1]; desc.AddressW=addresses[2];
     desc.MaxAnisotropy=1; desc.ComparisonFunc=D3D11_COMPARISON_NEVER;
     desc.MinLOD=0; desc.MaxLOD=0;
+    if(mipped) {
+        unsigned bias=state->filter&0x1FFFu;
+        desc.MipLODBias=(float)((bias&0x1000u)?(int)bias-8192:(int)bias)/256.0f;
+        desc.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;desc.MaxLOD=(float)(levels-1u);
+    }
     desc.BorderColor[0]=((state->border_color>>16)&255)/255.0f;
     desc.BorderColor[1]=((state->border_color>>8)&255)/255.0f;
     desc.BorderColor[2]=(state->border_color&255)/255.0f;
@@ -185,7 +244,9 @@ const char *fut_native_texture_hlsl(void)
         "(t.Load(int3(x,y,0))+t.Load(int3(x1,y,0))+"
         "t.Load(int3(x,y1,0))+t.Load(int3(x1,y1,0)))*.125;\n}\n"
         "float4 fut_linear_texture(Texture2D<float4> t, SamplerState s, float4 p, float2 extent) {\n"
-        "return t.SampleLevel(s, (p.xy / p.w) / extent, 0.0);\n}\n";
+        "return t.SampleLevel(s, (p.xy / p.w) / extent, 0.0);\n}\n"
+        "float4 fut_mip_texture(Texture2D<float4> t,SamplerState s,float2 uv,float2 dx,float2 dy){"
+        "return t.SampleGrad(s,uv,dx,dy);}\n";
 }
 
 HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *n,
