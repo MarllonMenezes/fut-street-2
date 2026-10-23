@@ -72,10 +72,14 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
         !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 || a->input_mode!=1 || a->count<3 ||
         a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
-        formats[0]!=0x635u ||
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
-    for(unsigned slot=1;slot<16;++slot)
-        if(formats[slot]!=0x602u || (required&(1u<<slot) && attribute_valid[slot]!=15)) return 0;
+    const int float_streams=formats[0]==0xC32u;
+    if(!float_streams && formats[0]!=0x635u) return 0;
+    unsigned fetched=float_streams?3u:1u;
+    for(unsigned slot=1;slot<16;++slot) {
+        uint32_t expected=float_streams?(slot==1?0x822u:slot==2?0x440u:0xC02u):0x602u;
+        if(formats[slot]!=expected || (slot>=fetched && (required&(1u<<slot)) && attribute_valid[slot]!=15)) return 0;
+    }
     if((required&1u)==0) return 0;
     draw_count=(uint64_t)(a->count-2)*3;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY || draw_count%3) return 0;
@@ -85,20 +89,32 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         if(tri&1u) { order[0]=tri+1;order[1]=tri;order[2]=tri+2; }
         else { order[0]=tri;order[1]=tri+1;order[2]=tri+2; }
         for(unsigned corner=0;corner<3;++corner) {
-            unsigned dst=tri*3+corner;uint64_t rel=(uint64_t)offsets[0]+(uint64_t)a->indices[order[corner]]*6u;
-            uint8_t raw[6];
-            if(rel>view_a->size || view_a->size-rel<sizeof(raw) ||
-                rel>UINT32_MAX-view_a->guest_address ||
-                !read(ctx,view_a->guest_address+(uint32_t)rel,raw,sizeof(raw))) return 0;
+            unsigned dst=tri*3+corner;
             memcpy(next.vertices[dst],attributes,sizeof(next.vertices[dst]));
-            int16_t component[3];memcpy(component,raw,sizeof(component));
-            next.vertices[dst][0][0]=(float)component[0];
-            next.vertices[dst][0][1]=(float)component[1];
-            next.vertices[dst][0][2]=(float)component[2];
-            next.vertices[dst][0][3]=1.0f;
+            for(unsigned slot=0;slot<fetched;++slot) {
+                size_t stride=float_streams?(slot==0?12u:slot==1?8u:4u):6u;
+                uint64_t rel=(uint64_t)offsets[slot]+(uint64_t)a->indices[order[corner]]*stride;
+                uint8_t raw[12];
+                if(rel>view_a->size || view_a->size-rel<stride ||
+                    rel>UINT32_MAX-view_a->guest_address ||
+                    !read(ctx,view_a->guest_address+(uint32_t)rel,raw,stride)) return 0;
+                float *v=next.vertices[dst][slot];
+                v[0]=v[1]=v[2]=0.0f;v[3]=1.0f;
+                if(!float_streams) {
+                    int16_t component[3];memcpy(component,raw,sizeof(component));
+                    for(unsigned i=0;i<3;++i)v[i]=(float)component[i];
+                } else if(slot<2) memcpy(v,raw,stride);
+                else {
+                    uint32_t color;memcpy(&color,raw,sizeof(color));
+                    v[0]=(float)((color>>16)&255u)/255.0f;
+                    v[1]=(float)((color>>8)&255u)/255.0f;
+                    v[2]=(float)(color&255u)/255.0f;
+                    v[3]=(float)(color>>24)/255.0f;
+                }
+            }
             unsigned defined=0;
             for(unsigned slot=0;slot<16;++slot) if(attribute_valid[slot]==15) defined|=1u<<slot;
-            next.defined[dst]=(uint16_t)(defined|1u);
+            next.defined[dst]=(uint16_t)(defined|((1u<<fetched)-1u));
         }
     }
     next.count=(unsigned)draw_count;next.primitive=5;next.ready=1;next.input_kind=3;

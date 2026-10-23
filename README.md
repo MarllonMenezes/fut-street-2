@@ -27,10 +27,12 @@ original. Nenhuma fase ou resultado de gameplay foi forçado. A captura mostra
 o título “SELECT TEAM” e as bandeiras; textos e controles ainda estão
 incompletos, com “LOADING” no fundo.
 
-O host agora aceita o perfil exato de QUADS inline observado com os
-descritores de stride retidos, preservando o mesmo layout de posição, cor e
-UV. Perfis mistos continuam recusados. Os dois perfis passaram pela GPU nos
-testes focais, e a integração atravessou a recusa anterior.
+O host agora lê o perfil original de três streams: float3 no slot 0,
+float2 no slot 1 e ARGB8 no slot 2, com strides de 12/8/4 bytes. O fetch
+transacional preserva os slots usados pelo shader, os limites de memória e a
+ordem do triangle strip. Na integração, 22 índices produziram 60 vértices.
+Esse desenho ainda parou antes da GPU, no plano de superfície com clip
+deslocado; o fetch aprovado não comprova pixels desse novo perfil.
 
 Três callbacks originais ausentes, `0x000DDBE0`, `0x000F4520` e `0x00100160`, foram
 recuperados do XBE, traduzidos e incluídos no executável efetivamente usado.
@@ -44,13 +46,13 @@ indiretas mantêm o dispatcher e o diagnóstico de alvos ausentes.
 
 Os 31 testes da ferramenta de recuperação e os 45 gates existentes passaram.
 A última integração usou timeout de 300 segundos, entradas automatizadas e
-logs/saves isolados no D:. O orçamento do decoder circular passou de 64 KiB
-para 2 MiB, com leituras de até 8 KiB por pacote. O novo binário admitiu um
-lote circular de 2.066.876 bytes e parou na validação do descritor de vértice
-`0x00000C32`, método `0x1760`, antes de concluir a submissão. Uma volta menor
-concluiu com salto original e confirmação da GPU; a volta grande ainda não
-foi concluída. O próximo experimento confere os descritores e o fetch exigido
-por esse desenho, preservando os gates de shader, memória e profundidade.
+logs/saves isolados no D:. O limite circular é de 2 MiB, com leituras de
+até 8 KiB por pacote. Capturas de recusa agora salvam um prefixo limitado e
+identificam explicitamente o que foi truncado, sem executar nem concluir
+comandos. A execução passou pelo descritor `0x00000C32` e parou no plano
+`0x00001128`, com clip original em x=0, y=59, largura=639 e altura=359.
+O próximo experimento implementa esse clip sem deslocar os pixels nem
+alterar a superfície original.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
 de texturas, PCM e o bypass artificial de espera de efeitos continuam
@@ -61,8 +63,8 @@ não validam um controle físico.
 | --- | --- |
 | Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
 | Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | QUADS observado aceito e seleção de equipes parcialmente composta; cenário ainda pendente. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no descritor de vértice `0x00000C32`. |
+| Rendering | Fetch dos três streams comprovado; novo desenho bloqueado no clip da superfície. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no clip deslocado da superfície. |
 | Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução

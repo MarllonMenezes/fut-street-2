@@ -29,7 +29,8 @@ FutGraphicsKelvinStatus fut_graphics_kelvin_state(FutGraphicsKelvinState *state,
          * This records descriptors; fetch, conversion and drawing remain gated. */
         if (value != 0x2u && value != 0x22u && value != 0x32u && value != 0x40u &&
             value != 0x635u && value != 0x602u && value != 0x632u &&
-            value != 0x640u && value != 0x622u && value != 0x642u)
+            value != 0x640u && value != 0x622u && value != 0x642u &&
+            value != 0xC32u && value != 0x822u && value != 0x440u && value != 0xC02u)
             return FUT_KELVIN_REJECTED;
         unsigned slot = (method - 0x1760u) / 4u;
         state->vertex_array_format[slot] = value;

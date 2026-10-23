@@ -1772,16 +1772,17 @@ static void native_capture_queue_wrap(uint32_t start,uint32_t end,uint32_t curso
     const uint32_t bases[2]={cursor,start},limits[2]={end,submitted};
     const char *names[2]={"graphics-wrap-tail.bin","graphics-wrap-head.bin"};
     for(unsigned i=0;i<2;++i) {
-        size_t size=limits[i]-bases[i];
-        if(!size || size>sizeof(bytes) || !read_guest(bases[i],bytes,size)) {
+        size_t total_size=limits[i]-bases[i];
+        size_t size=total_size>sizeof(bytes)?sizeof(bytes):total_size;
+        if(!size || !read_guest(bases[i],bytes,size)) {
             fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] capture refused: part=%u bytes=%zu\n",i,size);
             continue;
         }
         FILE *file=fopen(names[i],"wb");
         if(!file) continue;
         size_t written=fwrite(bytes,1,size,file);int closed=fclose(file)==0;
-        fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] read-only non-atomic snapshot: part=%u base=%08X bytes=%zu saved=%d; no execution/completion\n",
-            i,bases[i],size,written==size && closed);
+        fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] read-only non-atomic snapshot: part=%u base=%08X bytes=%zu span=%zu prefix_only=%d saved=%d; no execution/completion\n",
+            i,bases[i],size,total_size,size<total_size,written==size && closed);
     }
 }
 

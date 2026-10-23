@@ -30,8 +30,42 @@ static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
 }
 static int check(int ok,int line){return ok?0:line;}
 #define CHECK(x) do { int e=check((x),__LINE__);if(e)return e; } while(0)
+static int test_float_streams(void)
+{
+    FutGraphicsVertexArray a={0};FutGraphicsImmediate out,before;
+    FutGraphicsDmaView view={0x1000,96},short_view={0x1000,95};
+    uint32_t formats[16],offsets[16]={0,48,80};float attrs[16][4]={0};uint8_t valid[16]={0};
+    const float positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
+    const float uv[4][2]={{0,0},{1,0},{1,1},{0,1}};
+    const uint32_t colors[4]={0x80402010,0xFF102030,0xFF405060,0xFF708090};
+    memcpy(memory,positions,sizeof(positions));memcpy(memory+48,uv,sizeof(uv));memcpy(memory+80,colors,sizeof(colors));
+    for(unsigned i=0;i<16;++i)formats[i]=i==0?0xC32:i==1?0x822:i==2?0x440:0xC02;
+    CHECK(fut_graphics_vertex_array_begin(&a,6));
+    CHECK(fut_graphics_vertex_array_indices(&a,0x10000) && fut_graphics_vertex_array_indices(&a,0x30002));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7));
+    const unsigned order[6]={0,1,2,2,1,3};
+    CHECK(out.count==6 && out.primitive==5 && out.ready);
+    for(unsigned i=0;i<6;++i) {
+        unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[0],positions[src],12) && v[0][3]==1);
+        CHECK(!memcmp(v[1],uv[src],8) && v[1][2]==0 && v[1][3]==1);
+        CHECK(v[2][0]==((colors[src]>>16)&255u)/255.0f && v[2][1]==((colors[src]>>8)&255u)/255.0f &&
+            v[2][2]==(colors[src]&255u)/255.0f && v[2][3]==(colors[src]>>24)/255.0f && out.defined[i]==7);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_view,&short_view,formats,offsets,attrs,valid,7) && !memcmp(&out,&before,sizeof(out)));
+    read_calls=0;fail_read_at=5;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7) && !memcmp(&out,&before,sizeof(out)));
+    fail_read_at=0;formats[2]=0x441;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7) && !memcmp(&out,&before,sizeof(out)));
+    formats[2]=0x440;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,15));
+    return 0;
+}
 int main(void)
 {
+    int float_error=test_float_streams();if(float_error)return float_error;
     FutGraphicsVertexArray a={0};FutGraphicsImmediate out={0},before;
     FutGraphicsDmaView va={0x1000,25},vb={0x1000,25},different={0x1000,23};
     uint32_t formats[16],offsets[16]={0};float attrs[16][4]={0};uint8_t valid[16]={0};

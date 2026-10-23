@@ -59,6 +59,11 @@ int main(void)
             captured_array_formats.vertex_array_format[i]!=captured_formats[i] ||
             captured_array_formats.vertex_array_format_valid!=(uint16_t)((1u<<(i+1))-1u)) return 70;
     FutGraphicsKelvinState captured_formats_before=captured_array_formats;
+    for(unsigned i=0;i<16;++i) {
+        uint32_t format=i==0?0xC32u:i==1?0x822u:i==2?0x440u:0xC02u;
+        if(fut_graphics_kelvin_state(&state,0x1760+i*4,format)!=FUT_KELVIN_APPLIED ||
+            state.vertex_array_format[i]!=format) return 72;
+    }
     const uint32_t captured_near_misses[]={0x631u,0x633u,0x641u,0x63Fu,0x621u,0x623u};
     for(unsigned i=0;i<sizeof(captured_near_misses)/sizeof(captured_near_misses[0]);++i)
         if(fut_graphics_kelvin_state(&captured_array_formats,0x1760,captured_near_misses[i])!=FUT_KELVIN_REJECTED ||
