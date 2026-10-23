@@ -34,7 +34,7 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
     CHECK(bound_surface==previous,45);ID3D11Buffer_Release(bound_surface);
     plan.samples=1;plan.width=64;
     const float points[3][4]={{-0.0624f,-0.0626f,0,1},{64,32,16777215,2},
-        {128.0624f,64.0626f,8388607.5f,0.5f}};
+        {128.0624f,64.0626f,8388607.5f,-0.5f}};
     for(unsigned i=0;i<3;++i) memcpy(batch.vertices[i][0],points[i],sizeof(points[i]));
     FutNativeImmediate native={0};
     CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)),33);
@@ -64,7 +64,7 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
         CHECK(fabsf((positions[i].clip[0]/p[3]+1)*32-x)<0.00002f &&
             fabsf((1-positions[i].clip[1]/p[3])*16-y)<0.00002f,38);
     }
-    CHECK(!fut_native_immediate_constant_coordinates(positions,3),53); /* W2/.5 outside specialization domain. */
+    CHECK(!fut_native_immediate_constant_coordinates(positions,3),53); /* W2/-.5 outside specialization domain. */
     FutNativePosition domain[3];memcpy(domain,positions,sizeof(domain));
     for(unsigned i=0;i<3;++i) domain[i].screen[3]=domain[i].clip[3]=1;
     CHECK(fut_native_immediate_constant_coordinates(domain,3)==15,54);
@@ -100,7 +100,7 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
     ID3D11DeviceContext_GSGetShader(context,&bound,NULL,NULL);
     CHECK(bound==occupied_gs,51);ID3D11GeometryShader_Release(bound);
     ID3D11DeviceContext_GSSetShader(context,NULL,NULL,0);ID3D11GeometryShader_Release(occupied_gs);
-    const float invalid_w[]={0,-1,0x1p-65f,0x1p65f,INFINITY,NAN};
+    const float invalid_w[]={0,-0.0f,0x1p-65f,0x1p65f,INFINITY,NAN};
     for(unsigned i=0;i<sizeof(invalid_w)/sizeof(invalid_w[0]);++i) {
         batch.vertices[0][0][3]=invalid_w[i];
         CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)),40);
@@ -205,6 +205,6 @@ int main(void)
     ID3D11GeometryShader_Release(stream);fut_native_immediate_destroy(&native);
     fut_native_constants_destroy(&constants);ID3D11VertexShader_Release(shader);ID3D10Blob_Release(bytecode);
     ID3D11DeviceContext_ClearState(context);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
-    puts("Translated VS: raw attributes/defaults, screen/clip viewport inverse, signed1/16 truncation, positiveW domain and bounded SO-only execution verified; no game frame");
+    puts("Translated VS: raw attributes/defaults, screen/clip viewport inverse, signed1/16 truncation, signedW domain and bounded SO-only execution verified; no game frame");
     return 0;
 }

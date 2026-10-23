@@ -31,8 +31,10 @@ O host agora lê o perfil original de três streams: float3 no slot 0,
 float2 no slot 1 e ARGB8 no slot 2, com strides de 12/8/4 bytes. O fetch
 transacional preserva os slots usados pelo shader, os limites de memória e a
 ordem do triangle strip. Na integração, 22 índices produziram 60 vértices.
-Esse desenho ainda parou antes da GPU, no plano de superfície com clip
-deslocado; o fetch aprovado não comprova pixels desse novo perfil.
+O clip deslocado agora preserva o backing 640×480 e usa scissor, sem mudar
+as coordenadas originais. O shader executou 96 vértices, incluindo W
+negativo legítimo da matriz original, preservado para o clipping homogêneo.
+O desenho ainda parou antes da rasterização; isso não comprova novos pixels.
 
 Três callbacks originais ausentes, `0x000DDBE0`, `0x000F4520` e `0x00100160`, foram
 recuperados do XBE, traduzidos e incluídos no executável efetivamente usado.
@@ -49,10 +51,16 @@ A última integração usou timeout de 300 segundos, entradas automatizadas e
 logs/saves isolados no D:. O limite circular é de 2 MiB, com leituras de
 até 8 KiB por pacote. Capturas de recusa agora salvam um prefixo limitado e
 identificam explicitamente o que foi truncado, sem executar nem concluir
-comandos. A execução passou pelo descritor `0x00000C32` e parou no plano
-`0x00001128`, com clip original em x=0, y=59, largura=639 e altura=359.
-O próximo experimento implementa esse clip sem deslocar os pixels nem
-alterar a superfície original.
+comandos. A integração passou pelo clip `(0,59,639,359)` e pela validação de
+posições. A recusa seguinte é no armazenamento da textura `0x07730629`,
+offset `0x01476300`, com seus níveis e filtro originais. Esse é o próximo
+bloqueio; não houve substituição da textura nem conclusão simulada.
+
+O teste focal na GPU conferiu scissor com viewport completo e preservação de
+cor/profundidade fora do clip. A conferência da matriz original confirmou os
+sinais de W dos vértices capturados. Zero, NaN e valores extremos continuam
+recusados; W negativo é entregue sem alteração ao clipping homogêneo do host.
+Clears parciais ainda são recusados, evitando limpar pixels fora do clip.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
 de texturas, PCM e o bypass artificial de espera de efeitos continuam
@@ -63,8 +71,8 @@ não validam um controle físico.
 | --- | --- |
 | Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
 | Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | Fetch dos três streams comprovado; novo desenho bloqueado no clip da superfície. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no clip deslocado da superfície. |
+| Rendering | Streams, clip e execução dos vértices comprovados; textura `0x07730629` ainda bloqueia a rasterização. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual na textura `0x07730629`. |
 | Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução

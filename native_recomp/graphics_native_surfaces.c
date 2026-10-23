@@ -209,6 +209,8 @@ HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *devic
     unsigned colors = flags & 0xF0, depth_flags = flags & 3;
     unsigned required = 12 | (colors ? 2 : 0) | (depth_flags ? 1 : 0);
     const FutGraphicsSurfacePlan *p = &native->plan;
+    if(p->clip_x || p->clip_y || (p->clip_width && p->clip_width!=p->logical_width) ||
+        (p->clip_height && p->clip_height!=p->logical_height)) return E_NOTIMPL;
     if ((state->clear_valid & required) != required || (state->control0 & 0x1000) ||
         (colors && colors != 0xF0) || state->clear_x != ((p->logical_width - 1) << 16) ||
         state->clear_y != ((p->logical_height - 1) << 16) ||

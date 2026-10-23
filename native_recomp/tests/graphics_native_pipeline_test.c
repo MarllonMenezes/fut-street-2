@@ -24,7 +24,7 @@ static int read_depth_words(ID3D11Device *device,ID3D11DeviceContext *context,Fu
     return 0;
 }
 static int verify(ID3D11Device *device, ID3D11DeviceContext *context, FutNativeConstants *completion,
-    ID3D11Texture2D *texture, int depth, int exclusive)
+    ID3D11Texture2D *texture, int depth, int exclusive, int clipped)
 {
     D3D11_TEXTURE2D_DESC desc; ID3D11Texture2D_GetDesc(texture, &desc);
     desc.Usage = D3D11_USAGE_STAGING; desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ; desc.BindFlags = 0;
@@ -41,6 +41,7 @@ static int verify(ID3D11Device *device, ID3D11DeviceContext *context, FutNativeC
         unsigned lx = x / 2, ly = y / 2;
         int selected = ly >= 1 && ly <= 2 && ((lx >= 1 && lx <= 2) || lx == 5);
         if (exclusive) selected = !selected;
+        if(clipped) selected=selected && lx>=2 && lx<6 && ly>=1 && ly<3;
         uint32_t word; memcpy(&word, (uint8_t *)mapped.pData+y*mapped.RowPitch+x*4, 4);
         if (depth) {
             uint32_t z = word & 0xFFFFFF, stencil = word >> 24;
@@ -142,9 +143,21 @@ int main(void)
         /* Equal depth must reject the second draw. Otherwise blending twice
          * visibly changes red/blue and the independently expected pixels. */
         ID3D11DeviceContext_Draw(context,3,0);
-        CHECK(verify(device,context,&completion,color,0,exclusive)==0,20);
-        CHECK(verify(device,context,&completion,depth,1,exclusive)==0,21);
+        CHECK(verify(device,context,&completion,color,0,exclusive,0)==0,20);
+        CHECK(verify(device,context,&completion,depth,1,exclusive,0)==0,21);
     }
+    surface.clip_x=2;surface.clip_y=1;surface.clip_width=4;surface.clip_height=2;
+    CHECK(fut_graphics_kelvin_state(&state,0x2B4,0)==FUT_KELVIN_APPLIED,48);
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),49);
+    viewport_count=1;UINT scissor_count=1;D3D11_VIEWPORT viewport;D3D11_RECT scissor;
+    ID3D11DeviceContext_RSGetViewports(context,&viewport_count,&viewport);
+    ID3D11DeviceContext_RSGetScissorRects(context,&scissor_count,&scissor);
+    CHECK(viewport.Width==16 && viewport.Height==8 && scissor.left==4 && scissor.top==2 && scissor.right==12 && scissor.bottom==6,50);
+    ID3D11DeviceContext_ClearRenderTargetView(context,rt,initial);
+    ID3D11DeviceContext_ClearDepthStencilView(context,dt,D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,1,0);
+    ID3D11DeviceContext_Draw(context,3,0);
+    CHECK(!verify(device,context,&completion,color,0,0,1) && !verify(device,context,&completion,depth,1,0,1),51);
+    surface.clip_x=surface.clip_y=surface.clip_width=surface.clip_height=0;
     /* A retained depth-write mask ofALL cannot enable disabled Z/stencil.
      * Compare every bit before/after a real synthetic Draw, not guessed clear
      * depth quantization. This is the D3D host side, not NV2A Zcull emulation. */

@@ -77,6 +77,17 @@ int main(void)
         plan.color_span == 112 && plan.depth_span == 120 && plan.color_address == 0x80001000 &&
         plan.depth_address == 0x80002000, 4);
     FutGraphicsSurfaceState bad = state;
+    bad.horizontal=(2u<<16)|1u;bad.vertical=(2u<<16)|1u;
+    FutGraphicsSurfacePlan clipped,clip_before={0};
+    CHECK(fut_graphics_surface_plan_clipped(&bad,&color,&depth,&plan,&clipped)==FUT_SURFACE_READY &&
+        clipped.width==8 && clipped.height==3 && clipped.color_address==plan.color_address &&
+        clipped.clip_x==1 && clipped.clip_y==1 && clipped.clip_width==2 && clipped.clip_height==2,25);
+    bad.vertical=(3u<<16)|1u;
+    CHECK(fut_graphics_surface_plan_clipped(&bad,&color,&depth,&plan,&clip_before)==FUT_SURFACE_INVALID_RANGE &&
+        !memcmp(&clip_before,&(FutGraphicsSurfacePlan){0},sizeof(clip_before)),26);
+    bad=state;bad.color_offset+=4;
+    CHECK(fut_graphics_surface_plan_clipped(&bad,&color,&depth,&plan,&clip_before)==FUT_SURFACE_UNSUPPORTED,27);
+    bad=state;
     bad.pitch = (44u<<16)|28;
     CHECK(fut_graphics_surface_plan(&bad, &color, &depth, &unchanged) == FUT_SURFACE_INVALID_RANGE &&
         !memcmp(&unchanged, &(FutGraphicsSurfacePlan){0}, sizeof(unchanged)), 5);

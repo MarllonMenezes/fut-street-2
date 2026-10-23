@@ -495,7 +495,12 @@ static int native_prepare_surfaces(NativeGraphicsState *state)
             state->bindings.references[0][6].words[1], state->bindings.references[0][6].words[2]);
         return 0;
     }
-    FutGraphicsSurfaceStatus status = fut_graphics_surface_plan(&state->surfaces, &color, &depth, &plan);
+    FutGraphicsSurfaceStatus status=FUT_SURFACE_UNSUPPORTED;
+    if(state->native_surfaces.valid)
+        status=fut_graphics_surface_plan_clipped(&state->surfaces,&color,&depth,
+            &state->native_surfaces.plan,&plan);
+    if(status!=FUT_SURFACE_READY)
+        status=fut_graphics_surface_plan(&state->surfaces,&color,&depth,&plan);
     if (status != FUT_SURFACE_READY || (state->kelvin.control0 & 0x1000u)) {
         fprintf(stderr, "[GRAPHICS] unsupported/invalid surface plan: status=%d format=%08X pitch=%08X control=%08X\n",
             status, state->surfaces.format, state->surfaces.pitch, state->kelvin.control0);
@@ -1264,7 +1269,17 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     hr=fut_native_immediate_probe_positions(&state->native_immediate,state->device,state->context,
         state->vertex_shader,state->vertex_bytecode,&state->native_constants,positions,FUT_IMMEDIATE_DRAW_CAPACITY,2000,backend_stop);
     if(FAILED(hr)) {
-        fprintf(stderr,"[GRAPHICS] vertex-only execution/readback failed: HRESULT=%08lX\n",hr);return 0;
+        fprintf(stderr,"[GRAPHICS] vertex-only execution/readback failed: HRESULT=%08lX\n",hr);
+        const char *capture=getenv("RECOMP_GRAPHICS_SNAPSHOT");
+        if(capture && !strcmp(capture,"1")) {
+            FILE *file=fopen("graphics-vertex-rejected-input.bin","wb");
+            if(file) {fwrite(state->immediate.vertices,sizeof(state->immediate.vertices[0]),state->immediate.count,file);fclose(file);}
+            file=fopen("graphics-vertex-rejected-program.bin","wb");
+            if(file) {fwrite(state->kelvin.program+first,sizeof(state->kelvin.program[0]),count,file);fclose(file);}
+            file=fopen("graphics-vertex-rejected-constants.bin","wb");
+            if(file) {fwrite(state->kelvin.constants,sizeof(state->kelvin.constants),1,file);fclose(file);}
+        }
+        return 0;
     }
     state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
     state->quincunx_coordinates=fut_native_immediate_quincunx_coordinates(positions,state->native_immediate.count);

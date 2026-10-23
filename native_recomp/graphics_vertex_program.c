@@ -124,7 +124,8 @@ static int generate(const uint32_t (*words)[4], size_t count,
     if(screen) {
         /* NV programmable outputs are already screen coordinates. D3D's
          * viewport flips Y and divides by W: invert both operations here.
-         * Only finite positive W in [2^-64,2^64] is admitted by the SO probe;
+         * Only finite W with magnitude in [2^-64,2^64] is admitted by the SO probe;
+         * preserve its sign for the host's homogeneous clipping.
          * exceptional/clamped W and MSAA sampling remain unsupported. */
         emit(&out,"float2 pixel=trunc(o[0].xy*16.0f)/16.0f;"
             "float2 ndc=(2.0f*pixel-vertexSurface.xy)/vertexSurface.xy;"

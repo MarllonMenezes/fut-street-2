@@ -42,6 +42,8 @@ FutGraphicsSurfaceStatus fut_graphics_surface_plan(const FutGraphicsSurfaceState
     result.width = result.logical_width * (aa ? 2 : 1);
     result.height = result.logical_height * (aa == 2 ? 2 : 1);
     result.samples = 1u << aa;
+    result.clip_width = result.logical_width;
+    result.clip_height = result.logical_height;
     result.color_pitch = state->pitch & 0xFFFF;
     result.depth_pitch = state->pitch >> 16;
     /* D3D11 texture dimension limit; bounds remain validated against DMA. */
@@ -56,6 +58,28 @@ FutGraphicsSurfaceStatus fut_graphics_surface_plan(const FutGraphicsSurfaceState
         return FUT_SURFACE_UNSUPPORTED; /* Aliased attachments require coherency handling. */
     *plan = result;
     return FUT_SURFACE_READY;
+}
+FutGraphicsSurfaceStatus fut_graphics_surface_plan_clipped(const FutGraphicsSurfaceState *state,
+    const FutGraphicsDmaView *color,const FutGraphicsDmaView *depth,
+    const FutGraphicsSurfacePlan *backing,FutGraphicsSurfacePlan *plan)
+{
+    if(!state || !backing || !plan || !backing->logical_width || !backing->logical_height ||
+        backing->logical_width>16384 || backing->logical_height>16384) return FUT_SURFACE_INVALID_RANGE;
+    uint32_t x=state->horizontal&0xFFFFu,y=state->vertical&0xFFFFu;
+    uint32_t w=state->horizontal>>16,h=state->vertical>>16;
+    if(!w || !h || x>backing->logical_width || w>backing->logical_width-x ||
+        y>backing->logical_height || h>backing->logical_height-y) return FUT_SURFACE_INVALID_RANGE;
+    FutGraphicsSurfaceState full=*state;
+    full.horizontal=backing->logical_width<<16;full.vertical=backing->logical_height<<16;
+    FutGraphicsSurfacePlan next;
+    FutGraphicsSurfaceStatus status=fut_graphics_surface_plan(&full,color,depth,&next);
+    if(status!=FUT_SURFACE_READY) return status;
+    FutGraphicsSurfacePlan expected=*backing;
+    expected.clip_x=expected.clip_y=0;
+    expected.clip_width=expected.logical_width;expected.clip_height=expected.logical_height;
+    if(memcmp(&next,&expected,sizeof(next))) return FUT_SURFACE_UNSUPPORTED;
+    next.clip_x=x;next.clip_y=y;next.clip_width=w;next.clip_height=h;
+    *plan=next;return FUT_SURFACE_READY;
 }
 uint32_t fut_graphics_depth_to_native(uint32_t guest) { return (guest >> 8) | (guest << 24); }
 uint32_t fut_graphics_depth_to_guest(uint32_t native) { return (native << 8) | (native >> 24); }

@@ -3,6 +3,8 @@
 #include "graphics_experiment.h"
 #include <string.h>
 #include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
 void fut_native_immediate_destroy(FutNativeImmediate *native)
 {
     if(native->buffer) ID3D11Buffer_Release(native->buffer);
@@ -96,9 +98,24 @@ HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
     hr=ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped);
     if(FAILED(hr)) goto done;
     const FutNativePosition *values=mapped.pData;
+    unsigned first_bad=UINT32_MAX;
     for(unsigned i=0;i<native->count;++i) {
-        for(unsigned c=0;c<4;++c) if(!isfinite(values[i].screen[c]) || !isfinite(values[i].clip[c])) hr=E_NOTIMPL;
-        if(values[i].screen[3]<0x1p-64f || values[i].screen[3]>0x1p64f) hr=E_NOTIMPL;
+        int invalid=0;
+        for(unsigned c=0;c<4;++c) if(!isfinite(values[i].screen[c]) || !isfinite(values[i].clip[c])) invalid=1;
+        float magnitude=fabsf(values[i].screen[3]);
+        if(magnitude<0x1p-64f || magnitude>0x1p64f) invalid=1;
+        if(invalid) {hr=E_NOTIMPL;if(first_bad==UINT32_MAX)first_bad=i;}
+    }
+    if(first_bad!=UINT32_MAX) {
+        uint32_t screen[4],clip[4];
+        memcpy(screen,values[first_bad].screen,sizeof(screen));memcpy(clip,values[first_bad].clip,sizeof(clip));
+        fprintf(stderr,"[GRAPHICS] vertex probe rejected index=%u screen_bits=%08X/%08X/%08X/%08X clip_bits=%08X/%08X/%08X/%08X; no rasterization\n",
+            first_bad,screen[0],screen[1],screen[2],screen[3],clip[0],clip[1],clip[2],clip[3]);
+        const char *capture=getenv("RECOMP_GRAPHICS_SNAPSHOT");
+        if(capture && !strcmp(capture,"1")) {
+            FILE *file=fopen("graphics-vertex-rejected-so.bin","wb");
+            if(file) {fwrite(values,sizeof(*values),native->count,file);fclose(file);}
+        }
     }
     if(SUCCEEDED(hr)) memcpy(positions,values,native->count*sizeof(*positions));
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);

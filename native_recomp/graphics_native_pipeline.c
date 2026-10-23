@@ -75,6 +75,13 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
         surface->width != surface->logical_width * (surface->samples > 1 ? 2u : 1u) ||
         surface->height != surface->logical_height * (surface->samples == 4 ? 2u : 1u)) return E_INVALIDARG;
     const FutGraphicsDrawState *s = &state->draw;
+    uint32_t clip_w=surface->clip_width,clip_h=surface->clip_height;
+    if(!clip_w && !clip_h && !surface->clip_x && !surface->clip_y) {
+        clip_w=surface->logical_width;clip_h=surface->logical_height;
+    }
+    if(!clip_w || !clip_h || surface->clip_x>surface->logical_width ||
+        clip_w>surface->logical_width-surface->clip_x || surface->clip_y>surface->logical_height ||
+        clip_h>surface->logical_height-surface->clip_y) return E_INVALIDARG;
     if (s->window_exclusive > 1 || state->depth_test > 1 || state->stencil_test > 1 ||
         s->blend_enable > 1 || s->cull_enable > 1 || s->depth_write > 1 || s->dither > 1 ||
         s->alpha_test > 1 || (s->alpha_test &&
@@ -157,7 +164,9 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
     ID3D11DeviceContext_OMSetDepthStencilState(context, next.depth, s->stencil_ref & 255);
     ID3D11DeviceContext_RSSetState(context, next.raster);
     D3D11_VIEWPORT viewport = {0,0,(float)surface->width,(float)surface->height,0,1};
-    D3D11_RECT scissor = {0,0,(LONG)surface->width,(LONG)surface->height};
+    unsigned sx=surface->samples>1?2u:1u,sy=surface->samples==4?2u:1u;
+    D3D11_RECT scissor = {(LONG)(surface->clip_x*sx),(LONG)(surface->clip_y*sy),
+        (LONG)((surface->clip_x+clip_w)*sx),(LONG)((surface->clip_y+clip_h)*sy)};
     ID3D11DeviceContext_RSSetViewports(context, 1, &viewport);
     ID3D11DeviceContext_RSSetScissorRects(context, 1, &scissor);
     ID3D11DeviceContext_PSSetConstantBuffers(context, 2, 1, &next.windows);

@@ -22,7 +22,8 @@ unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *posi
  * certificate for the authorized resolve experiment, NOT NV2A fidelity. */
 int fut_native_immediate_quincunx_coordinates(const FutNativePosition *positions,unsigned count);
 /* Execute VS only with SO_NO_RASTERIZED_STREAM, query, copy and validate.
- * Positive finite screen W [2^-64,2^64] only. No pixels, batch consumption,
+ * Finite signed screen W with magnitude [2^-64,2^64]; preserve its sign for
+ * homogeneous clipping. No pixels, batch consumption,
  * guest marker or original submission completion. Output unchanged on failure.
  * The renderer owns the context: preexisting GS/SO bindings are refused. */
 HRESULT fut_native_immediate_probe_positions(const FutNativeImmediate *native,
