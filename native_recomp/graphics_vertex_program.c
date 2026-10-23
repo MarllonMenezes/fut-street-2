@@ -32,8 +32,10 @@ static int source(char *text, size_t size, const uint32_t *w, unsigned operand)
     char base[48];
     if (mux == 1 && temp <= 12) snprintf(base, sizeof(base), temp == 12 ? "o[0]" : "r[%u]", temp);
     else if (mux == 2) snprintf(base, sizeof(base), "input.v%u", (w[1] >> 9) & 15);
-    else if (mux == 3 && ((w[1] >> 13) & 255) < 192 && !(w[3] & 2))
-        snprintf(base, sizeof(base), "c[%u]", (w[1] >> 13) & 255);
+    else if (mux == 3 && ((w[1] >> 13) & 255) < 192) {
+        if(w[3]&2) snprintf(base,sizeof(base),"fut_read_constant(a0+%u,constantFault)",(w[1]>>13)&255);
+        else snprintf(base,sizeof(base),"c[%u]",(w[1]>>13)&255);
+    }
     else return 0;
     int written = snprintf(text, size, "%s%s.%c%c%c%c", neg ? "-" : "", base,
         "xyzw"[swizzle[0]], "xyzw"[swizzle[1]], "xyzw"[swizzle[2]], "xyzw"[swizzle[3]]);
@@ -60,21 +62,27 @@ static int generate(const uint32_t (*words)[4], size_t count,
     emit(&out,FUT_VERTEX_RCC_HLSL);
     if(screen) emit(&out,"cbuffer VertexSurface:register(b3){float4 vertexSurface;};\n");
     if(screen==2) emit(&out,FUT_AA2_COVERAGE_HLSL);
-    emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\nstruct In{\n");
+    emit(&out, "cbuffer Constants:register(b1){float4 c[192];};\n"
+        "float4 fut_read_constant(int index,inout bool fault){"
+        "if(index<0 || index>=192){fault=true;return 0;}return c[index];}\n"
+        "float4 fut_lit(float4 v){float x=max(v.x,0.0f),y=max(v.y,0.0f);"
+        "float p=clamp(v.w,-127.99609375f,127.99609375f);float z=0;"
+        "if(x>0){if(p==0)z=1;else if(y==0)z=p>0?0:asfloat(0x7F800000u);"
+        "else z=exp2(p*log2(y));}return float4(1,x,z,1);}\nstruct In{\n");
     for (unsigned i = 0; i < 16; ++i) emit(&out, "float4 v%u:ATTR%u;\n", i, i);
     emit(&out, "};" FUT_GRAPHICS_VARYINGS_HLSL("Out")
-        "Out main(In input){float4 r[12];float4 o[16];"
+        "Out main(In input){float4 r[12];float4 o[16];int a0=0;bool constantFault=false;"
         "for(int z=0;z<12;++z)r[z]=0;for(int k=0;k<16;++k)o[k]=float4(0,0,0,1);\n");
     int ended = 0;
     for (size_t index = 0; index < count; ++index) {
         const uint32_t *w = words[index];
         unsigned mac = (w[1] >> 21) & 15, ilu = (w[1] >> 25) & 7;
-        /* Exercised programs use MOV/MUL/ADD/MAD/DP4 and MOV/RCP/RCC/EXP. Other ops
+        /* Exercised programs also require ARL/DP3/MAX and RSQ/LIT. Other ops
          * require implementations plus semantic tests before acceptance. */
-        if ((mac > 4 && mac != 7) || (ilu > 3 && ilu != 5)) return 0;
+        if ((mac > 4 && mac != 5 && mac != 7 && mac != 10 && mac != 13) || ilu == 6) return 0;
         char a[96] = "0", b[96] = "0", csrc[96] = "0";
         if ((mac && !source(a, sizeof(a), w, 0)) ||
-            ((mac == 2 || mac == 4 || mac == 7) && !source(b, sizeof(b), w, 1)) ||
+            ((mac == 2 || mac == 4 || mac == 5 || mac == 7 || mac == 10) && !source(b, sizeof(b), w, 1)) ||
             ((mac == 3 || mac == 4 || ilu) && !source(csrc, sizeof(csrc), w, 2))) return 0;
         emit(&out, "{float4 A=%s;float4 B=%s;float4 C=%s;float4 M=0;float4 I=0;\n", a, b, csrc);
         if (mac == 1) emit(&out, "M=A;\n");
@@ -83,6 +91,8 @@ static int generate(const uint32_t (*words)[4], size_t count,
         /* MAD composes the existing MUL/ADD translation, not a fused FMA.
          * Native float rounding retains the limitations of those operations. */
         if (mac == 4) emit(&out, "precise float4 product=A*B;precise float4 sum=product+C;M=sum;\n");
+        if (mac == 5) emit(&out, "M=dot(A.xyz,B.xyz).xxxx;\n");
+        if (mac == 10) emit(&out, "M=max(A,B);\n");
         if (mac == 7) emit(&out, "M=dot(A,B).xxxx;\n");
         if (ilu == 1) emit(&out, "I=C;\n");
         if (ilu == 2) emit(&out, "I=(1.0f/C.x).xxxx;\n");
@@ -91,6 +101,9 @@ static int generate(const uint32_t (*words)[4], size_t count,
          * a measurement of NV2A's hardware approximation. C is snapshotted
          * before paired MAC/ILU destination writes, as for the other ops. */
         if (ilu == 5) emit(&out, "float integral=floor(C.x);I=float4(exp2(integral),C.x-integral,exp2(C.x),1.0f);\n");
+        if (ilu == 4) emit(&out, "I=(C.x==0?asfloat(0x7F800000u):rsqrt(abs(C.x))).xxxx;\n");
+        if (ilu == 7) emit(&out, "I=fut_lit(C);\n");
+        if (mac == 13) emit(&out,"if(!isfinite(A.x) || abs(A.x)>65536.0f)constantFault=true;else a0=(int)floor(A.x);\n");
         unsigned temp = (w[3] >> 20) & 15;
         unsigned mac_mask = (w[3] >> 24) & 15, ilu_mask = (w[3] >> 16) & 15;
         if (ilu && temp == 1) mac_mask = 0;
@@ -99,6 +112,7 @@ static int generate(const uint32_t (*words)[4], size_t count,
         unsigned output_mask = (w[3] >> 12) & 15, output = (w[3] >> 3) & 15;
         if (output_mask && output == 0 &&
             ((mac && mac_mask && temp == 12) || (ilu && ilu_mask && !mac && temp == 12))) return 0;
+        if(mac==13 && (mac_mask || (output_mask && !(w[3]&4u)))) return 0;
         char destination[24];
         if (mac && mac_mask) {
             if (temp > 12) return 0;
@@ -122,6 +136,9 @@ static int generate(const uint32_t (*words)[4], size_t count,
         if (w[3] & 1) { ended = 1; break; }
     }
     if (!ended || out.failed) return 0;
+    /* Never allow an invalid indexed constant read to become a successful
+     * zero-valued draw: the mandatory native SO probe rejects this marker. */
+    emit(&out,"if(constantFault)o[0]=asfloat(0x7FC00000u).xxxx;\n");
     emit(&out, "Out result;result.pos=o[0];result.screen=o[0];result.col0=saturate(o[3]);result.col1=saturate(o[4]);"
         "result.fog=o[5].x;result.pts=o[6].x;result.back0=saturate(o[7]);result.back1=saturate(o[8]);"
         "result.t0=o[9];result.t1=o[10];result.t2=o[11];result.t3=o[12];\n");
@@ -168,7 +185,7 @@ int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16
     for(size_t index=0;index<count;++index) {
         const uint32_t *w=words[index];
         unsigned mac=(w[1]>>21)&15,ilu=(w[1]>>25)&7;
-        if((mac && ((w[2]>>26)&3)==2) || ((mac==2 || mac==4 || mac==7) && ((w[2]>>11)&3)==2) ||
+        if((mac && ((w[2]>>26)&3)==2) || ((mac==2 || mac==4 || mac==5 || mac==7 || mac==10) && ((w[2]>>11)&3)==2) ||
             ((mac==3 || mac==4 || ilu) && ((w[3]>>28)&3)==2)) found|=1u<<((w[1]>>9)&15);
         if(w[3]&1) break;
     }

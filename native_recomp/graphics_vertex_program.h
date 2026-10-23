@@ -6,7 +6,9 @@
  * clears mask. Conservative when only some swizzled components are used. */
 int fut_vertex_program_input_mask(const uint32_t (*words)[4],size_t count,uint16_t *mask);
 /* Recompile original instruction words to native HLSL. Unsupported operands,
- * constant writes, opcodes or incomplete programs fail instead of becoming NOPs. */
+ * constant writes, opcodes or incomplete programs fail instead of becoming NOPs.
+ * Relative reads are bounded to192 constants. An invalid runtime index or ARL
+ * value poisons position/screen for mandatory SO rejection before rasterization. */
 int fut_vertex_program_hlsl(const uint32_t (*words)[4], size_t count,
     char *text, size_t capacity, size_t *length);
 /* Raster-space variant: VS b3=float4(logicalWidth,logicalHeight,depthMax,0).

@@ -1912,10 +1912,27 @@ static DWORD WINAPI native_worker(void *unused)
             fail_backend("submission outside validated queue range");
         }
         int wrapped=submitted<cursor;
-        uint8_t bytes[65536];
+        uint8_t small_snapshot[65536];
+        uint8_t *bytes=small_snapshot;
         size_t size = wrapped?0:submitted-cursor;
-        if (!wrapped && (size > sizeof(bytes) || !read_guest(cursor, bytes, size)))
-            fail_backend("submission capture exceeds native decoder bounds");
+        if(!wrapped) {
+            if(size>FUT_GRAPHICS_WRAP_MAX_BYTES) {
+                fprintf(stderr,"[GRAPHICS] linear submission exceeds bounded capture: start=%08X end=%08X bytes=%zu limit=%u\n",
+                    cursor,submitted,size,FUT_GRAPHICS_WRAP_MAX_BYTES);
+                fail_backend("linear submission capture budget exceeded");
+            }
+            if(size>sizeof(small_snapshot)) {
+                bytes=HeapAlloc(GetProcessHeap(),0,size);
+                fprintf(stderr,"[GRAPHICS] bounded linear submission snapshot: start=%08X end=%08X bytes=%zu limit=%u\n",
+                    cursor,submitted,size,FUT_GRAPHICS_WRAP_MAX_BYTES);
+                if(!bytes) fail_backend("cannot allocate bounded submission snapshot");
+            }
+            if(!read_guest(cursor,bytes,size)) {
+                if(bytes!=small_snapshot)HeapFree(GetProcessHeap(),0,bytes);
+                fprintf(stderr,"[GRAPHICS] linear submission read failed: start=%08X end=%08X bytes=%zu\n",cursor,submitted,size);
+                fail_backend("cannot read validated linear submission");
+            }
+        }
         FutGraphicsDecodeResult decoded;
         NativeCommandRange range = {wrapped?ring_start:cursor,wrapped?ring_end-ring_start:size};
         size_t jump_offset=SIZE_MAX;
@@ -1934,7 +1951,10 @@ static DWORD WINAPI native_worker(void *unused)
         }
         if (!native_traced_finish(&state))
             fail_backend("native completion failed");
-        if(!wrapped) native_snapshot_command_changes(cursor,bytes,size);
+        if(!wrapped) {
+            native_snapshot_command_changes(cursor,bytes,size);
+            if(bytes!=small_snapshot)HeapFree(GetProcessHeap(),0,bytes);
+        }
         if (!write32(channel + 0x44u, put))
             fail_backend("native completion or submission cursor update failed");
         fprintf(stderr, "[GRAPHICS] submission completed: start=%08X end=%08X methods=%zu\n",
