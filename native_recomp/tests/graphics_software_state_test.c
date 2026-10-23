@@ -655,6 +655,25 @@ int main(void)
     kelvin.textures[0].offset+=16;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 131;
     kelvin=untextured;
+    kelvin.textures[0]=(FutGraphicsTextureState){.valid=0x3BF,.format=0x07730629,
+        .offset=0x01476300,.address=0x10101,.filter=0x02063F1B,.control0=0x4003FFC0,
+        .control1=0x14000000,.image_rect=0x050001E0};
+    kelvin.fragment.stage_program=1;
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 132;
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 133;
+    kelvin.textures[0].format=0x06510C29;
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 135;
+    _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 136;
+    kelvin.textures[0].format=0x07620C29;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 137;
+    kelvin.textures[0].format=0x07730629;
+    kelvin.textures[0].offset=0x04000000u-86016u+4u;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 134;
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");kelvin=untextured;
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 102;
     _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");

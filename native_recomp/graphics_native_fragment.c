@@ -99,11 +99,23 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
     int n=snprintf(source,sizeof(source),"%s%s%s%s"
         FUT_GRAPHICS_VARYINGS_HLSL("PSIn")
         "float4 main(PSIn input):SV_TARGET{\n",
-        aa2?FUT_AA2_COVERAGE_HLSL FUT_AA2_AFFINE_HLSL:"",
+        aa2==2?FUT_AA2_COVERAGE_HLSL FUT_AA2_PROJECTIVE_HLSL:
+            aa2?FUT_AA2_COVERAGE_HLSL FUT_AA2_AFFINE_HLSL:"",
         fut_native_window_hlsl(),fut_native_texture_hlsl(),math);
     if(n<0 || (size_t)n>=sizeof(source)) return E_OUTOFMEMORY;
     size_t used=n;unsigned candidates=0;
-    if(aa2) {
+    if(aa2==2) {
+        n=snprintf(source+used,sizeof(source)-used,
+            "float rhw=1.0/input.pos.w;"
+            "input.col0=fut_sample_center_projective(input.col0,rhw);"
+            "input.col1=fut_sample_center_projective(input.col1,rhw);"
+            "input.t0=fut_sample_center_projective(input.t0,rhw);"
+            "input.t1=fut_sample_center_projective(input.t1,rhw);"
+            "input.t2=fut_sample_center_projective(input.t2,rhw);"
+            "input.t3=fut_sample_center_projective(input.t3,rhw);\n");
+        if(n<0 || (size_t)n>=sizeof(source)-used)return E_OUTOFMEMORY;
+        used+=n;
+    } else if(aa2) {
         n=snprintf(source+used,sizeof(source)-used,
             "input.col0=fut_sample_center(input.col0);input.col1=fut_sample_center(input.col1);"
             "input.t0=fut_sample_center(input.t0);input.t1=fut_sample_center(input.t1);"
@@ -114,7 +126,7 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
     /* Derivatives precede all discards. The AA2 raster grid has two stored
      * columns per logical pixel; restore logical-pixel gradients for LOD. */
     for(unsigned stage=0;stage<4;++stage) if(((state->fragment.stage_program>>(stage*5))&31)==1 &&
-        textures[stage].plan.storage==5 && textures[stage].plan.mip_levels>1) {
+        textures[stage].plan.mip_levels>1) {
         n=snprintf(source+used,sizeof(source)-used,
             "float2 mipUv%u=input.t%u.xy/input.t%u.w;"
             "float2 mipDx%u=ddx(mipUv%u)*%u.0,mipDy%u=ddy(mipUv%u);\n",
@@ -154,7 +166,7 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
                     "float4 T%u=fut_quincunx_experiment(tex%u,input.t%u);\n",stage,stage,stage);
             } else {
                 if(!native->sampling_ready || !native->sampler) return E_NOTIMPL;
-                if(native->plan.storage==5 && native->plan.mip_levels>1)
+                if(native->plan.mip_levels>1)
                     n=snprintf(source+used,sizeof(source)-used,
                         "float4 T%u=fut_mip_texture(tex%u,samp%u,mipUv%u,mipDx%u,mipDy%u);\n",
                         stage,stage,stage,stage,stage,stage);
@@ -266,6 +278,15 @@ HRESULT fut_native_fragment_compile_aa2_affine_cached(ID3D11Device *device,
     *shader=NULL;*bytecode=NULL;if(cache_hit) *cache_hit=0;
     if(unit_w_verified!=1) return E_NOTIMPL;
     return compile_fragment(device,state,textures,shader,bytecode,1,cache,cache_hit);
+}
+HRESULT fut_native_fragment_compile_aa2_projective(ID3D11Device *device,
+    const FutGraphicsKelvinState *state,const FutNativeTexture textures[4],int coordinates_verified,
+    FutNativeFragmentCache *cache,ID3D11PixelShader **shader,ID3DBlob **bytecode,int *cache_hit)
+{
+    if(!shader || !bytecode)return E_INVALIDARG;
+    *shader=NULL;*bytecode=NULL;if(cache_hit)*cache_hit=0;
+    if(coordinates_verified!=1 || !fut_graphics_projective_aa2_approximation_enabled())return E_NOTIMPL;
+    return compile_fragment(device,state,textures,shader,bytecode,2,cache,cache_hit);
 }
 void fut_native_fragment_cache_destroy(FutNativeFragmentCache *cache)
 {

@@ -210,6 +210,8 @@ typedef struct {
     ULONGLONG scanout_idle_report;
     uint32_t deferred_scanout_notification;
     unsigned constant_coordinates;
+    unsigned projective_coordinates;
+    int aa2_projective;
     int quincunx_coordinates;
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
@@ -627,9 +629,9 @@ static int native_prepare_textures(NativeGraphicsState *state)
         fprintf(stderr,"[GRAPHICS] native texture uploaded: stage=%u size=%ux%u pitch=%u source=%08X OR=%08X AND=%08X; no sample/draw\n",
             stage,plan.width,plan.height,plan.pitch,plan.address,state->textures[stage].texel_or,state->textures[stage].texel_and);
         hr=fut_native_texture_sampler(&state->textures[stage],state->device,texture);
-        if(SUCCEEDED(hr) && plan.storage==5) fprintf(stderr,
-            "[GRAPHICS] ARGB8 mip chain uploaded: stage=%u levels=%u bytes=%u; native trilinear LOD/bias translation, NV2A precision unverified NOT_READY\n",
-            stage,plan.mip_levels,plan.span);
+        if(SUCCEEDED(hr) && plan.mip_levels>1) fprintf(stderr,
+            "[GRAPHICS] native mip chain uploaded: stage=%u storage=%u levels=%u bytes=%u; trilinear LOD/bias translation, NV2A precision unverified NOT_READY\n",
+            stage,plan.storage,plan.mip_levels,plan.span);
         if(FAILED(hr) && state->immediate.ready && !state->immediate.active &&
             (state->constant_coordinates&(1u<<stage)))
             hr=fut_native_texture_zero_rgb_candidate(&state->textures[stage],texture,1);
@@ -1023,7 +1025,10 @@ static void native_graphics_stage_timing_end(uint64_t started,const char *phase,
 
 static int native_prepare_aa2_programs(NativeGraphicsState *state)
 {
-    if(!state->constant_coordinates) return 0;
+    int projective=!state->constant_coordinates && (state->projective_coordinates&1u) &&
+        fut_graphics_projective_aa2_approximation_enabled();
+    if(!state->constant_coordinates && !projective) return 0;
+    state->aa2_projective=projective;
     unsigned first=state->kelvin.program_start,count=0;
     while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
         ++count;if(state->kelvin.program[first+count-1][3]&1u) break;
@@ -1046,7 +1051,11 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
     if(SUCCEEDED(hr)) {
         stage_started=timing?native_graphics_stage_timing_begin():0;
         int fragment_cache_hit=0;
-        if(native_fragment_cache_enabled())
+        if(projective)
+            hr=fut_native_fragment_compile_aa2_projective(state->device,&state->kelvin,
+                state->textures,1,native_fragment_cache_enabled()?&state->fragment_cache:NULL,
+                &ps,&pblob,&fragment_cache_hit);
+        else if(native_fragment_cache_enabled())
             hr=fut_native_fragment_compile_aa2_affine_cached(state->device,&state->kelvin,
                 state->textures,1,&state->fragment_cache,&ps,&pblob,&fragment_cache_hit);
         else
@@ -1100,6 +1109,10 @@ static int native_prepare_draw(NativeGraphicsState *state)
     int software_ready=aa2?
         fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
         fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan);
+    int projective_format=state->kelvin.textures[0].format==0x07730629u ||
+        state->kelvin.textures[0].format==0x06510C29u || state->kelvin.textures[0].format==0x07620C29u;
+    if(aa2 && projective_format && state->surfaces.format!=0x1128u)
+        software_ready=0;
     if(aa2 && (state->kelvin.textures[0].format==0x09A10E29u ||
         (fut_graphics_bc2_aa2_family_approximation_enabled() &&
          (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u)) &&
@@ -1147,6 +1160,10 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x09910C29u &&
         fut_graphics_dxt1_noise_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
+    if(aa2 && projective_format)
+        fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_AA2_APPROXIMATION: rational pixel-center interpolation, original signed W and mip chain, logical-pixel gradients; NV2A precision/AA2 fidelity unverified NOT_READY\n",stderr);
+    if(aa2 && projective_format && (state->kelvin.textures[0].format&0xFF00u)==0x0C00u)
+        fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_BC1_NOISE_APPROXIMATION: standard BC1 bytes/mips, unknown NV2A noise omitted; scoped projective experiment NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x05510B29u &&
         fut_graphics_p8_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_P8_AA2_APPROXIMATION: lossless palette expansion, existing AA2 baseline approximation; exact 32x32/640x480 scope; NOT_READY\n",stderr);
@@ -1240,6 +1257,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
 static int native_prepare_immediate(NativeGraphicsState *state)
 {
     state->constant_coordinates=0;
+    state->projective_coordinates=0;state->aa2_projective=0;
     state->quincunx_coordinates=0;
     if(!native_prepare_surfaces(state)) return 0;
     HRESULT hr=fut_native_vertex_surface_prepare(&state->vertex_surface,state->device,state->context,
@@ -1285,6 +1303,7 @@ static int native_prepare_immediate(NativeGraphicsState *state)
         return 0;
     }
     state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
+    state->projective_coordinates=fut_native_immediate_projective_coordinates(positions,state->native_immediate.count);
     state->quincunx_coordinates=fut_native_immediate_quincunx_coordinates(positions,state->native_immediate.count);
     fprintf(stderr,"[GRAPHICS] original vertex program executed with no rasterized stream: vertices=%u; no pixels/submission completion\n",
         state->native_immediate.count);
@@ -1524,7 +1543,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,state->immediate.count);
             if(!native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
             unsigned drawn=state->immediate.count;HRESULT hr;
-            if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
+            if(state->native_surfaces.plan.samples==2 && state->aa2_projective)
+                hr=fut_native_draw_immediate_aa2_projective(&state->native_immediate,&state->immediate,
+                    &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                    state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
+                    &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,(state->projective_coordinates&1u)!=0);
+            else if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
                 &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
                 state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
                 &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,state->constant_coordinates!=0);

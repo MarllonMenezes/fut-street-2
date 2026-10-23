@@ -16,74 +16,54 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 23 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** O executável nativo
-atravessou a navegação original por Start, “PICK SIDES”, seleção de lado,
-Ready e “SELECT TEAM”, com Brasil e Inglaterra. As confirmações seguintes
-iniciaram o carregamento de recursos. Cenário, partida, controle físico e
-1920×1080 continuam sem comprovação.
+**NOT_READY — ainda não é um jogo recompilado jogável.** A lógica original
+recompilada atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, com Brasil
+e Inglaterra, e iniciou o carregamento seguinte. Cenário jogável, partida,
+controle físico e 1920×1080 ainda não foram comprovados.
 
-As entradas passam pelo SDK, pelo buffer de controle e pelo interpretador
-original. Nenhuma fase ou resultado de gameplay foi forçado. A captura mostra
-o título “SELECT TEAM” e as bandeiras; textos e controles ainda estão
-incompletos, com “LOADING” no fundo.
+O caminho projetivo concluiu um desenho original na GPU: **96 vértices,
+192 entradas nas duas passagens AA2 e 245.101 invocações de pixel shader**,
+seguidas de gravação nas superfícies do jogo. Isso comprova o lote
+rasterizado; o frame novo completo ainda não foi apresentado.
 
-O host agora lê o perfil original de três streams: float3 no slot 0,
-float2 no slot 1 e ARGB8 no slot 2, com strides de 12/8/4 bytes. O fetch
-transacional preserva os slots usados pelo shader, os limites de memória e a
-ordem do triangle strip. Na integração, 22 índices produziram 60 vértices.
-O clip deslocado agora preserva o backing 640×480 e usa scissor, sem mudar
-as coordenadas originais. O shader executou 96 vértices, incluindo W
-negativo legítimo da matriz original, preservado para o clipping homogêneo.
-O desenho ainda parou antes da rasterização; isso não comprova novos pixels.
+O host preserva os streams float3/float2/ARGB8 nos slots originais 0/1/2,
+o backing 640×480, o clip deslocado via scissor e os valores assinados de W.
+A interpolação em perspectiva usa um experimento separado, desligado por
+padrão. Os mipmaps ARGB8 e BC1 são carregados integralmente; o sampler traduz
+trilinear e bias assinado, com gradientes calculados antes dos descartes.
+O ruído BC1 desconhecido é omitido somente com as opções experimentais.
+Precisão, interpolação e AA2 do NV2A permanecem sem medição de fidelidade.
 
-Três callbacks originais ausentes, `0x000DDBE0`, `0x000F4520` e `0x00100160`, foram
-recuperados do XBE, traduzidos e incluídos no executável efetivamente usado.
-Referências literais, limites e destinos foram conferidos; a geração
-preservou os 72 arquivos C anteriores. Validações isoladas conferiram pilha,
-argumentos e memória. Os três executaram no jogo; para `0x000F4520`, a execução
-nativa observou o retorno antecipado, enquanto os caminhos de alocação foram
-validados com os callees isolados. `0x00100160` executou repetidamente no
-jogo, inclusive pelo caminho aleatório, e retornou. Suas duas chamadas
-indiretas mantêm o dispatcher e o diagnóstico de alvos ausentes.
+**Bloqueio atual:** o material seguinte usa BC3 `0x09A30F29`, 1024×512 com
+três mips, ainda recusado. O próximo incremento implementa esse armazenamento
+com os dados originais. Não houve substituição de textura ou conclusão falsa.
 
-Os 31 testes da ferramenta de recuperação e os 45 gates existentes passaram.
-A última integração usou timeout de 300 segundos, entradas automatizadas e
-logs/saves isolados no D:. O limite circular é de 2 MiB, com leituras de
-até 8 KiB por pacote. Capturas de recusa agora salvam um prefixo limitado e
-identificam explicitamente o que foi truncado, sem executar nem concluir
-comandos. A integração passou pelo clip `(0,59,639,359)` e pela validação de
-posições. A textura `0x07730629` agora carrega os três mipmaps originais
-(128×128, 64×64 e 32×32; 86.016 bytes). Cada nível é convertido sem perdas do
-layout swizzled e enviado à GPU. O sampler traduz MIN6/MAG2 trilinear e bias
-assinado de 5.8 bits; a amostragem usa gradientes antes dos descartes. A
-precisão de LOD do NV2A permanece sem validação.
+Os testes focais na GPU conferiram interpolação afim e em perspectiva contra
+referências independentes, cobertura, scissor, preservação dos pixels externos
+e mipmaps. Os 45 gates obrigatórios passaram. A integração nativa usou timeout
+de 300 segundos e logs/saves isolados no D:, encerrando no bloqueio BC3.
+Clears parciais ainda são recusados; zero, NaN e W extremos continuam protegidos.
 
-A última integração comprovou upload e sampler dessa textura, mas o desenho
-continua recusado pela configuração AA2 com interpolação em perspectiva.
-Os valores observados são profundidade/leitura/escrita ativas, stencil
-inativo, superfície 640×480 e os mesmos controles de base. O próximo
-experimento implementa a interpolação em perspectiva sem fingir W=1.
-
-O teste focal na GPU conferiu scissor com viewport completo e preservação de
-cor/profundidade fora do clip. A conferência da matriz original confirmou os
-sinais de W dos vértices capturados. Zero, NaN e valores extremos continuam
-recusados; W negativo é entregue sem alteração ao clipping homogêneo do host.
-Clears parciais ainda são recusados, evitando limpar pixels fora do clip.
-
-ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
-de texturas, PCM e o bypass artificial de espera de efeitos continuam
-experimentais, sem alegação de fidelidade NV2A ou DSP. Entradas sintéticas
-não validam um controle físico.
+ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações de
+texturas, PCM e bypass artificial de espera de efeitos continuam experimentais,
+sem alegação de fidelidade NV2A ou DSP. Gameplay e navegação não foram forçados.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
-| Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | Streams, clip, vértices e mipmaps comprovados; AA2 em perspectiva ainda bloqueia a rasterização. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no desenho AA2 em perspectiva. |
-| Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
+| Compilação | Executável nativo atualizado; 45 gates aprovados. |
+| Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
+| Rendering | Lote projetivo rasterizado e gravado na superfície; BC3 seguinte bloqueia o frame completo. |
+| Gameplay | Cenário jogável e partida curta ainda não comprovados. |
+| Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
 
 ### Opções de diagnóstico e reprodução
+
+`-ProjectiveAa2Approximation`, junto de `-Aa2Approximation`, habilita o
+experimento de interpolação em perspectiva. É desligado por padrão e exige
+prova separada das coordenadas; o caminho afim continua exigindo W=1.
+Os casos BC1 observados também exigem `-Dxt1NoiseApproximation`: o ruído
+NV2A desconhecido continua omitido e identificado. Mipmaps são carregados
+integralmente, sem substituir a textura pelo nível zero.
 
 A ponte de entrada exige `FUT_STREET2_NATIVE_INPUT_HOOK=ON` na build e
 `-NativeGamepadInput` no runner. É desligada por padrão. O provedor físico usa

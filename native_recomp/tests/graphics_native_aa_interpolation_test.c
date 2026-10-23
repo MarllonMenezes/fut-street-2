@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <string.h>
+#include <stdlib.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"AA interpolation failure %u\n",n);return n;}}while(0)
 int main(void)
 {
@@ -59,6 +60,9 @@ int main(void)
         CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,&initial,&passes[slot])),11);
     }
     FutNativeTexture textures[4]={0};
+    for(unsigned projective=0;projective<2;++projective) {
+    for(unsigned i=0;i<3;++i)batch.vertices[i][0][3]=projective?(float)(1u<<i):1.0f;
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&immediate,device,context,vblob,&batch,0x209)),19);
     for(unsigned texture=0;texture<2;++texture) {
         const uint32_t commands[][2]={{0x1E60,1},{0x1E70,texture?4:0},
             {0x260,texture?0x18200000:0x14200000},{0xAC0,texture?0x08200000:0x04200000},
@@ -68,7 +72,12 @@ int main(void)
             CHECK(fut_graphics_fragment_state(&state.fragment,commands[i][0],commands[i][1])==FUT_FRAGMENT_APPLIED,12);
         ID3D11PixelShader *ps=NULL;ID3DBlob *pblob=NULL;
         CHECK(fut_native_fragment_compile_aa2_affine(device,&state,textures,0,&ps,&pblob)==E_NOTIMPL && !ps && !pblob,13);
-        CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_affine(device,&state,textures,1,&ps,&pblob)),14);
+        if(projective) {
+            _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
+            CHECK(fut_native_fragment_compile_aa2_projective(device,&state,textures,1,NULL,&ps,&pblob,NULL)==E_NOTIMPL && !ps && !pblob,20);
+            _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
+            CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_projective(device,&state,textures,1,NULL,&ps,&pblob,NULL)),21);
+        } else CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_affine(device,&state,textures,1,&ps,&pblob)),14);
         CHECK(SUCCEEDED(fut_native_fragment_linkage(vblob,pblob)),15);
         const float clear[4]={-1,-1,-1,-1};ID3D11DeviceContext_ClearRenderTargetView(context,view,clear);
         ID3D11DeviceContext_OMSetRenderTargets(context,1,&view,NULL);
@@ -85,6 +94,10 @@ int main(void)
         for(unsigned y=0;y<8;++y) for(unsigned x=0;x<16;++x) {
             unsigned logical=x/2,covered=logical+y+(x&1)<8;
             float expected[4]={(logical+.5f)/8,(y+.5f)/8,texture?.75f:.25f,texture?1:.75f};
+            if(projective) {
+                float l1=expected[0],l2=expected[1],denominator=1-l1-l2+l1/2+l2/4;
+                expected[0]=(l1/2)/denominator;expected[1]=(l2/4)/denominator;
+            }
             const float *actual=(const float*)((const unsigned char*)mapped.pData+y*mapped.RowPitch)+x*4;
             for(unsigned c=0;c<4;++c) if(!isfinite(actual[c]) || fabsf(actual[c]-(covered?expected[c]:-1))>.00001f) {
                 fprintf(stderr,"AA texture=%u stored=%u,%u channel=%u got=%g expected=%g covered=%u\n",texture,x,y,c,actual[c],covered?expected[c]:-1,covered);
@@ -94,12 +107,14 @@ int main(void)
         ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
         ID3D11PixelShader_Release(ps);ID3D10Blob_Release(pblob);
     }
+    }
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
     ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
     fut_native_immediate_destroy(&immediate);fut_native_vertex_surface_destroy(&vertex_surface);
     fut_native_constants_destroy(&completion);ID3D11Buffer_Release(passes[0]);ID3D11Buffer_Release(passes[1]);
     ID3D11RenderTargetView_Release(view);ID3D11Texture2D_Release(target);ID3D11Texture2D_Release(readback);
     ID3D11VertexShader_Release(vs);ID3D10Blob_Release(vblob);
     ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
-    puts("AA2 translated VS/PS: center-interpolated color and texture gradients, corner-only edge coverage and untouched outside pixels verified; synthetic W=1 model only");
+    puts("AA2 translated VS/PS: affine and rational projective pixel-center color/UV, coverage, untouched outside pixels and projective opt-in verified; synthetic host model");
     return 0;
 }

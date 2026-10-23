@@ -16,7 +16,7 @@ typedef struct {
 HRESULT fut_native_texture_upload(FutNativeTexture *native, ID3D11Device *device,
     const FutGraphicsTexturePlan *plan, FutGraphicsMemoryRead read, void *context);
 /* Matching point/linear MIN/MAG, one mip, wrap/mirror/clamp/border;
- * captured swizzled ARGB8 also supports trilinear MIN6/MAG2 and signed5.8 bias.
+ * BC1/ARGB8 chains support trilinear MIN6/MAG2 and signed5.8 bias.
  * Convolution (including the observed quincunx), signed channels, color key,
  * alpha kill and unsupported controls are explicitly refused, not approximated.
  * Failure preserves objects but sets sampling_ready=0: do not use old sampler. */

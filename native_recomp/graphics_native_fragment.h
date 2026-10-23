@@ -43,4 +43,8 @@ HRESULT fut_native_fragment_compile_aa2_affine_cached(ID3D11Device *device,
     const FutGraphicsKelvinState *state,const FutNativeTexture textures[4],int unit_w_verified,
     FutNativeFragmentCache *cache,ID3D11PixelShader **shader,ID3DBlob **bytecode,int *cache_hit);
 void fut_native_fragment_cache_destroy(FutNativeFragmentCache *cache);
+/* Explicit opt-in and separate projective coordinate proof. Cache may be NULL. */
+HRESULT fut_native_fragment_compile_aa2_projective(ID3D11Device *device,
+    const FutGraphicsKelvinState *state,const FutNativeTexture textures[4],int coordinates_verified,
+    FutNativeFragmentCache *cache,ID3D11PixelShader **shader,ID3DBlob **bytecode,int *cache_hit);
 #endif

@@ -34,4 +34,11 @@ HRESULT fut_native_draw_immediate_aa2_lines(FutNativeImmediate *native,FutGraphi
     ID3D11Device *device,ID3D11DeviceContext *context,
     ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
     FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int unit_w_verified);
+/* Separate from the unit-W path; requires projective PS and explicit opt-in. */
+HRESULT fut_native_draw_immediate_aa2_projective(FutNativeImmediate *native,FutGraphicsImmediate *batch,
+    FutNativeSurfaces *surfaces,FutNativePipeline *pipeline,
+    const FutGraphicsKelvinState *state,const FutGraphicsSoftwareState *software,
+    ID3D11Device *device,ID3D11DeviceContext *context,
+    ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
+    FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int coordinates_verified);
 #endif

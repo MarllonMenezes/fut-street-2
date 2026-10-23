@@ -2,6 +2,12 @@
 #define FUT_GRAPHICS_EXPERIMENT_H
 #include <stdlib.h>
 #include <string.h>
+/* Observed projective ARGB8 mip draw; separate from unit-W AA2 interpolation. */
+static inline int fut_graphics_projective_aa2_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_PROJECTIVE_AA2_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 /* Captured untextured AA2 draw after the intro; retained descriptors are
  * not sampled. Separate opt-in from BC2 decoding and from the AA2 model. */
 static inline int fut_graphics_untextured_aa2_approximation_enabled(void)

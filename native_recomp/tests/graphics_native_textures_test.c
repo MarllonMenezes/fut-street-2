@@ -197,6 +197,7 @@ static int verify_bc1(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     unsigned reads=memory.reads;
     CHECK(fut_native_texture_upload(&native,device,&invalid,memory_read,&memory)==E_INVALIDARG &&
         native.texture==old && memory.reads==reads,124);
+    state.filter=0x02063F1B; /* Bias cannot change a one-mip result with LOD clamped to0. */
     CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,&state)),125);
     char source[4096];snprintf(source,sizeof(source),"%s\nTexture2D<float4> t:register(t0);"
         "SamplerState s:register(s0);RWStructuredBuffer<float4> o:register(u0);"
@@ -228,7 +229,23 @@ static int verify_bc1(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
     ID3D11Buffer_Release(staging);ID3D11Buffer_Release(output);ID3D11UnorderedAccessView_Release(uav);
     ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);fut_native_texture_destroy(&native);
-    CHECK(good,132);return 0;
+    CHECK(good,132);
+    state.format=0x03320C29;dma.size=0x1028;
+    uint16_t white=0xFFFF;memcpy(memory.bytes+32,&white,2);
+    CHECK(fut_graphics_texture_plan(&state,&dma,&plan)==FUT_TEXTURE_READY && plan.span==40 && plan.mip_levels==2,199);
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,memory_read,&memory)),200);
+    D3D11_TEXTURE2D_DESC mip_desc;ID3D11Texture2D_GetDesc(native.texture,&mip_desc);
+    CHECK(mip_desc.MipLevels==2 && mip_desc.Format==DXGI_FORMAT_BC1_UNORM,201);
+    mip_desc.Usage=D3D11_USAGE_STAGING;mip_desc.BindFlags=0;mip_desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    ID3D11Texture2D *mip_readback=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&mip_desc,NULL,&mip_readback)),202);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)mip_readback,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),203);
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)mip_readback,1,D3D11_MAP_READ,0,&mapped)),204);
+    good=!memcmp(mapped.pData,memory.bytes+32,8);
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)mip_readback,1);ID3D11Texture2D_Release(mip_readback);
+    CHECK(good && SUCCEEDED(fut_native_texture_sampler(&native,device,&state)),205);
+    fut_native_texture_destroy(&native);return 0;
 }
 static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
 {

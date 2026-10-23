@@ -50,13 +50,18 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
         next.palette_address=dma->guest_address+palette_offset;
         *plan=next;return FUT_TEXTURE_READY;
     }
-    if ((state->format & ~0x0FF00003u) == 0x00010C28u) {
+    if ((state->format & ~0x0FFF0003u) == 0x00000C28u) {
         unsigned u=(state->format>>20)&15u,v=(state->format>>24)&15u;
-        if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12)
+        unsigned levels=(state->format>>16)&15u,largest=u>v?u:v;
+        if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12 || !levels || levels>largest+1)
             return FUT_TEXTURE_UNSUPPORTED;
         FutGraphicsTexturePlan next={0};
         next.width=1u<<u;next.height=1u<<v;next.pitch=(next.width/4)*8;
-        next.span=next.pitch*(next.height/4);next.storage=1;next.dma_context=select;
+        next.storage=1;next.dma_context=select;next.mip_levels=levels;
+        for(unsigned level=0;level<levels;++level) {
+            unsigned w=next.width>>level,h=next.height>>level;
+            next.span+=((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*8u;
+        }
         if(!dma || (state->offset&7u) || (dma->guest_address&0xFC000000u)!=0x80000000u ||
             !dma->size || dma->size>0x04000000u-(dma->guest_address&0x03FFFFFFu) ||
             state->offset>dma->size || next.span>dma->size-state->offset)

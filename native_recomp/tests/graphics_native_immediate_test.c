@@ -65,6 +65,7 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
             fabsf((1-positions[i].clip[1]/p[3])*16-y)<0.00002f,38);
     }
     CHECK(!fut_native_immediate_constant_coordinates(positions,3),53); /* W2/-.5 outside specialization domain. */
+    CHECK(fut_native_immediate_projective_coordinates(positions,3)==15,61);
     FutNativePosition domain[3];memcpy(domain,positions,sizeof(domain));
     for(unsigned i=0;i<3;++i) domain[i].screen[3]=domain[i].clip[3]=1;
     CHECK(fut_native_immediate_constant_coordinates(domain,3)==15,54);

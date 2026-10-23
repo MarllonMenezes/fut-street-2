@@ -140,3 +140,15 @@ HRESULT fut_native_draw_immediate_aa2_lines(FutNativeImmediate *native,FutGraphi
     return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
         vertex,pixel,completion,read,write,memory,stop,1,1);
 }
+
+HRESULT fut_native_draw_immediate_aa2_projective(FutNativeImmediate *native,FutGraphicsImmediate *batch,
+    FutNativeSurfaces *surfaces,FutNativePipeline *pipeline,
+    const FutGraphicsKelvinState *state,const FutGraphicsSoftwareState *software,
+    ID3D11Device *device,ID3D11DeviceContext *context,
+    ID3D11VertexShader *vertex,ID3D11PixelShader *pixel,FutNativeConstants *completion,
+    FutGraphicsMemoryRead read,FutGraphicsMemoryWrite write,void *memory,HANDLE stop,int coordinates_verified)
+{
+    if(coordinates_verified!=1 || !fut_graphics_projective_aa2_approximation_enabled())return E_NOTIMPL;
+    return draw_immediate(native,batch,surfaces,pipeline,state,software,device,context,
+        vertex,pixel,completion,read,write,memory,stop,1,0);
+}

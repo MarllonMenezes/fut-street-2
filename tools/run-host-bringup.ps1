@@ -13,6 +13,7 @@ param(
     [switch]$HighResolutionGpuWait,
     [switch]$Aa2Approximation,
     [switch]$UntexturedAa2Approximation,
+    [switch]$ProjectiveAa2Approximation,
     [switch]$Dxt1NoiseApproximation,
     [switch]$P8Aa2Approximation,
     [switch]$P8_128x32Aa2Approximation,
@@ -62,8 +63,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if(($NativeKeyboardInput -or $NativeInputVirtualOnly -or $NativeInputScript) -and -not $NativeGamepadInput){throw 'Native keyboard/script/provider requires -NativeGamepadInput.'}
-if ($UntexturedAa2Approximation -and -not $Aa2Approximation) {
-    throw 'The captured untextured draw requires -Aa2Approximation.'
+if (($UntexturedAa2Approximation -or $ProjectiveAa2Approximation) -and -not $Aa2Approximation) {
+    throw 'The requested AA2 experiment requires -Aa2Approximation.'
 }
 if ($Lines4segmentAa2Approximation -and -not $Aa2Approximation) {
     throw 'Four-segment LINES requires -Aa2Approximation.'
@@ -133,6 +134,7 @@ $variables = @{
     RECOMP_TRACE_BUDGET = [string]$TraceBudget
     RECOMP_AA2_APPROXIMATION = '0'
     RECOMP_UNTEXTURED_AA2_APPROXIMATION = '0'
+    RECOMP_PROJECTIVE_AA2_APPROXIMATION = '0'
     RECOMP_DXT1_NOISE_APPROXIMATION = '0'
     RECOMP_P8_AA2_APPROXIMATION = '0'
     RECOMP_P8_128X32_AA2_APPROXIMATION = '0'
@@ -189,6 +191,7 @@ $variables = @{
 }
 if ($AudioEffectsBypass) { $variables.RECOMP_AUDIO_EFFECTS_BYPASS = '1' }
 if ($UntexturedAa2Approximation) { $variables.RECOMP_UNTEXTURED_AA2_APPROXIMATION = '1' }
+if ($ProjectiveAa2Approximation) { $variables.RECOMP_PROJECTIVE_AA2_APPROXIMATION = '1' }
 if ($FrontendLoadingTrace) { $variables.RECOMP_FRONTEND_LOADING_TRACE = '1' }
 if ($NativeGamepadInput) { $variables.RECOMP_NATIVE_INPUT = '1' }
 if ($NativeKeyboardInput) { $variables.RECOMP_NATIVE_KEYBOARD_INPUT = '1' }
@@ -299,6 +302,7 @@ try {
         graphics_trace = [bool]$GraphicsTrace
         aa2_approximation = [bool]$Aa2Approximation
         untextured_aa2_approximation = [bool]$UntexturedAa2Approximation
+        projective_aa2_approximation = [bool]$ProjectiveAa2Approximation
         dxt1_noise_approximation = [bool]$Dxt1NoiseApproximation
         p8_aa2_approximation = [bool]$P8Aa2Approximation
         p8_128x32_aa2_approximation = [bool]$P8_128x32Aa2Approximation

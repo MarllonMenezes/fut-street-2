@@ -32,4 +32,12 @@ static inline int fut_graphics_aa2_coverage_pass(unsigned width,unsigned height,
 #define FUT_AA2_AFFINE_HLSL \
     "float4 fut_sample_center(float4 a){float2 d=sampleSlot==0?float2(1,.5):float2(0,0);" \
     "return a+ddx(a)*d.x+ddy(a)*d.y;}"
+/* Reconstruct the affine numerator and reciprocal-W denominator, evaluate
+ * both at the pixel center, then divide. This is a host interpolation model,
+ * not a measurement of NV2A precision. Must run before any discard. */
+#define FUT_AA2_PROJECTIVE_HLSL \
+    "float4 fut_sample_center_projective(float4 a,float rhw){" \
+    "float2 d=sampleSlot==0?float2(1,.5):float2(0,0);float4 n=a*rhw;" \
+    "float4 center=n+ddx(n)*d.x+ddy(n)*d.y;" \
+    "float denominator=rhw+ddx(rhw)*d.x+ddy(rhw)*d.y;return center/denominator;}"
 #endif

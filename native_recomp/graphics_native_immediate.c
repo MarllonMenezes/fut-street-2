@@ -125,14 +125,16 @@ done:
     if(stream) ID3D11GeometryShader_Release(stream);
     return hr;
 }
-unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
+static unsigned coordinate_mask(const FutNativePosition *positions,unsigned count,int unit_w)
 {
     if(!positions || !count || count>FUT_IMMEDIATE_DRAW_CAPACITY ||
         (count%3 && !fut_graphics_lines_aa2_count_enabled(count))) return 0;
     unsigned mask=15;
     for(unsigned i=0;i<count;++i) {
         const FutNativePosition *p=&positions[i];
-        if(p->screen[3]!=1 || p->clip[3]!=1) return 0;
+        if(unit_w) {if(p->screen[3]!=1 || p->clip[3]!=1)return 0;}
+        else if(!isfinite(p->screen[3]) || fabsf(p->screen[3])<0x1p-64f ||
+            fabsf(p->screen[3])>0x1p64f || p->clip[3]!=p->screen[3])return 0;
         for(unsigned c=0;c<4;++c) if(!isfinite(p->screen[c]) || !isfinite(p->clip[c]) ||
             (c<2 && (fabsf(p->screen[c])>0x1p20f || fabsf(p->clip[c])>0x1p16f))) return 0;
         for(unsigned stage=0;stage<4;++stage) {
@@ -143,6 +145,10 @@ unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *posi
     }
     return mask;
 }
+unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count)
+{return coordinate_mask(positions,count,1);}
+unsigned fut_native_immediate_projective_coordinates(const FutNativePosition *positions,unsigned count)
+{return coordinate_mask(positions,count,0);}
 
 int fut_native_immediate_quincunx_coordinates(const FutNativePosition *p,unsigned count)
 {

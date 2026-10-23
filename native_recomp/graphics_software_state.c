@@ -87,6 +87,16 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
      * retained separately. Both observed register pairs keep all other gates. */
     int family_lc_retained_baseline=family_common_baseline &&
         t0->control1==0x05000000u && t0->image_rect==0x028001E0u;
+    int projective_bc1=(t0->format==0x06510C29u || t0->format==0x07620C29u) &&
+        fut_graphics_dxt1_noise_approximation_enabled();
+    unsigned projective_span=t0->format==0x07730629u?86016u:t0->format==0x06510C29u?1024u:5120u;
+    int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
+        (t0->format==0x07730629u || projective_bc1) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
+        t0->filter==0x02063F1Bu && t0->address==0x10101u &&
+        !(t0->offset&(projective_bc1?7u:3u)) && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
+    if((t0->format==0x07730629u || t0->format==0x06510C29u || t0->format==0x07620C29u) &&
+        (!observed_projective_texture || fut_graphics_software_draw_ready(s)))return 0;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
         !fut_graphics_software_draw_ready(s) &&
@@ -158,6 +168,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int bc2=(format==0x06610E29u && fut_graphics_bc2_aa2_approximation_enabled() &&
                     t->offset==0x00D1F980u && t->image_rect==0x050001E0u &&
                     t->control1==0x14000000u) || (stage==0 && (bc2_c9df00 || bc2_family));
+                int projective_argb=stage==0 && observed_projective_texture;
                 int yuy2_first=format==0x00012429u &&
                     fut_graphics_yuy2_aa2_approximation_enabled() &&
                     fut_graphics_yuy2_bt601_approximation_enabled() &&
@@ -173,16 +184,16 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 yuy2=yuy2 && t->image_rect==0x028001E0u &&
                     t->control1==0x05000000u && t->valid==0x3BFu;
                 int depth_write_matches=p8_family ? k->draw.depth_write<=1 :
-                    (p8_128x32 || bc2) ? k->draw.depth_write==1 : !k->draw.depth_write;
+                    (p8_128x32 || bc2 || projective_argb) ? k->draw.depth_write==1 : !k->draw.depth_write;
                 unsigned valid_mask=bc2?0x9Bu:0x2Fu;
-                int texture_state_matches=yuy2 ? t->control0==0x4003FFC0u &&
+                int texture_state_matches=projective_argb ? 1 : yuy2 ? t->control0==0x4003FFC0u &&
                     t->address==0x00030303u && t->filter==0x02062000u : bc2 ?
                     (t->valid&valid_mask)==valid_mask && t->control0==0x4003FFC0u &&
                     (t->address==0x10303u || (bc2_family && t->address==0x10101u)) &&
                     t->filter==0x02062000u :
                     (t->valid&valid_mask)==valid_mask && t->control0==0x4003FFC0u &&
                     t->address==0x30303u && t->filter==0x02062000u;
-                if((!bc1 && !p8_32 && !p8_128x32 && !bc2 && !yuy2) || stage!=0 || !texture_state_matches ||
+                if((!bc1 && !p8_32 && !p8_128x32 && !bc2 && !yuy2 && !projective_argb) || stage!=0 || !texture_state_matches ||
                     k->depth_test!=1 || k->stencil_test ||
                     !depth_write_matches || k->compress_depth!=1 ||
                     k->control0!=(yuy2?0x10100001u:0x00100001u))
