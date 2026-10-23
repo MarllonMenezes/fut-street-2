@@ -44,10 +44,13 @@ indiretas mantêm o dispatcher e o diagnóstico de alvos ausentes.
 
 Os 31 testes da ferramenta de recuperação e os 45 gates existentes passaram.
 A última integração usou timeout de 300 segundos, entradas automatizadas e
-logs/saves isolados no D:. Terminou ao recusar uma submissão circular da fila gráfica: o trecho após
-a volta tem 999.440 bytes, acima do limite atual de 65.532 bytes. Nenhuma
-conclusão foi simulada. O próximo experimento trata esse lote maior com
-limites, salto explícito validado e conclusão real da GPU.
+logs/saves isolados no D:. O orçamento do decoder circular passou de 64 KiB
+para 2 MiB, com leituras de até 8 KiB por pacote. O novo binário admitiu um
+lote circular de 2.066.876 bytes e parou na validação do descritor de vértice
+`0x00000C32`, método `0x1760`, antes de concluir a submissão. Uma volta menor
+concluiu com salto original e confirmação da GPU; a volta grande ainda não
+foi concluída. O próximo experimento confere os descritores e o fetch exigido
+por esse desenho, preservando os gates de shader, memória e profundidade.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
 de texturas, PCM e o bypass artificial de espera de efeitos continuam
@@ -59,7 +62,7 @@ não validam um controle físico.
 | Compilação | Executável com os três novos callbacks; 45 gates aprovados. |
 | Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
 | Rendering | QUADS observado aceito e seleção de equipes parcialmente composta; cenário ainda pendente. |
-| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual na fila gráfica circular. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual no descritor de vértice `0x00000C32`. |
 | Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução

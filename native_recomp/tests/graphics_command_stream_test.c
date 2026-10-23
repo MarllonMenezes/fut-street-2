@@ -1,6 +1,7 @@
 #include "graphics_command_stream.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -187,10 +188,52 @@ static int test_wrapped(void)
     memset(&r,0,sizeof(r));r.record.reject_at=99;ring_word(&r,sizeof(r.bytes)-4,0x2001u);
     WRAP_CHECK(fut_graphics_decode_wrapped_live(base,base+sizeof(r.bytes),base+sizeof(r.bytes)-4,base+65532,ring_read,&r,ring_receive,&r,&result,&jump)==FUT_GRAPHICS_DECODED && result.decoded_bytes==65536 && !r.record.count && jump==0);
     r.reads=0;
-    WRAP_CHECK(fut_graphics_decode_wrapped_live(base,base+sizeof(r.bytes),base+sizeof(r.bytes)-4,base+65536,ring_read,&r,ring_receive,&r,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && !r.reads);
+    WRAP_CHECK(fut_graphics_decode_wrapped_live(base,base+sizeof(r.bytes),base+sizeof(r.bytes)-4,base+65536,ring_read,&r,ring_receive,&r,&result,&jump)==FUT_GRAPHICS_DECODED && result.decoded_bytes==65540 && !r.record.count);
     puts("Exact ring jump: live ordering, padding, bounds, budget and fail-fast contracts verified");
     return 1;
 #undef WRAP_CHECK
+}
+typedef struct {
+    uint8_t *bytes;size_t size;unsigned reads,fail;Recording record;
+} LargeRing;
+static int large_read(void *context,size_t offset,uint8_t *bytes,size_t size)
+{
+    LargeRing *r=context;
+    if(++r->reads==r->fail || offset>r->size || size>r->size-offset || size>8192) return 0;
+    memcpy(bytes,r->bytes+offset,size);return 1;
+}
+static void large_word(LargeRing *r,size_t offset,uint32_t value)
+{
+    for(unsigned i=0;i<4;++i)r->bytes[offset+i]=(uint8_t)(value>>(i*8));
+}
+static int test_large_wrapped(void)
+{
+#define LARGE_CHECK(x) do{if(!(x)){fprintf(stderr,"large wrap failed at %d\n",__LINE__);free(r.bytes);return 0;}}while(0)
+    const uint32_t base=0x82802000u,end=0x82C02000u,cursor=0x82B681BCu,put=0x828F6010u;
+    LargeRing r={0};r.size=end-base;r.bytes=calloc(1,r.size);if(!r.bytes)return 0;
+    FutGraphicsDecodeResult result;size_t jump;
+    r.record.reject_at=99;
+    large_word(&r,cursor-base,0x00040100);large_word(&r,cursor-base+4,11);
+    large_word(&r,r.size-4,(base&0x7FFFFFFFu)|1u);
+    large_word(&r,put-base-8,0x00040104);large_word(&r,put-base-4,22);
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_DECODED);
+    LARGE_CHECK(result.decoded_bytes==1629780 && result.methods==2 && jump==630336 &&
+        r.record.count==2 && r.record.values[0]==11 && r.record.values[1]==22 &&
+        r.record.offsets[0]==4 && r.record.offsets[1]==1629776);
+    r.record.count=r.reads=0;r.record.reject_at=1;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_HANDLER_REJECTED && r.record.count==1 && result.blocked_offset==1629776);
+    r.record.count=r.reads=0;r.record.reject_at=99;r.fail=100000;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_READ_FAILED && result.decoded_bytes>65536 && jump==SIZE_MAX);
+    memset(r.bytes,0,r.size);r.record.count=r.reads=r.fail=0;
+    large_word(&r,r.size-4,(base&0x7FFFFFFFu)|1u);
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES-4,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_DECODED && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES && jump==0 && !r.record.count);
+    r.reads=0;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && !r.reads && !r.record.count);
+    /* A long zero-filled tail cannot wrap implicitly even within the ring. */
+    r.reads=0;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,base+0x100000,base+8,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES-8 && jump==SIZE_MAX && !r.record.count);
+    free(r.bytes);puts("Large observed ring span: bounded live packets, explicit jump, 2 MiB budget, failures and no implicit wrap verified");return 1;
+#undef LARGE_CHECK
 }
 int main(int argc, char **argv)
 {
@@ -263,6 +306,7 @@ int main(int argc, char **argv)
         fut_graphics_empty_queue(base, 0x84000004u, base, put)) return 8;
     if (!test_live()) return 9;
     if (!test_wrapped()) return 13;
+    if (!test_large_wrapped()) return 14;
     puts("graphics command decoding, live CPU patches, rejection and input preservation OK");
     return 0;
 }

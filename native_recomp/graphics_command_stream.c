@@ -117,9 +117,9 @@ FutGraphicsDecodeStatus fut_graphics_decode_wrapped_live(uint32_t start,
     if(!reader || !receiver || start<0x80000000u || end>0x84000000u ||
         start>=end || cursor<start || cursor>=end || submitted<start ||
         submitted>=cursor || ((start|end|cursor|submitted)&3u) ||
-        submitted-start>65532u) return FUT_GRAPHICS_UNSUPPORTED_CONTROL;
+        submitted-start>FUT_GRAPHICS_WRAP_MAX_BYTES-4u) return FUT_GRAPHICS_UNSUPPORTED_CONTROL;
     size_t head_size=submitted-start,tail_size=end-cursor;
-    size_t budget=65536u-head_size;
+    size_t budget=FUT_GRAPHICS_WRAP_MAX_BYTES-head_size;
     if(tail_size>budget) tail_size=budget;
     OffsetReader tail_reader={reader,reader_context,cursor-start};
     int jumped=0;
