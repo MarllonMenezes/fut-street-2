@@ -132,6 +132,103 @@ def validate_tail_jump_stub_gap(code: bytes, start: int, callback_end: int,
     return instructions, targets
 
 
+def validate_int3_padding_gap(code: bytes, start: int, end: int, gap_end: int,
+                              reference_code: bytes, reference_start: int):
+    """Prove a short callback body, compiler INT3 padding, and literal PUSH."""
+    import capstone
+    if (not start < end < gap_end or gap_end - start > 64
+            or not 1 <= gap_end - end <= 15 or len(code) != gap_end - start):
+        raise ValueError("INT3 padding requires an exact short known-boundary gap")
+    body = code[:end-start]
+    if code[end-start:] != b"\xCC" * (gap_end-end):
+        raise ValueError("Gap after callback must contain only INT3 padding")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    instructions = list(decoder.disasm(body, start))
+    if (not instructions or sum(i.size for i in instructions) != len(body)
+            or instructions[-1].mnemonic not in ("ret", "jmp")
+            or any(i.mnemonic == "int3" for i in instructions)):
+        raise ValueError("Padded callback must decode completely through RET or JMP")
+    refs = list(decoder.disasm(reference_code, reference_start))
+    if not refs or sum(i.size for i in refs) != len(reference_code):
+        raise ValueError("Reference function does not decode completely")
+    sites = [i.address for i in refs if i.mnemonic == "push" and len(i.operands) == 1
+             and i.operands[0].type == capstone.x86.X86_OP_IMM
+             and i.operands[0].imm & 0xFFFFFFFF == start]
+    if len(sites) != 1:
+        raise ValueError("Expected exactly one literal PUSH of the callback start")
+    return instructions, sites
+
+
+def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
+                               reference_code: bytes, reference_start: int,
+                               slot: int, registered: set[int]):
+    """Prove an observed object-slot callback with a complete multi-exit CFG."""
+    import capstone
+    if (not start < end < gap_end or gap_end-start > 256
+            or not 1 <= gap_end-end <= 15 or len(code) != gap_end-start
+            or not 0 <= slot <= 0xFFC or slot & 3):
+        raise ValueError("Slot callback requires an exact bounded padded gap and aligned slot")
+    if code[end-start:] != b"\xCC" * (gap_end-end):
+        raise ValueError("Slot callback gap must contain only INT3 padding")
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
+    body = code[:end-start]
+    instructions = list(decoder.disasm(body,start))
+    if (not instructions or sum(i.size for i in instructions) != len(body)
+            or instructions[-1].mnemonic not in ("ret","jmp")):
+        raise ValueError("Slot callback body does not decode completely through an exit")
+    by_address = {i.address:i for i in instructions}
+    pending, seen = [start], set()
+    while pending:
+        address = pending.pop()
+        if address in seen:
+            continue
+        if address not in by_address:
+            raise ValueError("Callback flow leaves the body or enters an instruction interior")
+        ins = by_address[address];seen.add(address)
+        following = address+ins.size
+        if ins.mnemonic == "ret":
+            continue
+        if ins.mnemonic == "call" or ins.mnemonic.startswith("j"):
+            if len(ins.operands) != 1 or ins.operands[0].type != capstone.x86.X86_OP_IMM:
+                raise ValueError("Slot callback control flow must be direct")
+            target = ins.operands[0].imm & 0xFFFFFFFF
+            if ins.mnemonic == "call":
+                if target not in registered:
+                    raise ValueError("Callback call destination is not registered")
+                pending.append(following)
+            elif start <= target < end:
+                pending.append(target)
+                if ins.mnemonic != "jmp":
+                    pending.append(following)
+            elif ins.mnemonic == "jmp" and target in registered:
+                continue
+            else:
+                raise ValueError("Callback external branch is not a registered terminal jump")
+        else:
+            if ins.mnemonic in ("int3","int","iret","iretd","ud2","hlt","loop","loope","loopne"):
+                raise ValueError("Unsupported callback flow instruction")
+            pending.append(following)
+    if seen != set(by_address):
+        raise ValueError("Callback body contains unreachable code or embedded data")
+    refs = list(decoder.disasm(reference_code,reference_start))
+    if not refs or sum(i.size for i in refs) != len(reference_code):
+        raise ValueError("Slot reference function does not decode completely")
+    sites = []
+    for ins in refs:
+        if ins.mnemonic != "mov" or len(ins.operands) != 2:
+            continue
+        dst,src = ins.operands
+        if (dst.type == capstone.x86.X86_OP_MEM and dst.size == 4 and dst.mem.base
+                and not dst.mem.index and not dst.mem.segment and dst.mem.disp == slot
+                and src.type == capstone.x86.X86_OP_IMM and src.imm & 0xFFFFFFFF == start):
+            sites.append(ins.address)
+    if len(sites) != 1:
+        raise ValueError("Expected exactly one literal MOV to the requested object slot")
+    return instructions,sites
+
+
 def validate_linear_leaf(code: bytes, start: int, end: int):
     """Require a complete straight-line leaf ending in its only RET."""
     import capstone
@@ -188,8 +285,10 @@ def register_callback(dispatch: str, header: str, start: int) -> tuple[str, str]
 def recover(args: argparse.Namespace) -> dict:
     import capstone
 
-    if args.tail_jump_stub and args.linear_leaf_gap:
-        raise ValueError("Tail-stub and linear-leaf recovery modes are mutually exclusive")
+    if sum((args.tail_jump_stub, args.linear_leaf_gap, args.int3_padding_gap, args.slot_callback_gap)) > 1:
+        raise ValueError("Gap recovery modes are mutually exclusive")
+    if (args.reference_slot is not None) != args.slot_callback_gap:
+        raise ValueError("Reference slot is required only for slot-callback gap recovery")
     output = args.output_dir.resolve()
     if output.drive.lower() != "d:" or output.exists():
         raise ValueError("Output must be a new directory on D:")
@@ -208,6 +307,8 @@ def recover(args: argparse.Namespace) -> dict:
         raise ValueError("Expected an omitted start with a nonempty recovery range")
     tail_gap_end = None
     linear_gap_end = None
+    int3_gap_end = None
+    slot_gap_end = None
     if args.tail_jump_stub:
         following = [address for address in known if address > args.start]
         if not following:
@@ -224,6 +325,20 @@ def recover(args: argparse.Namespace) -> dict:
         linear_gap_end = min(following)
         if args.end >= linear_gap_end:
             raise ValueError("Linear-leaf entry must end before the following function")
+    elif args.int3_padding_gap:
+        following = [address for address in known if address > args.start]
+        if not following or args.reference_function not in known or args.contained_owner is not None:
+            raise ValueError("INT3 padding requires known following and reference functions")
+        int3_gap_end = min(following)
+        if not args.start < args.end < int3_gap_end or int3_gap_end - args.start > 64:
+            raise ValueError("INT3 callback must end inside a short following-function gap")
+    elif args.slot_callback_gap:
+        following = [address for address in known if address > args.start]
+        if not following or args.reference_function not in known or args.contained_owner is not None:
+            raise ValueError("Slot callback requires known following and reference functions")
+        slot_gap_end = min(following)
+        if not args.start < args.end < slot_gap_end or slot_gap_end-args.start > 256:
+            raise ValueError("Slot callback must end inside a bounded following-function gap")
     elif args.end not in known:
         raise ValueError("Expected an omitted start bounded by a known following function")
     overlaps = [f for f in functions
@@ -241,7 +356,7 @@ def recover(args: argparse.Namespace) -> dict:
         if reference is None:
             raise ValueError("Contained callback requires an explicit known reference function")
         contained_proof = True
-    elif args.contained_owner is not None or args.reference_function is not None:
+    elif args.contained_owner is not None or (args.reference_function is not None and not (args.int3_padding_gap or args.slot_callback_gap)):
         raise ValueError("Named contained-callback owner does not overlap the callback")
     dispatch = (args.generated_dir / "recomp_dispatch.c").read_text(encoding="utf-8")
     registered = dict(read_dispatch(dispatch))
@@ -257,6 +372,27 @@ def recover(args: argparse.Namespace) -> dict:
     if offset is None or config.va_to_file_offset(args.end - 1) != offset + size - 1:
         raise ValueError("Range is not contiguous in the original XBE")
     code = data[offset:offset + size]
+    int3_proof = None
+    slot_proof = None
+    if args.slot_callback_gap:
+        reference = known[args.reference_function]
+        ref_start,ref_end = int(reference["start"],16),int(reference["end"],16)
+        ref_offset = config.va_to_file_offset(ref_start)
+        if (ref_offset is None or config.va_to_file_offset(ref_end-1) != ref_offset+ref_end-ref_start-1
+                or config.va_to_file_offset(slot_gap_end-1) != offset+slot_gap_end-args.start-1):
+            raise ValueError("Slot callback gap or reference is not contiguous in executable XBE sections")
+        slot_proof = validate_slot_callback_gap(data[offset:offset+slot_gap_end-args.start],
+            args.start,args.end,slot_gap_end,data[ref_offset:ref_offset+ref_end-ref_start],
+            ref_start,args.reference_slot,set(registered))
+    if args.int3_padding_gap:
+        reference = known[args.reference_function]
+        ref_start, ref_end = int(reference["start"], 16), int(reference["end"], 16)
+        ref_offset = config.va_to_file_offset(ref_start)
+        if (ref_offset is None or config.va_to_file_offset(ref_end-1) != ref_offset+ref_end-ref_start-1
+                or config.va_to_file_offset(int3_gap_end-1) != offset+int3_gap_end-args.start-1):
+            raise ValueError("INT3 gap or reference is not contiguous in executable XBE sections")
+        int3_proof = validate_int3_padding_gap(data[offset:offset+int3_gap_end-args.start],
+            args.start, args.end, int3_gap_end, data[ref_offset:ref_offset+ref_end-ref_start], ref_start)
     tail_stub_targets = []
     if args.tail_jump_stub:
         gap_offset = config.va_to_file_offset(tail_gap_end - 1)
@@ -322,19 +458,22 @@ def recover(args: argparse.Namespace) -> dict:
                     raise ValueError("Branch enters the middle of an instruction")
             elif target not in registered:
                 raise ValueError(f"External destination {target:08X} is not registered")
-            elif ins.mnemonic != "call" and ins.address != instructions[-1].address:
+            elif ins.mnemonic != "call" and ins.address != instructions[-1].address and not (slot_proof and ins.mnemonic == "jmp"):
                 raise ValueError("External branch before the final tail requires further analysis")
     symbol = f"sub_{args.start:08X}"
-    following_boundary = tail_gap_end if args.tail_jump_stub else linear_gap_end
+    following_boundary = slot_gap_end if args.slot_callback_gap else int3_gap_end if args.int3_padding_gap else tail_gap_end if args.tail_jump_stub else linear_gap_end
     boundary = known[following_boundary if following_boundary is not None else args.end]
     functions.append({"start": f"0x{args.start:08X}", "end": f"0x{args.end:08X}",
                       "size": size, "name": symbol, "section": boundary["section"],
-                      "detection_method": ("observed_linear_leaf" if linear_leaf_proof else
+                      "detection_method": ("observed_slot_callback" if slot_proof else "observed_int3_padded_callback" if int3_proof else "observed_linear_leaf" if linear_leaf_proof else
                           "observed_tail_jump_stub" if args.tail_jump_stub else
                           "observed_contained_callback" if contained_proof else "observed_callback"), "confidence": 1.0,
                       "overlap_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
-                      "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
-                      "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
+                      "reference_function": f"0x{args.reference_function:08X}" if contained_proof or int3_proof or slot_proof else None,
+                      "literal_reference_sites": [f"0x{x:08X}" for x in (contained_proof or int3_proof or slot_proof)[1]] if contained_proof or int3_proof or slot_proof else [],
+                      "reference_slot": args.reference_slot,
+                      "slot_callback_gap_end": f"0x{slot_gap_end:08X}" if slot_proof else None,
+                      "int3_padding_gap_end": f"0x{int3_gap_end:08X}" if int3_proof else None,
                       "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
                       "tail_stub_gap_targets": [f"0x{x:08X}" for x in tail_stub_targets],
                       "linear_leaf_gap_end": f"0x{linear_gap_end:08X}" if linear_leaf_proof else None,
@@ -366,8 +505,11 @@ def recover(args: argparse.Namespace) -> dict:
               "dispatch_entries": len(registered) + 1, "source_generation": str(args.generated_dir),
               "switch_table": switch, "switch_targets": targets,
               "contained_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
-              "reference_function": f"0x{args.reference_function:08X}" if contained_proof else None,
-              "literal_reference_sites": [f"0x{x:08X}" for x in contained_proof[1]] if contained_proof else [],
+              "reference_function": f"0x{args.reference_function:08X}" if contained_proof or int3_proof or slot_proof else None,
+              "literal_reference_sites": [f"0x{x:08X}" for x in (contained_proof or int3_proof or slot_proof)[1]] if contained_proof or int3_proof or slot_proof else [],
+              "reference_slot": args.reference_slot,
+              "slot_callback_gap_end": f"0x{slot_gap_end:08X}" if slot_proof else None,
+              "int3_padding_gap_end": f"0x{int3_gap_end:08X}" if int3_proof else None,
               "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
               "tail_stub_gap_targets": [f"0x{x:08X}" for x in tail_stub_targets],
               "linear_leaf_gap_end": f"0x{linear_gap_end:08X}" if linear_leaf_proof else None,
@@ -399,6 +541,12 @@ def main() -> None:
                         help="Prove a direct tail-jump entry within a fully decoded stub gap")
     parser.add_argument("--linear-leaf-gap", action="store_true",
                         help="Prove an observed straight-line RET body and one adjacent leaf through the next known boundary")
+    parser.add_argument("--int3-padding-gap", action="store_true",
+                        help="Prove a short callback and literal PUSH reference with only trailing INT3 padding")
+    parser.add_argument("--slot-callback-gap", action="store_true",
+                        help="Prove a complete callback CFG and exact literal MOV to a known object slot")
+    parser.add_argument("--reference-slot",type=lambda x:int(x,0),
+                        help="Object field displacement for slot-callback recovery")
     args = parser.parse_args()
     print(json.dumps(recover(args), indent=2))
 

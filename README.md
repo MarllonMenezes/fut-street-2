@@ -16,54 +16,48 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 23 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** O host compila e
-executa código original recompilado, com superfícies em 640×480. Start chegou
-à tela original `f_MAIN_0100`; a confirmação A passou pelo interpretador
-original e entrou em `f_GAME_0100`, a tela “PICK SIDES”. Cenário, partida,
-controle físico e 1920×1080 continuam sem comprovação.
+**NOT_READY — ainda não é um jogo recompilado jogável.** O executável nativo
+atravessou a navegação original por Start, “PICK SIDES”, seleção de lado,
+Ready e “SELECT TEAM”, com Brasil e Inglaterra. As confirmações seguintes
+iniciaram o carregamento de recursos. Cenário, partida, controle físico e
+1920×1080 continuam sem comprovação.
 
-A cadeia de entrada foi observada em execução nativa: A=255 entregue por
-`XInputGetState` à rotina original, A=1,0 no buffer interno do controle,
-chamada e retorno de `feInputEvent`, navegação `f_MAIN_0100_b0_MAIN` e
-inicialização de `f_GAME_0100`. Nenhuma fase, propriedade de tela, filtro ou
-resultado de gameplay foi forçado. A ponte opcional atende sete funções SDK
-verificadas; o processamento e a navegação permanecem originais.
+As entradas passam pelo SDK, pelo buffer de controle e pelo interpretador
+original. Nenhuma fase ou resultado de gameplay foi forçado. A captura mostra
+o título “SELECT TEAM” e as bandeiras; textos e controles ainda estão
+incompletos, com “LOADING” no fundo.
 
-A imagem capturada mostra “PICK SIDES” e parte da placa do controlador.
-Textos e controles ainda estão incompletos, com “LOADING” no fundo. Chegar à
-lógica dessa tela não comprova uma interface completa nem uma partida.
-O próximo experimento usa o direcional e confirmações separadas para passar
-pelo estado “Ready” e carregar a próxima tela pela lógica original.
+O host agora aceita o perfil exato de QUADS inline observado com os
+descritores de stride retidos, preservando o mesmo layout de posição, cor e
+UV. Perfis mistos continuam recusados. Os dois perfis passaram pela GPU nos
+testes focais, e a integração atravessou a recusa anterior.
 
-Os desenhos originais XYZW/ARGB8, índices mistos de 16/32 bits, malhas de
-912/854 índices e P8 de 128×128 com escrita de profundidade desativada já
-concluíram na GPU, com gravação nas superfícies do jogo. A saída permanece
-limitada a 3.072 vértices e os fetches mantêm seus limites de memória.
-As opções individuais de P8 continuam separadas; texturas ativas, shaders,
-samplers e profundidade passam por validações próprias.
+Dois callbacks originais ausentes, `0x000DDBE0` e `0x000F4520`, foram
+recuperados do XBE, traduzidos e incluídos no executável efetivamente usado.
+Referências literais, limites e destinos foram conferidos; a geração
+preservou os 71 arquivos C anteriores. Validações isoladas conferiram pilha,
+argumentos e memória. Ambos executaram no jogo; para `0x000F4520`, a execução
+nativa observou o retorno antecipado, enquanto os caminhos de alocação foram
+validados com os callees isolados.
 
-A geração efetivamente usada pelo executável inclui os overlays de entrada
-e diagnóstico. Os 45 gates existentes passaram. Os testes cobrem estruturas
-SDK, pilha, ponteiros inválidos, handles, desconexão, teclado, foco, limites,
-recusas e preservação de estado. O rastreamento registra a entrega do SDK e
-as etapas do evento; consultas repetidas de música ficam limitadas para não
-esgotar o orçamento antes da navegação. Entradas sintéticas não validam um
-controle físico.
+Os 29 testes da ferramenta de recuperação e os 45 gates existentes passaram.
+A última integração usou timeout de 300 segundos, entradas automatizadas e
+logs/saves isolados no D:. Terminou com diagnóstico de alvo indireto ausente
+`0x00100160`, durante o carregamento posterior à seleção de equipes. Esse é
+o próximo bloqueio a investigar e recuperar com evidência.
 
-As integrações usam timeout finito de até 300 segundos, com logs e saves
-isolados no D:. A última execução concluída terminou pelo timeout, sem nova
-recusa gráfica. ISO/XBE e insumos originais permanecem intactos. AA2/quincunx
-e o bypass artificial de espera de efeitos continuam experimentais, sem
-alegação de fidelidade NV2A ou DSP. O cache de readback reutiliza alocações,
-mas continua copiando os pixels atuais e aguardando a GPU.
+ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações
+de texturas, PCM e o bypass artificial de espera de efeitos continuam
+experimentais, sem alegação de fidelidade NV2A ou DSP. Entradas sintéticas
+não validam um controle físico.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação | Host e overlays regenerados; 45 gates aprovados. |
-| Entrada e navegação | SDK → buffer original → VM → “PICK SIDES” comprovados com A automatizado. |
-| Rendering | Desenhos concluídos e tela “PICK SIDES” parcialmente composta; interface completa ainda pendente. |
-| Gameplay | Seleção de lado, cenário e partida curta ainda não comprovados. |
-| Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP, canais, latência e continuidade não validados. |
+| Compilação | Executável com os dois novos callbacks; 45 gates aprovados. |
+| Entrada e navegação | Lógica original chegou a “SELECT TEAM” e ao carregamento seguinte. |
+| Rendering | QUADS observado aceito e seleção de equipes parcialmente composta; cenário ainda pendente. |
+| Gameplay | Cenário e partida curta ainda não comprovados; bloqueio atual `0x00100160`. |
+| Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução
 
@@ -143,8 +137,8 @@ Os fontes C gerados, builds, XBE, ISO e assets extraídos são insumos locais e 
 
 A compilação nativa requer uma geração local do XboxRecomp para preencher `RECOMP_GENERATED_DIR`; os arquivos gerados não são versionados. Exemplo para o alvo da biblioteca:
 
-O gate da geração privada validada exige exatamente 15.611 entradas de
-dispatch, incluindo os onze pontos de entrada indiretos recuperados. Uma
+O gate da geração privada validada exige exatamente 15.613 entradas de
+dispatch, incluindo os treze pontos de entrada indiretos recuperados. Uma
 geração anterior não satisfaz esse contrato; confirme a regeneração e o
 executável realmente utilizado nos testes.
 

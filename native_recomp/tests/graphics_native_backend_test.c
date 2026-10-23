@@ -176,8 +176,9 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !state->vertex_array.ready && state->native_immediate.ia_vertices==9 &&
         state->native_immediate.ps_invocations>0,128);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,129);
+    for(unsigned profile=0;profile<2;++profile) {
     for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
-        i==0?0x32:i==3?0x40:i==9?0x22:2,0),92);
+        (i==0?0x32:i==3?0x40:i==9?0x22:2)|(profile?0x600:0),0),92);
     memset(guest_memory+0x3000,0xCD,48);
     CHECK(native_method(state,0,0x17FC,8,0),93);
     const float quad[4][3]={{0,0,0},{8,0,0},{8,6,0},{0,6,0}};
@@ -191,6 +192,7 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !state->immediate.ready && !state->native_surfaces.gpu_dirty &&
         state->native_immediate.ia_vertices==6 && state->native_immediate.ps_invocations>0,96);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,97);
+    }
     return 0;
 }
 int main(void)

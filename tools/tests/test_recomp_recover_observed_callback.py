@@ -4,7 +4,8 @@ import struct
 
 from tools.analysis.recomp_recover_observed_callback import (
     read_dispatch, register_callback, validate_contained_callback, validate_switch,
-    validate_linear_leaf, validate_tail_jump_stub_gap,
+    validate_linear_leaf, validate_tail_jump_stub_gap, validate_int3_padding_gap,
+    validate_slot_callback_gap,
 )
 
 
@@ -140,6 +141,96 @@ class TailJumpStubTests(unittest.TestCase):
                 validate_tail_jump_stub_gap(code, self.start, self.start + 5,
                                             self.start + 10,
                                             {0x23D29E, 0x23D3A0})
+
+
+class Int3PaddingTests(unittest.TestCase):
+    def setUp(self):
+        self.body = bytes.fromhex("8b442404c3")
+        self.reference = bytes.fromhex("6800100000c3")
+
+    def test_accepts_complete_body_padding_and_exact_push_reference(self):
+        instructions, sites = validate_int3_padding_gap(self.body+b"\xCC"*3,
+            0x1000,0x1005,0x1008,self.reference,0x2000)
+        self.assertEqual([i.mnemonic for i in instructions],["mov","ret"])
+        self.assertEqual(sites,[0x2000])
+
+    def test_accepts_terminal_direct_jump_without_translating_padding(self):
+        instructions, _ = validate_int3_padding_gap(bytes.fromhex("e9fb0f0000cccccc"),
+            0x1000,0x1005,0x1008,self.reference,0x2000)
+        self.assertEqual(instructions[-1].mnemonic,"jmp")
+        self.assertEqual(instructions[-1].op_str,"0x2000")
+
+    def test_rejects_wrong_padding_incomplete_body_and_unproven_end(self):
+        for code,end in ((self.body+b"\x90"*3,0x1005),
+                         (self.body+b"\xCC"*2,0x1005),
+                         (bytes.fromhex("8b44240fcccccccc"),0x1005),
+                         (bytes.fromhex("9090909090cccccc"),0x1005),
+                         (bytes.fromhex("cc909090c3cccccc"),0x1005)):
+            with self.subTest(code=code),self.assertRaises(ValueError):
+                validate_int3_padding_gap(code,0x1000,end,0x1008,self.reference,0x2000)
+
+    def test_rejects_absent_duplicate_or_non_push_literal_reference(self):
+        for reference in (b"\xC3",self.reference+self.reference,
+                          bytes.fromhex("b800100000c3"),b"\x0F"):
+            with self.subTest(reference=reference),self.assertRaises(ValueError):
+                validate_int3_padding_gap(self.body+b"\xCC"*3,0x1000,0x1005,
+                    0x1008,reference,0x2000)
+
+    def test_rejects_zero_padding_excessive_padding_and_large_gap(self):
+        for code,end,gap in ((self.body,0x1005,0x1005),
+                             (self.body+b"\xCC"*16,0x1005,0x1015),
+                             (b"\x90"*64+b"\xC3\xCC",0x1041,0x1042)):
+            with self.subTest(gap=gap),self.assertRaises(ValueError):
+                validate_int3_padding_gap(code,0x1000,end,gap,self.reference,0x2000)
+
+
+class SlotCallbackTests(unittest.TestCase):
+    def setUp(self):
+        # TEST/JZ select either a registered tail jump or a later RET.
+        self.body=bytes.fromhex("85c07405e9f70f0000c3")
+        self.reference=bytes.fromhex("c7812402000000100000c3")
+
+    def proof(self,body=None,reference=None,slot=0x224,registered=None):
+        body=self.body if body is None else body
+        return validate_slot_callback_gap(body+b"\xCC"*3,0x1000,0x1000+len(body),
+            0x1003+len(body),self.reference if reference is None else reference,
+            0x3000,slot,{0x2000} if registered is None else registered)
+
+    def test_accepts_two_exits_and_exact_slot_reference(self):
+        instructions,sites=self.proof()
+        self.assertEqual(instructions[-1].mnemonic,"ret")
+        self.assertEqual(sites,[0x3000])
+
+    def test_rejects_unregistered_tail_conditional_external_and_indirect_flow(self):
+        for body,registered in ((self.body,set()),
+                (bytes.fromhex("0f84fa0f0000c3"),{0x2000}),
+                (bytes.fromhex("ffd0c3"),{0x2000}),
+                (bytes.fromhex("ffe0c3"),{0x2000}),
+                (bytes.fromhex("e800000000c3"),{0x2000})):
+            with self.subTest(body=body),self.assertRaises(ValueError):
+                self.proof(body=body,registered=registered)
+
+    def test_rejects_branch_interior_and_unreachable_embedded_bytes(self):
+        for body in (bytes.fromhex("ebff90c3"),bytes.fromhex("c390c3"),
+                     bytes.fromhex("eb0190c3"),bytes.fromhex("ccc3")):
+            with self.subTest(body=body),self.assertRaises(ValueError):
+                self.proof(body=body)
+
+    def test_rejects_wrong_slot_absolute_indexed_and_duplicate_writes(self):
+        for reference,slot in ((self.reference,0x228),(self.reference,0x225),
+                (bytes.fromhex("c7052402000000100000c3"),0x224),
+                (bytes.fromhex("c784812402000000100000c3"),0x224),
+                (self.reference+self.reference,0x224),
+                (bytes.fromhex("c7812402000001100000c3"),0x224)):
+            with self.subTest(reference=reference,slot=slot),self.assertRaises(ValueError):
+                self.proof(reference=reference,slot=slot)
+
+    def test_rejects_non_int3_padding_and_oversized_gap(self):
+        with self.assertRaises(ValueError):
+            validate_slot_callback_gap(self.body+b"\x90"*3,0x1000,0x100A,0x100D,
+                self.reference,0x3000,0x224,{0x2000})
+        with self.assertRaises(ValueError):
+            self.proof(body=b"\x90"*256+b"\xC3")
 
 
 class LinearLeafTests(unittest.TestCase):
