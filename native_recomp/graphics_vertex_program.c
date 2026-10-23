@@ -69,9 +69,9 @@ static int generate(const uint32_t (*words)[4], size_t count,
     for (size_t index = 0; index < count; ++index) {
         const uint32_t *w = words[index];
         unsigned mac = (w[1] >> 21) & 15, ilu = (w[1] >> 25) & 7;
-        /* Exercised programs use MOV/MUL/ADD/MAD/DP4 and MOV/RCP/RCC. Other ops
+        /* Exercised programs use MOV/MUL/ADD/MAD/DP4 and MOV/RCP/RCC/EXP. Other ops
          * require implementations plus semantic tests before acceptance. */
-        if ((mac > 4 && mac != 7) || ilu > 3) return 0;
+        if ((mac > 4 && mac != 7) || (ilu > 3 && ilu != 5)) return 0;
         char a[96] = "0", b[96] = "0", csrc[96] = "0";
         if ((mac && !source(a, sizeof(a), w, 0)) ||
             ((mac == 2 || mac == 4 || mac == 7) && !source(b, sizeof(b), w, 1)) ||
@@ -87,6 +87,10 @@ static int generate(const uint32_t (*words)[4], size_t count,
         if (ilu == 1) emit(&out, "I=C;\n");
         if (ilu == 2) emit(&out, "I=(1.0f/C.x).xxxx;\n");
         if (ilu == 3) emit(&out, "I=fut_rcc(C.x).xxxx;\n");
+        /* EXP returns four different components. Host exp2 precision is not
+         * a measurement of NV2A's hardware approximation. C is snapshotted
+         * before paired MAC/ILU destination writes, as for the other ops. */
+        if (ilu == 5) emit(&out, "float integral=floor(C.x);I=float4(exp2(integral),C.x-integral,exp2(C.x),1.0f);\n");
         unsigned temp = (w[3] >> 20) & 15;
         unsigned mac_mask = (w[3] >> 24) & 15, ilu_mask = (w[3] >> 16) & 15;
         if (ilu && temp == 1) mac_mask = 0;

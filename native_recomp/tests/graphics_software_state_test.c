@@ -642,6 +642,12 @@ int main(void)
         }
     }
     state=baseline;kelvin=untextured;
+    kelvin.textures[0].format=0x06610C29;kelvin.textures[0].valid=0x3BF;
+    kelvin.textures[0].filter=0x02063F1B;kelvin.textures[0].address=0x10101;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 148;
+    kelvin.fragment.stage_program=1;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 149;
+    state=baseline;kelvin=untextured;
     kelvin.textures[0].format=0x06710E29;
     kelvin.textures[0].offset=0x00CF9C00;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 127;

@@ -18,7 +18,8 @@ static const uint32_t rcc_cases[][2]={
 };
 static int run_fixture(int mode)
 {
-    int dp4=mode==1,rcc=mode>=2,mad=mode==-2;
+    int dp4=mode==1,rcc=mode>=2,mad=mode==-2,exponent=mode<=-3;
+    static const float exp_inputs[]={-1.25f,0.0f,1.5f,-0.0001f,2.0f};
     /* Synthetic original-format program with independent expected results:
      * R1=v0; paired MOV oD0=v1 / RCP R1.w=1/old(R1.w);
      * R2=R1*c0; oPos=R2+c1. The paired MAC's R1 write is suppressed.
@@ -91,6 +92,20 @@ static int run_fixture(int mode)
     if (fut_vertex_program_hlsl(invalid, 4, text, sizeof(text), &length)) return 22;
     length = 99;
     if (fut_vertex_program_hlsl(NULL, 4, text, sizeof(text), &length) || length) return 23;
+    if(exponent) {
+        /* MUL overwrites R2 while EXP must read old R2.x and write paired R1.
+         * Position exports all EXP lanes; color exports the independent MUL. */
+        memset(program,0,sizeof(program));count=4;
+        program[0][1]=(1u<<21)|(2u<<9)|0x1Bu;program[0][2]=2u<<26;
+        program[0][3]=(15u<<24)|(2u<<20);
+        program[1][1]=(2u<<21)|(5u<<25)|0x1Bu;
+        program[1][2]=(2u<<28)|(1u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17);
+        program[1][3]=(2u<<30)|(1u<<28)|(15u<<24)|(2u<<20)|(15u<<16);
+        program[2][1]=(1u<<21)|0x1Bu;program[2][2]=(1u<<28)|(1u<<26);program[2][3]=0xF800u;
+        program[3][1]=(1u<<21)|0x1Bu;program[3][2]=(2u<<28)|(1u<<26);program[3][3]=0xF819u;
+        uint16_t mask=0;
+        if(!fut_vertex_program_input_mask(program,count,&mask) || mask!=4u)return 27;
+    }
     ID3D11Device *device = NULL; ID3D11DeviceContext *context = NULL; D3D_FEATURE_LEVEL level;
     if (FAILED(D3D11CreateDevice(NULL, D3D_DRIVER_TYPE_WARP, NULL, 0, NULL, 0,
         D3D11_SDK_VERSION, &device, &level, &context))) return 5;
@@ -125,6 +140,7 @@ static int run_fixture(int mode)
     float vertex[16][4] = {{2,4,6,2},{0.25f,0.5f,0.75f,1}};
     if(mad) {const float add[]={-1,-2,-1,-4};memcpy(vertex[2],add,sizeof(add));}
     if(rcc) memcpy(&vertex[2][0],&rcc_cases[mode-2][0],4);
+    if(exponent) {vertex[2][0]=exp_inputs[-mode-3];vertex[2][1]=vertex[2][2]=vertex[2][3]=0.1f;}
     D3D11_BUFFER_DESC desc = {0}; desc.ByteWidth = sizeof(vertex);
     desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
     D3D11_SUBRESOURCE_DATA initial = {vertex,0,0};
@@ -148,7 +164,12 @@ static int run_fixture(int mode)
     if (!fut_native_constants_finish(&constants, NULL, 2000, NULL)) return 15;
     D3D11_MAPPED_SUBRESOURCE mapped;
     if (FAILED(ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped))) return 16;
-    const float expected[] = {mad?9:dp4?142:5,14,mad?107:dp4?142:27,7,0.25f,0.5f,0.75f,1};
+    float expected[] = {mad?9:dp4?142:5,14,mad?107:dp4?142:27,7,0.25f,0.5f,0.75f,1};
+    if(exponent) {
+        float x=exp_inputs[-mode-3],integral=floorf(x);
+        expected[0]=exp2f(integral);expected[1]=x-integral;expected[2]=exp2f(x);expected[3]=1;
+        expected[4]=fminf(fmaxf(2*x,0),1);expected[5]=0.3f;expected[6]=0.4f;expected[7]=0.6f;
+    }
     const float *actual = mapped.pData;
     int correct = 1;
     for (unsigned i = 0; i < 8; ++i) {
@@ -241,6 +262,7 @@ static int verify_cache(void)
 int main(void)
 {
     int cache=verify_cache();if(cache)return cache;
+    for(int mode=-3;mode>=-7;--mode) {int result=run_fixture(mode);if(result)return result;}
     int mad=run_fixture(-2);
     if(mad) return mad;
     int paired=run_fixture(-1);

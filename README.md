@@ -21,37 +21,40 @@ recompilada atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, com B
 e Inglaterra, e iniciou o carregamento seguinte. Cenário jogável, partida,
 controle físico e 1920×1080 ainda não foram comprovados.
 
-Os materiais originais **BC2 e BC3 com mipmaps já concluíram desenhos na
-GPU e gravação nas superfícies do jogo**. BC3 de 1024×512 com três níveis
-produziu um lote de 30 vértices e 529.028 invocações de pixel shader. Na
-execução final, BC2 com dois níveis produziu um lote de 150 vértices e
-95.861 invocações. Esses números comprovam lotes rasterizados; o frame
-completo do cenário e uma partida ainda não foram apresentados.
+A instrução de vértices **EXP (ILU=5) foi implementada e validada na GPU**.
+As quatro saídas foram comparadas com referência matemática para cinco
+entradas positivas, negativas, zero e fracionárias. O teste verifica também
+EXP em paralelo com MUL: ambas leem os operandos anteriores às escritas.
+O shader original capturado de 16 instruções passou pela tradução, compilação
+e criação do recurso D3D11. A precisão de EXP usa o host; a aproximação
+numérica do NV2A ainda não foi medida.
 
-O upload BC2 reutiliza o caminho de blocos BC1/BC3, preservando cor e alpha
-originais. O gate ARGB8 agora valida dimensões, níveis e spans em vez de um
-único tamanho. O sampler BC2 admite o bias observado também com um nível,
-com LOD limitado a zero. Todos mantêm os controles e opt-ins experimentais.
-As referências públicas de xemu/nxdk e o mapeamento do XboxRecomp orientaram
-a implementação; não houve troca integral de runtime nem cópia de código externo.
+A execução final concluiu o desenho original de posição+cor que antes era
+recusado: **60 vértices, 120 entradas nas passagens AA2 e 42 invocações de
+pixel shader**, com gravação na superfície do jogo. A correção usa o caminho
+sem textura somente quando todos os estágios estão desligados e o shader
+não amostra texturas; descritores antigos retidos deixam de bloquear esse caso.
+Os gates continuam recusando a combinação se houver amostragem habilitada.
 
-Uma captura revelou um lote de 2.315 índices. A capacidade limitada passou
-a 2.560 índices e 7.680 vértices expandidos, mantendo ordem e paridade dos
-triângulos. Também foi implementado o layout observado de posição float3 no
-slot 0 e cor ARGB8 no slot 1. Os testes conferem ambos, limites de memória,
-recusa de overflow e preservação do resultado quando uma leitura falha.
+O host mantém os uploads originais ARGB8/BC1/BC2/BC3, mipmaps, slots de
+vértices e limites de memória. AA2, dithering e interpolação continuam
+experimentais. As referências NV2A orientaram a implementação independente;
+não foi copiado código externo para implementar EXP.
 
-**Bloqueio atual:** um shader original de 16 instruções usa `EXP` (ILU=5),
-ainda não traduzida. A execução final encerrou com diagnóstico explícito
-nessa compilação. O próximo experimento implementa e valida a operação
-conforme as referências NV2A, incluindo sua execução em paralelo com MUL.
-A última captura apresentada ainda mostra a tela de carregamento.
+**Bloqueio atual:** um shader original de **46 instruções** exige ARL e
+endereçamento relativo de constantes, DP3, MAX, RSQ e LIT, ainda recusados.
+A execução final encerrou nessa compilação com diagnóstico explícito. O
+próximo experimento deve validar o registrador de endereço e os acessos às
+constantes, além das operações e suas escritas paralelas, antes de aceitar
+essa família de shaders. A última captura apresentada continua em “LOADING”.
 
-Os **45 gates obrigatórios passaram**. Os testes essenciais incluem leitura
-de volta dos mipmaps BC2/BC3 na GPU, limites das famílias de textura e os
-novos lotes/layouts. A execução nativa final usou timeout de 300 segundos,
-logs/saves isolados no D: e terminou no bloqueio acima antes do limite.
-AA2, interpolação, LOD e precisão NV2A permanecem sem comprovação de fidelidade.
+Os **45 gates obrigatórios passaram**. A validação essencial inclui EXP na
+GPU, operandos compartilhados e a recusa de uso indevido de texturas desligadas.
+O shader capturado foi compilado separadamente; não se afirma que o shader
+original de 16 instruções tenha sido exercitado nesta rodada nativa. A execução
+final usou timeout de 300 segundos e logs/saves isolados no D:, encerrando
+antes do limite no shader de 46 instruções. Frame completo do cenário e
+partida ainda não foram comprovados.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações de
 texturas, PCM e bypass artificial de espera de efeitos continuam experimentais,
@@ -61,7 +64,7 @@ sem alegação de fidelidade NV2A ou DSP. Gameplay e navegação não foram for�
 | --- | --- |
 | Compilação | Executável nativo atualizado; 45 gates aprovados. |
 | Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | BC2/BC3 com mipmaps rasterizados e gravados; shader com EXP bloqueia a continuação. |
+| Rendering | Desenho sem textura com posição+cor concluído; shader de 46 instruções bloqueia a continuação. |
 | Gameplay | Cenário jogável e partida curta ainda não comprovados. |
 | Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
 
