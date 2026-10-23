@@ -127,6 +127,29 @@ int main(int argc, char **argv)
             g_xbox_mem_offset = 0;
             return ok ? 0 : 98;
         }
+        if (strcmp(argv[1], "frontend-input") == 0 || strcmp(argv[1], "frontend-song") == 0) {
+            char memory[128]={0};
+            strcpy(memory,"eatrax?sub=currentsong");strcpy(memory+64,"_level0.feInputEvent");
+            g_xbox_mem_offset=(ptrdiff_t)(uintptr_t)memory-(ptrdiff_t)0x10000u;
+            g_eax=123;g_esp=456;
+#ifdef _WIN32
+            SetLastError(0x1234u);
+#endif
+            if(strcmp(argv[1],"frontend-song")==0){
+                for(unsigned i=0;i<100;++i) recomp_frontend_command_trace(0x00160ED0u,0x10000u,0,0);
+                for(unsigned i=0;i<70;++i) recomp_frontend_command_trace(0x00160ED0u,0x10040u,0,0);
+            }else for(unsigned i=0;i<70;++i){
+                recomp_frontend_command_trace(0x00160330u,0x10040u,0x2D7DF0u,0);
+                recomp_frontend_command_trace(0x00160429u,0x10040u,0x2D7DF0u,1);
+                recomp_frontend_command_trace(0x00160433u,0x10040u,0x2D7DF0u,1);
+            }
+            int ok=g_eax==123 && g_esp==456 &&
+                strcmp(memory,"eatrax?sub=currentsong")==0 && strcmp(memory+64,"_level0.feInputEvent")==0;
+#ifdef _WIN32
+            ok=ok && GetLastError()==0x1234u;
+#endif
+            g_xbox_mem_offset=0;return ok?0:99;
+        }
         if (strcmp(argv[1], "frontend-vm") == 0) {
             uint32_t memory[] = {1,0,0x1000Cu,0x10010u,0,0x02000000u,0x11223344u,0x55667788u};
             g_xbox_mem_offset = (ptrdiff_t)(uintptr_t)memory - (ptrdiff_t)0x10000u;

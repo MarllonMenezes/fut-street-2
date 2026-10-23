@@ -85,7 +85,20 @@ int fut_native_input_dispatch(uint32_t site)
             }
             else if((result=fut_native_input_sample(port,&sample))==ERROR_SUCCESS){
                 if(site==0x2A2174u)result=write_guest(a[1],sample.caps,25)?0:ERROR_INVALID_PARAMETER;
-                else if(site==0x2A234Cu)result=write_guest(a[1],sample.state,22)?0:ERROR_INVALID_PARAMETER;
+                else if(site==0x2A234Cu){
+                    result=write_guest(a[1],sample.state,22)?0:ERROR_INVALID_PARAMETER;
+                    if(!result){
+                        static uint32_t previous_packet[4];static unsigned logged;
+                        uint32_t packet;memcpy(&packet,sample.state,4);
+                        if(packet!=previous_packet[port]){
+                            previous_packet[port]=packet;
+                            if(logged++<32)fprintf(stderr,
+                                "[NATIVE-INPUT] SDK-state-delivered caller=%08X output=%08X handle=%08X packet=%u digital=%04X analogA=%u NOT_READY\n",
+                                stack[0],a[1],a[0],packet,
+                                (unsigned)(sample.state[4]|sample.state[5]<<8),sample.state[6]);
+                        }
+                    }
+                }
                 else{
                     uint8_t feedback[70];
                     if(!read_guest(a[1],feedback,70)||!writable(a[1],4))result=ERROR_INVALID_PARAMETER;

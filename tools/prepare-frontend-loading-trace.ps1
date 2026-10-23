@@ -30,6 +30,12 @@ foreach($name in @('recomp_0026.c','recomp_0027.c','recomp_0036.c','recomp_0037.
         $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160E2Eu, esi, edi, eax);`n")
         $anchor="void sub_00160ED0(void)`n{`n"
         $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160ED0u, MEM32(esp+4u), 0u, 0u);`n")
+        $anchor="void sub_00160330(void)`n{`n"
+        $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x00160330u, MEM32(0x310B20u), MEM32(esp+8u), MEM32(esp+4u));`n")
+        foreach($site in @('00160429','00160433')) {
+            $anchor="loc_${site}: ;`n"
+            $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled()) recomp_frontend_command_trace(0x${site}u, MEM32(0x310B20u), ebp, eax);`n")
+        }
     }
     if($name -eq 'recomp_0026.c') {
         $anchor="void sub_00160840(void)`n{`n"
@@ -41,7 +47,7 @@ foreach($name in @('recomp_0026.c','recomp_0027.c','recomp_0036.c','recomp_0037.
         $text=Replace-Unique $text '#include "recomp_funcs.h"' ('#include "recomp_funcs.h"'+"`nextern void recomp_frontend_command_trace(uint32_t,uint32_t,uint32_t,uint32_t);`n")
         foreach($site in @('001D3F13','001D3F2B')) {
             $anchor="loc_${site}: ;`n"
-            $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled() && MEM32(ebp+4u)==0x00160859u) recomp_frontend_command_trace(0x${site}u, MEM32(ebp+8u), MEM32(ebp-4u), eax);`n")
+            $text=Replace-Unique $text $anchor ($anchor+"    if (recomp_frontend_loading_trace_enabled() && (MEM32(ebp+4u)==0x00160859u || MEM32(ebp+4u)==0x00160429u)) recomp_frontend_command_trace(0x${site}u, MEM32(ebp+8u), MEM32(ebp-4u), eax);`n")
         }
     }
     if($name -eq 'recomp_0037.c') {

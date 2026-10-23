@@ -14,60 +14,56 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 22 de outubro de 2026
+## Estado verificável — 23 de outubro de 2026
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** O host compila e
-executa código original recompilado, com superfícies em 640×480. A entrada
-experimental já aciona navegação original de boot e entrada em `f_MAIN_0100`. Menu
-completo, cenário, controle físico, partida e 1920×1080 continuam sem comprovação.
+executa código original recompilado, com superfícies em 640×480. Start chegou
+à tela original `f_MAIN_0100`; a confirmação A passou pelo interpretador
+original e entrou em `f_GAME_0100`, a tela “PICK SIDES”. Cenário, partida,
+controle físico e 1920×1080 continuam sem comprovação.
 
-A nova ponte opcional de entrada atende sete funções SDK verificadas do jogo.
-Mantém o processamento, os eventos e a navegação originais. Em execução nativa
-com Start automatizado, foram observados `kSTART_ENTER_GAME`, a navegação de
-`f_BOOT_0900` para `f_BOOT_0100`, `mc?cmd=startgame` e a inicialização de
-`f_BOOT_0300`. Nenhuma flag de fase ou propriedade de tela foi forçada.
-Uma entrada A sintética pela janela nativa também chegou a `mc?cmd=setautosave`
-e à confirmação original. Isso comprova entrada na navegação, sem comprovar gameplay.
+A cadeia de entrada foi observada em execução nativa: A=255 entregue por
+`XInputGetState` à rotina original, A=1,0 no buffer interno do controle,
+chamada e retorno de `feInputEvent`, navegação `f_MAIN_0100_b0_MAIN` e
+inicialização de `f_GAME_0100`. Nenhuma fase, propriedade de tela, filtro ou
+resultado de gameplay foi forçado. A ponte opcional atende sete funções SDK
+verificadas; o processamento e a navegação permanecem originais.
 
-Um Start curto também percorreu `f_MAIN_0100`, com foco original no primeiro
-botão e consultas de música. A captura mudou para o fundo dessa tela, mas ainda
-mostra “LOADING” e não contém os botões do menu. Uma confirmação curta enviada
-nessa fase não foi observada na amostragem de entrada; a causa está em investigação.
+A imagem capturada mostra “PICK SIDES” e parte da placa do controlador.
+Textos e controles ainda estão incompletos, com “LOADING” no fundo. Chegar à
+lógica dessa tela não comprova uma interface completa nem uma partida.
+O próximo experimento usa o direcional e confirmações separadas para passar
+pelo estado “Ready” e carregar a próxima tela pela lógica original.
 
-O caminho com controle conectado revelou bloqueios gráficos corrigidos:
-estado retido em texturas P8, desenhos com todos os estágios de textura
-desativados e realocação dos vértices da lista de 16 segmentos. Os triângulos
-originais com posição XYZW e cor ARGB8 já concluíram desenho na GPU e gravação
-da superfície, preservando W. As faixas originais de 912 e 854 índices também foram
-desenhadas; o limite anterior de 256 foi ampliado para 1.024, com saída limitada
-a 3.072 vértices. O sampler BC2 com repetição U/V observado foi exercitado
-sob a opção experimental existente. Texturas ativas, shaders, profundidade e limites de memória
-continuam validados separadamente.
+Os desenhos originais XYZW/ARGB8, índices mistos de 16/32 bits, malhas de
+912/854 índices e P8 de 128×128 com escrita de profundidade desativada já
+concluíram na GPU, com gravação nas superfícies do jogo. A saída permanece
+limitada a 3.072 vértices e os fetches mantêm seus limites de memória.
+As opções individuais de P8 continuam separadas; texturas ativas, shaders,
+samplers e profundidade passam por validações próprias.
 
-O caminho da tela principal usa também índices mistos de 16 e 32 bits e uma
-textura P8 de 128×128 com escrita de profundidade desativada. Ambos passaram
-na execução nativa, com limites de memória e estado preservados. A integração
-mais recente terminou pelo timeout de 300 segundos sem nova recusa gráfica.
+A geração efetivamente usada pelo executável inclui os overlays de entrada
+e diagnóstico. Os 45 gates existentes passaram. Os testes cobrem estruturas
+SDK, pilha, ponteiros inválidos, handles, desconexão, teclado, foco, limites,
+recusas e preservação de estado. O rastreamento registra a entrega do SDK e
+as etapas do evento; consultas repetidas de música ficam limitadas para não
+esgotar o orçamento antes da navegação. Entradas sintéticas não validam um
+controle físico.
 
-A compilação inclui a ponte na geração efetivamente usada pelo executável.
-Os 45 gates existentes passaram. Os testes verificam contratos do overlay, estruturas SDK, pilha,
-ponteiros inválidos, handles, desconexão, teclado e perda de foco. Os testes
-gráficos verificam perfis positivos, recusas independentes e limites. Entradas
-sintéticas não validam um controle físico.
-
-As execuções usam timeout finito de até 300 segundos e logs/saves isolados no
-D:. As aproximações de AA2/quincunx e o bypass artificial de espera de efeitos
-permanecem identificados. A ISO e o XBE originais permanecem intactos. O cache
-de readback reutiliza até quatro alocações; cada leitura ainda copia os pixels
-atuais e aguarda a GPU. Menos alocações não comprova aumento de FPS.
+As integrações usam timeout finito de até 300 segundos, com logs e saves
+isolados no D:. A última execução concluída terminou pelo timeout, sem nova
+recusa gráfica. ISO/XBE e insumos originais permanecem intactos. AA2/quincunx
+e o bypass artificial de espera de efeitos continuam experimentais, sem
+alegação de fidelidade NV2A ou DSP. O cache de readback reutiliza alocações,
+mas continua copiando os pixels atuais e aguardando a GPU.
 
 | Etapa | Evidência mais recente |
 | --- | --- |
-| Compilação | Host e overlay de entrada recompilados; testes focais passaram. |
-| Boot e entrada | Start automatizado chegou à tela original `f_MAIN_0100`; confirmação curta nessa fase ainda não observada na amostragem. |
-| Rendering | Índices mistos, malhas de 912/854 índices e P8 com Z-write desativado desenhados; fundo de MAIN apresentado, botões ainda ausentes. |
-| Gameplay | Menu completo, cenário, controle físico e partida curta ainda não comprovados. |
-| Áudio | PCM experimental do mixer original; bypass artificial de efeitos ainda necessário. DSP, canais, latência e continuidade não validados. |
+| Compilação | Host e overlays regenerados; 45 gates aprovados. |
+| Entrada e navegação | SDK → buffer original → VM → “PICK SIDES” comprovados com A automatizado. |
+| Rendering | Desenhos concluídos e tela “PICK SIDES” parcialmente composta; interface completa ainda pendente. |
+| Gameplay | Seleção de lado, cenário e partida curta ainda não comprovados. |
+| Áudio | PCM experimental do mixer original; bypass artificial ainda necessário. DSP, canais, latência e continuidade não validados. |
 
 ### Opções de diagnóstico e reprodução
 
@@ -79,7 +75,7 @@ WASD para analógico esquerdo e IJKL para direito. A janela nativa precisa ter
 foco; perder o foco solta todas as teclas.
 
 `-NativeInputVirtualOnly` desliga o provedor físico. Para reprodução limitada,
-`-NativeInputScript '140000:start:1800,150000:start:1800'` gera Start nos
+`-NativeInputScript '140000:start:400,220000:a:5000'` gera as entradas nos
 tempos indicados, em milissegundos desde a primeira consulta de entrada.
 O runner identifica essas entradas como automatizadas e registra as opções.
 Isso não substitui validação com um controle físico.
@@ -120,7 +116,7 @@ código recompilado proprietário, builds, saves e logs permanecem locais no D:.
 
 ### O que falta
 
-1. Identificar o estado do preload e do polling de entrada em MAIN; concluir a composição e comprovar o menu completo.
+1. Passar pela seleção de lado e pelo estado Ready na lógica original; concluir a composição da interface.
 2. Carregar um cenário e resolver o próximo bloqueio funcional observado com execuções limitadas.
 3. Comprovar uma imagem completa em 1920×1080.
 4. Validar controles e uma partida curta conduzida pela lógica recompilada original.

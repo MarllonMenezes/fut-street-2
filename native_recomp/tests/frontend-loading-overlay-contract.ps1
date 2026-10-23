@@ -11,6 +11,7 @@ foreach($name in $chunks.Keys){
 }
 $extra="void sub_00160DF0(void)`n{`nloc_00160E2E: ;`n}`nvoid sub_00160ED0(void)`n{`n}`n"
 [IO.File]::AppendAllText((Join-Path $inputDir 'recomp_0026.c'),$extra)
+[IO.File]::AppendAllText((Join-Path $inputDir 'recomp_0026.c'), "void sub_00160330(void)`n{`nloc_00160429: ;`nloc_00160433: ;`n}`n")
 [IO.File]::AppendAllText((Join-Path $inputDir 'recomp_0026.c'), "void sub_00160840(void)`n{`nloc_00160859: ;`n}`n")
 $chunks['recomp_0036.c']=@()
 [IO.File]::WriteAllText((Join-Path $inputDir 'recomp_0036.c'), "#include `"recomp_funcs.h`"`nloc_001D3F13: ;`nloc_001D3F2B: ;`n")
@@ -24,8 +25,14 @@ foreach($name in $chunks.Keys){
  foreach($site in $chunks[$name]){
   if(([regex]::Matches($text,"recomp_frontend_loading_trace\(0x${site}u")).Count -ne 1){throw 'Missing or duplicate hook.'}
  }
- $guards=if($name -eq 'recomp_0026.c'){7}elseif($name -eq 'recomp_0037.c'){0}else{2}
+ $guards=if($name -eq 'recomp_0026.c'){10}elseif($name -eq 'recomp_0037.c'){0}else{2}
  if(([regex]::Matches($text,'if \(recomp_frontend_loading_trace_enabled\(\)')).Count -ne $guards){throw 'Default-off guard missing.'}
+ if($name -eq 'recomp_0026.c') {
+  foreach($site in @('00160330','00160429','00160433')) {
+   if(([regex]::Matches($text,"recomp_frontend_command_trace\(0x${site}u")).Count -ne 1){throw 'Input formatter hook missing or duplicated.'}
+  }
+ }
+ if($name -eq 'recomp_0036.c' -and ([regex]::Matches($text,'MEM32\(ebp\+4u\)==0x00160429u')).Count -ne 2){throw 'Input VM resolution caller scope missing.'}
  if($name -eq 'recomp_0037.c') {
   foreach($site in @('001E6CAD','001E6CC9')) {
    if(([regex]::Matches($text,"if \(recomp_frontend_preload_trace_active\(\)\) recomp_frontend_member_trace\(0x${site}u, ebx, MEM32\(ebp-4u\), MEM32\(ebp-8u\), eax\);")).Count -ne 1){throw 'Member setter scope/operands missing.'}

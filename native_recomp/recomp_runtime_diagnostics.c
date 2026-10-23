@@ -169,7 +169,7 @@ void recomp_frontend_member_trace(uint32_t site, uint32_t target,
 void recomp_frontend_command_trace(uint32_t site, uint32_t name,
                                    uint32_t detail, uint32_t result)
 {
-    static atomic_uint counts[7];
+    static atomic_uint counts[10], song_count;
     unsigned index;
     switch (site) {
     case 0x00160DF0u: index = 0; break;
@@ -179,24 +179,37 @@ void recomp_frontend_command_trace(uint32_t site, uint32_t name,
     case 0x00160859u: index = 4; break;
     case 0x001D3F13u: index = 5; break;
     case 0x001D3F2Bu: index = 6; break;
+    case 0x00160330u: index = 7; break;
+    case 0x00160429u: index = 8; break;
+    case 0x00160433u: index = 9; break;
     default: return;
     }
     if (!recomp_frontend_loading_trace_enabled()) return;
     if (site == 0x00160840u) ++frontend_preload_scope;
     if (site == 0x00160859u && frontend_preload_scope) --frontend_preload_scope;
     unsigned count = atomic_load_explicit(&counts[index], memory_order_relaxed);
-    do {
-        if (count >= 64u) return;
-    } while (!atomic_compare_exchange_weak_explicit(&counts[index], &count,
-        count + 1u, memory_order_relaxed, memory_order_relaxed));
+    if (count >= 64u) return;
 #ifdef _WIN32
     DWORD saved_error = GetLastError();
 #endif
     char text[385];
     const char *status = frontend_trace_text(name, text);
+    /* Preserve the same total budget while keeping a recurring music query
+     * from hiding later original navigation and input commands. */
+    if (site == 0x00160ED0u && strcmp(status,"terminated")==0 &&
+        strcmp(text,"eatrax?sub=currentsong")==0) {
+        unsigned songs=atomic_load_explicit(&song_count,memory_order_relaxed);
+        do { if(songs>=2u) goto trace_done; }
+        while(!atomic_compare_exchange_weak_explicit(&song_count,&songs,songs+1u,
+            memory_order_relaxed,memory_order_relaxed));
+    }
+    do { if(count>=64u) goto trace_done; }
+    while(!atomic_compare_exchange_weak_explicit(&counts[index],&count,count+1u,
+        memory_order_relaxed,memory_order_relaxed));
     fprintf(stderr, "[FRONTEND-COMMAND-TRACE] site=%08X sample=%u name=%08X "
         "text=\"%s\" text_status=%s detail=%08X result=%08X read-only=1\n",
         site, count + 1u, name, text, status, detail, result);
+trace_done: ;
 #ifdef _WIN32
     SetLastError(saved_error);
 #endif

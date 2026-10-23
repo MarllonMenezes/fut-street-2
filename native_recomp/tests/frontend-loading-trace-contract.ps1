@@ -32,6 +32,28 @@ try {
    if($valid.Count -ne 64 -or $invalid.Count -ne 128){throw 'Safe text capture or escaping failed.'}
   }
  }
+ foreach($case in @('frontend-input','frontend-song')) {
+  foreach($mode in @($null,'0','2','1')) {
+   $env:RECOMP_FRONTEND_LOADING_TRACE=$mode
+   $ErrorActionPreference='Continue'
+   $lines=@(& $Executable $case 2>&1 | ForEach-Object { "$_" })
+   $code=$LASTEXITCODE
+   $ErrorActionPreference='Stop'
+   if($code -ne 0){throw 'Input/song trace changed registers, input or LastError.'}
+   $trace=@($lines | Where-Object {$_ -match '^\[FRONTEND-COMMAND-TRACE\]'})
+   $expected=if($mode -ne '1'){0}elseif($case -eq 'frontend-input'){192}else{64}
+   if($trace.Count -ne $expected){throw 'Input/song opt-in or budget failed.'}
+   if($mode -eq '1' -and $case -eq 'frontend-input') {
+    foreach($site in @('00160330','00160429','00160433')) {
+     if(@($trace | Where-Object {$_ -match "site=$site "}).Count -ne 64){throw 'Input per-site budget failed.'}
+    }
+   }
+   if($mode -eq '1' -and $case -eq 'frontend-song') {
+    if(@($trace | Where-Object {$_ -match 'text="eatrax\?sub=currentsong"'}).Count -ne 2 -or
+       @($trace | Where-Object {$_ -match 'text="_level0.feInputEvent"'}).Count -ne 62){throw 'Recurring query exhausted later-command budget.'}
+   }
+  }
+ }
  $env:RECOMP_FRONTEND_LOADING_TRACE='1'
  $ErrorActionPreference='Continue'
  $output=(@(& $Executable frontend-text-boundaries 2>&1) -join "`n")
