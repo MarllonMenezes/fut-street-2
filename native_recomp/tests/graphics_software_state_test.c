@@ -663,6 +663,18 @@ int main(void)
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 132;
     _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 133;
+    kelvin.textures[0].format=0x07830629;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 143;
+    kelvin.textures[0].offset=0x04000000u-172032u+4u;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 144;
+    kelvin.textures[0].offset=0x01476300;
+    kelvin.textures[0].format=0x07720E29;
+    _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 145;
+    kelvin.textures[0].format=0x05610E29;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 147;
+    _putenv_s("RECOMP_BC2_AA2_FAMILY_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 146;
     kelvin.textures[0].format=0x06510C29;
     _putenv_s("RECOMP_DXT1_NOISE_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 135;

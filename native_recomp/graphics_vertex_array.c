@@ -75,9 +75,11 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
     const int float_streams=formats[0]==0xC32u;
     if(!float_streams && formats[0]!=0x635u) return 0;
-    unsigned fetched=float_streams?3u:1u;
+    const int position_color=float_streams && formats[1]==0x440u;
+    unsigned fetched=float_streams?(position_color?2u:3u):1u;
     for(unsigned slot=1;slot<16;++slot) {
-        uint32_t expected=float_streams?(slot==1?0x822u:slot==2?0x440u:0xC02u):0x602u;
+        uint32_t expected=float_streams?(slot==1?(position_color?0x440u:0x822u):
+            slot==2 && !position_color?0x440u:0xC02u):0x602u;
         if(formats[slot]!=expected || (slot>=fetched && (required&(1u<<slot)) && attribute_valid[slot]!=15)) return 0;
     }
     if((required&1u)==0) return 0;
@@ -92,7 +94,7 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
             unsigned dst=tri*3+corner;
             memcpy(next.vertices[dst],attributes,sizeof(next.vertices[dst]));
             for(unsigned slot=0;slot<fetched;++slot) {
-                size_t stride=float_streams?(slot==0?12u:slot==1?8u:4u):6u;
+                size_t stride=float_streams?(slot==0?12u:position_color?4u:slot==1?8u:4u):6u;
                 uint64_t rel=(uint64_t)offsets[slot]+(uint64_t)a->indices[order[corner]]*stride;
                 uint8_t raw[12];
                 if(rel>view_a->size || view_a->size-rel<stride ||
@@ -103,7 +105,7 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
                 if(!float_streams) {
                     int16_t component[3];memcpy(component,raw,sizeof(component));
                     for(unsigned i=0;i<3;++i)v[i]=(float)component[i];
-                } else if(slot<2) memcpy(v,raw,stride);
+                } else if(slot==0 || (!position_color && slot==1)) memcpy(v,raw,stride);
                 else {
                     uint32_t color;memcpy(&color,raw,sizeof(color));
                     v[0]=(float)((color>>16)&255u)/255.0f;

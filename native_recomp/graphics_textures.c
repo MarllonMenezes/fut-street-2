@@ -51,15 +51,17 @@ FutGraphicsTextureStatus fut_graphics_texture_plan(const FutGraphicsTextureState
         *plan=next;return FUT_TEXTURE_READY;
     }
     if ((state->format & ~0x0FFF0003u) == 0x00000C28u ||
-        (state->format & ~0x0FFF0003u) == 0x00000F28u) {
-        unsigned block_bytes=((state->format>>8)&255u)==0x0Fu?16u:8u;
+        (state->format & ~0x0FFF0003u) == 0x00000F28u ||
+        ((state->format & ~0x0FFF0003u) == 0x00000E28u && ((state->format>>16)&15u)>1)) {
+        unsigned color=(state->format>>8)&255u;
+        unsigned block_bytes=color==0x0Cu?8u:16u;
         unsigned u=(state->format>>20)&15u,v=(state->format>>24)&15u;
         unsigned levels=(state->format>>16)&15u,largest=u>v?u:v;
         if ((select!=1 && select!=2) || u<2 || u>12 || v<2 || v>12 || !levels || levels>largest+1)
             return FUT_TEXTURE_UNSUPPORTED;
         FutGraphicsTexturePlan next={0};
         next.width=1u<<u;next.height=1u<<v;next.pitch=(next.width/4)*block_bytes;
-        next.storage=block_bytes==8?1:6;next.dma_context=select;next.mip_levels=levels;
+        next.storage=color==0x0Cu?1:color==0x0Eu?3:6;next.dma_context=select;next.mip_levels=levels;
         for(unsigned level=0;level<levels;++level) {
             unsigned w=next.width>>level,h=next.height>>level;
             next.span+=((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*block_bytes;

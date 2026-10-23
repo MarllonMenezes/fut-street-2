@@ -92,22 +92,28 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int bc1_header=(t0->format&~0x0FFF0000u)==0x00000C29u;
     int projective_bc1=bc1_header && u>=2 && u<=12 && v>=2 && v<=12 &&
         levels && levels<=largest+1 && fut_graphics_dxt1_noise_approximation_enabled();
+    int argb_header=(t0->format&~0x0FFF0000u)==0x00000629u;
+    int projective_argb=argb_header && u<=12 && v<=12 && levels && levels<=largest+1;
+    int bc2_projective_header=(t0->format&~0x0FFF0000u)==0x00000E29u && (levels>1 || t0->filter==0x02063F1Bu);
+    int projective_bc2=bc2_projective_header && u>=2 && u<=12 && v>=2 && v<=12 &&
+        levels && levels<=largest+1 && fut_graphics_bc2_aa2_family_approximation_enabled();
     int projective_bc3=t0->format==0x09A30F29u;
     unsigned projective_span=projective_bc3?688128u:86016u;
-    if(projective_bc1) {
+    if(projective_bc1 || projective_bc2 || projective_argb) {
         projective_span=0;
         for(unsigned level=0;level<levels;++level) {
             unsigned w=(1u<<u)>>level,h=(1u<<v)>>level;
-            projective_span+=((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*8u;
+            projective_span+=projective_argb?(w?w:1u)*(h?h:1u)*4u:
+                ((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*(projective_bc1?8u:16u);
         }
     }
     int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
-        (t0->format==0x07730629u || projective_bc1 || projective_bc3) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        (projective_argb || projective_bc1 || projective_bc2 || projective_bc3) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
         t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
         t0->filter==0x02063F1Bu && (t0->address==0x10101u ||
             (projective_bc1 && t0->address==0x10303u)) &&
-        !(t0->offset&(projective_bc3?15u:projective_bc1?7u:3u)) && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
-    if((t0->format==0x07730629u || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
+        !(t0->offset&((projective_bc3 || projective_bc2)?15u:projective_bc1?7u:3u)) && projective_span<=0x04000000u && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
+    if((argb_header || bc2_projective_header || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
         (!observed_projective_texture || fut_graphics_software_draw_ready(s)))return 0;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
@@ -152,9 +158,9 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     /* The new scope requires the captured baseline and enabled texture too;
      * empty software controls or a disabled texture cannot bypass its gate. */
     if(t0->format==0x09A10E29u && !untextured &&
-        (!(bc2_c9df00 || bc2_family) || fut_graphics_software_draw_ready(s))) return 0;
+        (!(bc2_c9df00 || bc2_family || (projective_bc2 && observed_projective_texture)) || fut_graphics_software_draw_ready(s))) return 0;
     if(bc2_format && !untextured && t0->format!=0x06610E29u && t0->format!=0x09A10E29u &&
-        (!bc2_family || fut_graphics_software_draw_ready(s))) return 0;
+        (!(bc2_family || (projective_bc2 && observed_projective_texture)) || fut_graphics_software_draw_ready(s))) return 0;
     if(!fut_graphics_software_draw_ready(s)) {
         /* User-approved experiment, ONLY the observed ARGB8 AA2 baseline.
          * Ordinary texture/shader/Z/S validation remains mandatory. */

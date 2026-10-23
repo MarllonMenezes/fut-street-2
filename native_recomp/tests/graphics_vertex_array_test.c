@@ -61,6 +61,17 @@ static int test_float_streams(void)
     CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7) && !memcmp(&out,&before,sizeof(out)));
     formats[2]=0x440;
     CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,15));
+    formats[1]=0x440;formats[2]=0xC02;offsets[1]=80;
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,3));
+    for(unsigned i=0;i<6;++i) {
+        unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[0],positions[src],12) && v[0][3]==1 && out.defined[i]==3);
+        CHECK(v[1][0]==((colors[src]>>16)&255u)/255.0f && v[1][1]==((colors[src]>>8)&255u)/255.0f &&
+            v[1][2]==(colors[src]&255u)/255.0f && v[1][3]==(colors[src]>>24)/255.0f);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_view,&short_view,formats,offsets,attrs,valid,3) && !memcmp(&out,&before,sizeof(out)));
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7));
     return 0;
 }
 int main(void)
@@ -284,11 +295,14 @@ int main(void)
     /* Large profile strip: keep degenerate indices and parity exactly as
      * supplied, including beyond the old 256-index diagnostic limit. */
     memcpy(memory,positions,sizeof(positions));
-    for(unsigned length=912;length<=1024;length+=112) {
+    const unsigned lengths[]={912,1024,2315,FUT_VERTEX_ARRAY_INDEX_CAPACITY};
+    for(unsigned sample=0;sample<sizeof(lengths)/sizeof(lengths[0]);++sample) {
+        unsigned length=lengths[sample];
         fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,6));
-        for(unsigned i=0;i<length;i+=2)
+        for(unsigned i=0;i+1<length;i+=2)
             CHECK(fut_graphics_vertex_array_indices(&a,(i%4)|(((i+1)%4)<<16)));
-        if(length==1024) CHECK(!fut_graphics_vertex_array_indices(&a,0) &&
+        if(length&1u) CHECK(fut_graphics_vertex_array_index32(&a,(length-1)%4));
+        if(length==FUT_VERTEX_ARRAY_INDEX_CAPACITY) CHECK(!fut_graphics_vertex_array_indices(&a,0) &&
             !fut_graphics_vertex_array_index32(&a,0));
         CHECK(fut_graphics_vertex_array_end(&a));
         CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&va,&vb,

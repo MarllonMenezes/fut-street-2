@@ -21,34 +21,37 @@ recompilada atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, com B
 e Inglaterra, e iniciou o carregamento seguinte. Cenário jogável, partida,
 controle físico e 1920×1080 ainda não foram comprovados.
 
-O carregamento atravessou materiais BC1 com mipmaps e gravou novos desenhos
-nas superfícies originais. Uma textura BC1 de 128×128 com dois níveis foi
-usada em lotes de **24 e 6 vértices**, com **9.800 e 305.871 invocações de
-pixel shader**, respectivamente. O frame novo completo ainda não foi apresentado.
+Os materiais originais **BC2 e BC3 com mipmaps já concluíram desenhos na
+GPU e gravação nas superfícies do jogo**. BC3 de 1024×512 com três níveis
+produziu um lote de 30 vértices e 529.028 invocações de pixel shader. Na
+execução final, BC2 com dois níveis produziu um lote de 150 vértices e
+95.861 invocações. Esses números comprovam lotes rasterizados; o frame
+completo do cenário e uma partida ainda não foram apresentados.
 
-O armazenamento BC3/DXT45 agora preserva os blocos originais de cor e alpha
-em todos os mipmaps. O caso 1024×512 de três níveis exige 688.128 bytes.
-Upload, readback de ambos os níveis de uma textura sintética, sampler e
-limites passaram na GPU. **BC3 ainda não foi exercitado pela integração
-nativa deste incremento**: a ordem de materiais encontrou outros bloqueios antes.
+O upload BC2 reutiliza o caminho de blocos BC1/BC3, preservando cor e alpha
+originais. O gate ARGB8 agora valida dimensões, níveis e spans em vez de um
+único tamanho. O sampler BC2 admite o bias observado também com um nível,
+com LOD limitado a zero. Todos mantêm os controles e opt-ins experimentais.
+As referências públicas de xemu/nxdk e o mapeamento do XboxRecomp orientaram
+a implementação; não houve troca integral de runtime nem cópia de código externo.
 
-O experimento BC1 valida dimensões, quantidade de níveis e spans, substituindo
-a lista de tamanhos; mantém os opt-ins conjuntos, filtro e controles observados.
-Wrap/clamp são traduzidos pelo sampler existente. Streams originais, clip e W
-assinado permanecem preservados. Interpolação, LOD, dithering e AA2 do NV2A
-continuam sem medição de fidelidade; o ruído BC1 desconhecido é omitido.
+Uma captura revelou um lote de 2.315 índices. A capacidade limitada passou
+a 2.560 índices e 7.680 vértices expandidos, mantendo ordem e paridade dos
+triângulos. Também foi implementado o layout observado de posição float3 no
+slot 0 e cor ARGB8 no slot 1. Os testes conferem ambos, limites de memória,
+recusa de overflow e preservação do resultado quando uma leitura falha.
 
-**Bloqueio da execução final:** ARGB8 `0x07830629`, 256×128 com três mipmaps.
-O upload dos 172.032 bytes foi concluído, mas o gate experimental ainda admite
-somente o tamanho ARGB8 anterior. O próximo experimento valida essa família
-por dimensões e spans, como em BC1. Outra rodada encontrou BC2 `0x07720E29`
-com dois níveis, ainda pendente. A ordem dos materiais varia entre execuções.
+**Bloqueio atual:** um shader original de 16 instruções usa `EXP` (ILU=5),
+ainda não traduzida. A execução final encerrou com diagnóstico explícito
+nessa compilação. O próximo experimento implementa e valida a operação
+conforme as referências NV2A, incluindo sua execução em paralelo com MUL.
+A última captura apresentada ainda mostra a tela de carregamento.
 
-Os **45 gates obrigatórios passaram**. A validação essencial conferiu mipmaps
-BC3 na GPU, recusa de alinhamento/span inválidos e os limites do experimento
-BC1. A integração nativa usou timeout de 300 segundos e logs/saves isolados
-no D:, encerrando de forma diagnóstica. Clears parciais, zero, NaN e W extremos
-continuam protegidos. Não houve substituição de textura nem conclusão falsa.
+Os **45 gates obrigatórios passaram**. Os testes essenciais incluem leitura
+de volta dos mipmaps BC2/BC3 na GPU, limites das famílias de textura e os
+novos lotes/layouts. A execução nativa final usou timeout de 300 segundos,
+logs/saves isolados no D: e terminou no bloqueio acima antes do limite.
+AA2, interpolação, LOD e precisão NV2A permanecem sem comprovação de fidelidade.
 
 ISO/XBE e insumos originais permanecem intactos. AA2/quincunx, aproximações de
 texturas, PCM e bypass artificial de espera de efeitos continuam experimentais,
@@ -58,7 +61,7 @@ sem alegação de fidelidade NV2A ou DSP. Gameplay e navegação não foram for�
 | --- | --- |
 | Compilação | Executável nativo atualizado; 45 gates aprovados. |
 | Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | BC1 com mipmaps rasterizado e gravado; ARGB8 256×128 bloqueou a execução final. |
+| Rendering | BC2/BC3 com mipmaps rasterizados e gravados; shader com EXP bloqueia a continuação. |
 | Gameplay | Cenário jogável e partida curta ainda não comprovados. |
 | Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
 
@@ -67,6 +70,7 @@ sem alegação de fidelidade NV2A ou DSP. Gameplay e navegação não foram for�
 `-ProjectiveAa2Approximation`, junto de `-Aa2Approximation`, habilita o
 experimento de interpolação em perspectiva. É desligado por padrão e exige
 prova separada das coordenadas; o caminho afim continua exigindo W=1.
+A família BC2 com o filtro projetivo exige também `-Bc2Aa2FamilyApproximation`.
 Os casos BC1 observados também exigem `-Dxt1NoiseApproximation`: o ruído
 NV2A desconhecido continua omitido e identificado. Mipmaps são carregados
 integralmente, sem substituir a textura pelo nível zero.
