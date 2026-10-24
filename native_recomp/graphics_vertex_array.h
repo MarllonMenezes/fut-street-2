@@ -18,8 +18,8 @@ int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *array, uint32_t in
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);
 /* Transactionally builds the existing triangle-list input. Only the observed
- * S16x3/stride-6 position profile or observed tightly packed float3/float2,
- * ARGB8 and S16 scalar descriptors in their original slots are admitted.
+ * S16x3/stride-6 position profile or bounded strided float3/float2,
+ * ARGB8, S16 scalar and packed normalized11/11/10 descriptors in their original slots are admitted.
  * Success defines only [0,count) vertex/mask entries and batch metadata;
  * inactive capacity is untouched. Failure preserves the entire output. */
 int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *array,

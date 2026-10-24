@@ -85,6 +85,44 @@ static int test_float_streams(void)
     }
     before=out;
     CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_extended,&short_extended,formats,offsets,attrs,valid,0x1B) && !memcmp(&out,&before,sizeof(out)));
+    const uint32_t packed[]={0x3FFu|(0x3FFu<<11)|(0x1FFu<<22),
+        0x400u|(0x400u<<11)|(0x200u<<22),1u|(0x7FFu<<11)|(1u<<22),0};
+    const float decoded[4][3]={{1,1,1},{-1,-1,-1},{1.0f/1023,-1.0f/1023,1.0f/511},{0,0,0}};
+    memcpy(memory+96,packed,sizeof(packed));formats[4]=0x416;
+    extended.size=112;short_extended.size=111;
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&extended,&extended,formats,offsets,attrs,valid,0x1B));
+    for(unsigned i=0;i<6;++i) {
+        CHECK(!memcmp(out.vertices[i][4],decoded[order[i]],12) && out.vertices[i][4][3]==1 && out.defined[i]==0x1B);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_extended,&short_extended,formats,offsets,attrs,valid,0x1B) && !memcmp(&out,&before,sizeof(out)));
+    memset(memory,0xA5,sizeof(memory));
+    for(unsigned i=0;i<4;++i){memcpy(memory+i*16,positions[i],12);memcpy(memory+64+i*12,&colors[i],4);}
+    for(unsigned i=1;i<16;++i)formats[i]=0xC02;
+    formats[0]=0x1032;formats[1]=0xC40;offsets[1]=64;
+    extended.size=104;short_extended.size=103;
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&extended,&extended,formats,offsets,attrs,valid,3));
+    for(unsigned i=0;i<6;++i){unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[0],positions[src],12) && v[0][3]==1 && out.defined[i]==3);
+        CHECK(v[1][0]==((colors[src]>>16)&255u)/255.0f && v[1][1]==((colors[src]>>8)&255u)/255.0f &&
+            v[1][2]==(colors[src]&255u)/255.0f && v[1][3]==(colors[src]>>24)/255.0f);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_extended,&short_extended,formats,offsets,attrs,valid,3) && !memcmp(&out,&before,sizeof(out)));
+    formats[1]=0x340;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&extended,&extended,formats,offsets,attrs,valid,3) && !memcmp(&out,&before,sizeof(out)));
+    const int16_t short_positions[4][3]={{-32768,0,32767},{1,-2,3},{4,5,-6},{7,8,9}};
+    memcpy(memory,short_positions,sizeof(short_positions));memcpy(memory+48,uv,sizeof(uv));
+    for(unsigned i=1;i<16;++i)formats[i]=0x602;
+    formats[0]=0x635;formats[1]=0x822;offsets[1]=48;
+    extended.size=80;short_extended.size=79;
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&extended,&extended,formats,offsets,attrs,valid,3));
+    for(unsigned i=0;i<6;++i){unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        for(unsigned c=0;c<3;++c)CHECK(v[0][c]==short_positions[src][c]);
+        CHECK(v[0][3]==1 && !memcmp(v[1],uv[src],8) && v[1][2]==0 && v[1][3]==1 && out.defined[i]==3);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_extended,&short_extended,formats,offsets,attrs,valid,3) && !memcmp(&out,&before,sizeof(out)));
     return 0;
 }
 int main(void)

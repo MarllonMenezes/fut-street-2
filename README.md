@@ -28,27 +28,44 @@ Na execução original, uma textura P8 de dois níveis e 5.120 bytes participou
 de um desenho com 2.004 invocações de pixel shader e gravação na superfície.
 Não são gerados mipmaps substitutos.
 
-Também foram implementados o atributo escalar S16 observado no slot 4 e a
-instrução de vértice **SGE**, com testes numéricos. Os atributos permanecem nos
-slots originais. Lotes indexados comportam até 4.096 índices, sem truncamento;
-a montagem copia somente os vértices ativos, preservando a saída em falhas.
+O tradutor também implementa **SLT**, exigido pelo shader original de
+18 instruções capturado. O programa completo passou pela tradução,
+compilação HLSL e criação do recurso D3D11/WARP. Testes GPU verificam
+comparações por componente, igualdade e dependência do segundo operando.
+SLT/SGE usam comparações do host; a ordenação especial NV de zeros com sinais
+e NaNs não está reproduzida nem validada em hardware.
 
-A rodada nativa final ultrapassou a recusa de coordenadas do lote capturado:
-**3.186 vértices, 6.372 entradas AA2 e 436.048 invocações de pixel shader**
-concluíram a gravação na superfície original. Isso não comprova apresentação
-desse desenho nem gameplay. A última imagem apresentada ainda mostra “LOADING”.
+A leitura de vértices admite o formato **CMP normalizado 11/11/10**, além de
+S16 e dos formatos anteriores, nos slots originais. Stride e tamanho do
+atributo são tratados separadamente, permitindo registros intercalados sem
+ler o preenchimento. Os testes conferem extremos, frações, os últimos bytes
+do buffer, preservação da saída em falhas e posição S16 com UV float2.
+Não há remapeamento de atributos nem descarte de índices.
 
-O certificado projetivo experimental aceita coordenadas de tela até 2²¹
-somente para vértices com W positivo já fora dos planos XY de clipping;
-os demais limites e o caminho afim permanecem. O teste GPU compara cor e UV
-com referência racional independente. Esse novo caso usa erro absoluto máximo
-permitido de 1/65.536; os testes anteriores mantêm sua tolerância. A precisão
-NV2A não foi medida.
+O certificado projetivo experimental aceita coordenadas de tela até 2²³
+somente para vértices fora dos limites XY definidos pelo módulo de W;
+preserva o sinal de W para clipping, com os demais limites e o caminho afim
+mantidos. O teste GPU com W de sinais mistos confere cor e UV contra referência
+racional independente: erro máximo observado de aproximadamente 3,58×10⁻⁷.
+Os casos de clipping distante permitem erro absoluto máximo de 1/65.536;
+os testes anteriores mantêm sua tolerância. A precisão NV2A não foi medida.
 
-**Bloqueio atual:** shader original de 18 instruções recusado na tradução,
-contendo MAC 11 ainda sem implementação. A submissão permanece sem conclusão.
-O próximo experimento é implementar e testar essa operação antes de repetir
-a execução nativa limitada.
+A execução original já ultrapassou as recusas de SLT, de coordenadas com W
+negativo e do descritor CMP, executando desenhos adicionais com gravação na
+superfície do jogo. Isso não comprova apresentação desses desenhos nem
+gameplay. A última imagem verificada ainda mostra “LOADING”.
+
+O lote original de 633 índices com posição S16 e UV float2 passou pela
+montagem transacional e execução do vertex shader. A combinação observada de
+P8 com um nível, filtro sem bias e endereço projetivo também passou do gate
+anterior, mantendo opções experimentais e validação de paleta/sampler.
+
+**Bloqueio atual:** o gate de controles gráficos recusa um desenho com duas
+texturas ativas: BC2 128×128 com dois níveis no estágio 0 e BC1 128×128 com
+dois níveis no estágio 1. Os dois uploads concluíram; a submissão não recebeu
+conclusão. O próximo experimento exige validar os controles dos dois estágios
+e a combinação dos samplers/shader antes de habilitar esse desenho.
+A captura final apresentada ainda mostra “LOADING”.
 
 Os **45 gates obrigatórios passaram**. A execução final usou timeout de
 300 segundos e logs/saves isolados no D:, encerrando com diagnóstico antes
@@ -65,7 +82,7 @@ do REA não suporta Windows neste ambiente.
 | --- | --- |
 | Compilação | Executável nativo atualizado; 45 gates aprovados. |
 | Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | P8 com mipmaps e lote antes recusado rasterizados; shader de 18 instruções bloqueia a continuação. |
+| Rendering | Novos layouts de vértice executados; combinação BC2/BC1 em dois estágios bloqueada pelos controles. |
 | Gameplay | Cenário jogável e partida curta ainda não comprovados. |
 | Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
 

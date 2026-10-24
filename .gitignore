@@ -174,3 +174,5 @@
 # Keep documentation local except for the public root README.
 **/*.md
 !/README.md
+
+!native_recomp/graphics_vertex_format.h

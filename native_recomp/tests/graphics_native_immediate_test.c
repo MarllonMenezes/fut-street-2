@@ -80,8 +80,11 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
     CHECK(!fut_native_immediate_constant_coordinates(far_domain,3),63);
     far_domain[0].clip[0]=far_domain[0].clip[1]=0;
     CHECK(!fut_native_immediate_projective_coordinates(far_domain,3),64);
-    far_domain[0].clip[0]=1024;far_domain[0].screen[0]=0x1p21f+1;
+    far_domain[0].clip[0]=1024;far_domain[0].screen[0]=0x1p23f+1;
     CHECK(!fut_native_immediate_projective_coordinates(far_domain,3),65);
+    far_domain[0].screen[0]=-0x1.8p22f;far_domain[0].screen[3]=far_domain[0].clip[3]=-.001f;
+    CHECK(fut_native_immediate_projective_coordinates(far_domain,3)==15,66);
+    CHECK(!fut_native_immediate_constant_coordinates(far_domain,3),67);
     domain[0].clip[0]=INFINITY;
     CHECK(!fut_native_immediate_constant_coordinates(domain,3),57);
     ID3D11GeometryShader *bound=NULL;ID3D11Buffer *target=NULL;

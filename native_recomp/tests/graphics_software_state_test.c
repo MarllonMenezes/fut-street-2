@@ -686,6 +686,14 @@ int main(void)
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 150;
     kelvin.textures[0].format=0x06610B29;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 153;
+    kelvin.textures[0].format=0x07810B29;kelvin.textures[0].filter=0x02062000;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 154;
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 155;
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
+    kelvin.textures[0].filter=0x02062001;
+    if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 156;
+    kelvin.textures[0].filter=0x02063F1B;
     kelvin.textures[0].palette|=4;
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 151;
     kelvin.textures[0].palette&=~4u;

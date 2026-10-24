@@ -1,5 +1,6 @@
 #include "graphics_vertex_array.h"
 #include <stddef.h>
+#include "graphics_vertex_format.h"
 #include <string.h>
 
 /* Every active vertex and its mask is fully assigned before commit. Inactive
@@ -87,12 +88,12 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 || a->input_mode!=1 || a->count<3 ||
         a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
-    const int float_streams=formats[0]==0xC32u;
+    const int float_streams=(formats[0]&255u)==0x32u && fut_graphics_vertex_payload(formats[0]);
     if(!float_streams && formats[0]!=0x635u) return 0;
     unsigned fetched_mask=1u;
     for(unsigned slot=1;slot<16;++slot) {
         uint32_t format=formats[slot];
-        int enabled=float_streams && (format==0xC32u || format==0x822u || format==0x440u || format==0x215u);
+        int enabled=fut_graphics_vertex_payload(format);
         if(!enabled && format!=(float_streams?0xC02u:0x602u)) return 0;
         if(enabled)fetched_mask|=1u<<slot;
         else if((required&(1u<<slot)) && attribute_valid[slot]!=15)return 0;
@@ -109,20 +110,31 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
             unsigned dst=tri*3+corner;
             memcpy(next.vertices[dst],attributes,sizeof(next.vertices[dst]));
             for(unsigned slot=0;slot<16;++slot) if(fetched_mask&(1u<<slot)) {
-                size_t stride=float_streams?(formats[slot]>>8):6u;
+                int short_position=!float_streams && slot==0;
+                size_t stride=short_position?6u:(formats[slot]>>8);
+                size_t payload=short_position?6u:fut_graphics_vertex_payload(formats[slot]);
                 uint64_t rel=(uint64_t)offsets[slot]+(uint64_t)a->indices[order[corner]]*stride;
                 uint8_t raw[12];
-                if(rel>view_a->size || view_a->size-rel<stride ||
+                if(rel>view_a->size || view_a->size-rel<payload ||
                     rel>UINT32_MAX-view_a->guest_address ||
-                    !read(ctx,view_a->guest_address+(uint32_t)rel,raw,stride)) return 0;
+                    !read(ctx,view_a->guest_address+(uint32_t)rel,raw,payload)) return 0;
                 float *v=next.vertices[dst][slot];
                 v[0]=v[1]=v[2]=0.0f;v[3]=1.0f;
-                if(!float_streams) {
+                if(short_position) {
                     int16_t component[3];memcpy(component,raw,sizeof(component));
                     for(unsigned i=0;i<3;++i)v[i]=(float)component[i];
-                } else if(formats[slot]==0x215u) {
+                } else if((formats[slot]&255u)==0x16u) {
+                    uint32_t packed;memcpy(&packed,raw,4);
+                    for(unsigned c=0;c<3;++c) {
+                        unsigned width=c==2?10u:11u,shift=c==2?22u:c*11u;
+                        unsigned bits=(packed>>shift)&((1u<<width)-1u);
+                        int signed_value=(int)bits-(bits&(1u<<(width-1))?(1<<width):0);
+                        float normalized=(float)signed_value/(float)((1u<<(width-1))-1u);
+                        v[c]=normalized < -1.0f?-1.0f:normalized;
+                    }
+                } else if((formats[slot]&255u)==0x15u) {
                     int16_t value;memcpy(&value,raw,2);v[0]=(float)value;
-                } else if(formats[slot]==0xC32u || formats[slot]==0x822u) memcpy(v,raw,stride);
+                } else if((formats[slot]&255u)==0x32u || (formats[slot]&255u)==0x22u) memcpy(v,raw,payload);
                 else {
                     uint32_t color;memcpy(&color,raw,sizeof(color));
                     v[0]=(float)((color>>16)&255u)/255.0f;
