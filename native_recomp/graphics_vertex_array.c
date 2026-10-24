@@ -35,7 +35,7 @@ int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *a)
 
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *a,uint32_t packed)
 {
-    if(!a || !a->active || a->ready || a->input_mode==2 ||
+    if(!a || !a->active || a->ready || (a->input_mode && a->input_mode!=1) ||
         (a->primitive==2 ? a->count>30u : a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY-2)) return 0;
     a->input_mode=1;
     a->indices[a->count++]=(uint16_t)packed;
@@ -45,16 +45,29 @@ int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *a,uint32_t packed)
 
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *a,uint32_t word)
 {
-    if(!a || !a->active || a->ready || a->input_mode==1 ||
+    if(!a || !a->active || a->ready || (a->input_mode && a->input_mode!=2) ||
         a->inline_count>=FUT_IMMEDIATE_CAPACITY*6u) return 0;
     a->input_mode=2;a->inline_words[a->inline_count++]=word;return 1;
 }
 
 int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *a,uint32_t index)
 {
-    if(!a || !a->active || a->ready || a->primitive!=6 || a->input_mode==2 ||
+    if(!a || !a->active || a->ready || a->primitive!=6 || (a->input_mode && a->input_mode!=1) ||
         a->count>=FUT_VERTEX_ARRAY_INDEX_CAPACITY) return 0;
     a->input_mode=1;a->indices[a->count++]=index;return 1;
+}
+
+int fut_graphics_vertex_array_draw_arrays(FutGraphicsVertexArray *a,uint32_t range)
+{
+    unsigned first=range&0x00FFFFFFu,count=(range>>24)+1u;
+    if(!a || !a->active || a->ready || a->primitive!=6 ||
+        (a->input_mode && a->input_mode!=3) || a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
+        count>FUT_VERTEX_ARRAY_INDEX_CAPACITY-a->count ||
+        (a->count && first!=a->indices[a->count-1]+1u)) return 0;
+    /* A range is vertex-record addressing, not a guest index packet. Values
+     * remain bounded by the original DMA span at the transactional fetch. */
+    for(unsigned i=0;i<count;++i)a->indices[a->count+i]=first+i;
+    a->count+=count;a->input_mode=3;return 1;
 }
 
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
@@ -65,9 +78,9 @@ int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
         a->active=0;a->ready=1;return 1;
     }
     if(a->primitive!=6) return 0;
-    if((a->input_mode==1 && a->count<3) ||
+    if(((a->input_mode==1 || a->input_mode==3) && a->count<3) ||
         (a->input_mode==2 && (a->inline_count%6u || a->inline_count<18u)) ||
-        !a->input_mode) return 0;
+        !a->input_mode || a->input_mode>3) return 0;
     a->active=0;a->ready=1;return 1;
 }
 
@@ -85,16 +98,19 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
     FutGraphicsImmediate next;
     uint64_t draw_count;
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
-        !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 || a->input_mode!=1 || a->count<3 ||
+        !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 ||
+        (a->input_mode!=1 && a->input_mode!=3) || a->count<3 ||
         a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
-    const int float_streams=(formats[0]&255u)==0x32u && fut_graphics_vertex_payload(formats[0]);
+    const unsigned position_type=formats[0]&255u;
+    const int float_streams=(position_type==0x32u || position_type==0x42u) &&
+        fut_graphics_vertex_payload(formats[0]);
     if(!float_streams && formats[0]!=0x635u) return 0;
     unsigned fetched_mask=1u;
     for(unsigned slot=1;slot<16;++slot) {
         uint32_t format=formats[slot];
         int enabled=fut_graphics_vertex_payload(format);
-        if(!enabled && format!=(float_streams?0xC02u:0x602u)) return 0;
+        if(!enabled && !fut_graphics_vertex_disabled(format)) return 0;
         if(enabled)fetched_mask|=1u<<slot;
         else if((required&(1u<<slot)) && attribute_valid[slot]!=15)return 0;
     }
@@ -114,7 +130,7 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
                 size_t stride=short_position?6u:(formats[slot]>>8);
                 size_t payload=short_position?6u:fut_graphics_vertex_payload(formats[slot]);
                 uint64_t rel=(uint64_t)offsets[slot]+(uint64_t)a->indices[order[corner]]*stride;
-                uint8_t raw[12];
+                uint8_t raw[16];
                 if(rel>view_a->size || view_a->size-rel<payload ||
                     rel>UINT32_MAX-view_a->guest_address ||
                     !read(ctx,view_a->guest_address+(uint32_t)rel,raw,payload)) return 0;
@@ -134,7 +150,8 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
                     }
                 } else if((formats[slot]&255u)==0x15u) {
                     int16_t value;memcpy(&value,raw,2);v[0]=(float)value;
-                } else if((formats[slot]&255u)==0x32u || (formats[slot]&255u)==0x22u) memcpy(v,raw,payload);
+                } else if((formats[slot]&255u)==0x32u || (formats[slot]&255u)==0x22u ||
+                    (formats[slot]&255u)==0x42u) memcpy(v,raw,payload);
                 else {
                     uint32_t color;memcpy(&color,raw,sizeof(color));
                     v[0]=(float)((color>>16)&255u)/255.0f;
@@ -160,13 +177,12 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
     FutGraphicsImmediate next;
     if(!a || !out || !formats || !attributes || !attribute_valid || a->active || !a->ready ||
         a->input_mode!=2 || a->inline_count<18u || a->inline_count%6u) return 0;
-    int legacy_profile=1, captured_stride6_profile=1;
     for(unsigned slot=0;slot<16;++slot) {
         uint32_t expected=slot==0?0x32u:slot==3?0x40u:slot==9?0x22u:0x02u;
-        if(formats[slot]!=expected) legacy_profile=0;
-        if(formats[slot]!=(expected|0x600u)) captured_stride6_profile=0;
+        /* Same inline packing for strips and quads: DMA record spacing is
+         * irrelevant, while every active TYPE/SIZE still matches the tuple. */
+        if((formats[slot]&255u)!=expected) return 0;
     }
-    if(!legacy_profile && !captured_stride6_profile) return 0;
     unsigned vertices=a->inline_count/6u;
     uint64_t draw_count=(uint64_t)(vertices-2)*3u;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY) return 0;

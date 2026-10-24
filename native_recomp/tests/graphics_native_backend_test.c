@@ -39,6 +39,87 @@ static uint32_t guest_word(unsigned offset)
 {
     uint32_t word; memcpy(&word, guest_memory + offset, 4); return word;
 }
+static int capture_test_write(const char *path,uint32_t value)
+{
+    FILE *file=fopen(path,"wb");if(!file)return 0;
+    int ok=fwrite(&value,sizeof(value),1,file)==1;
+    return fclose(file)==0 && ok;
+}
+static int capture_test_read(const char *path,uint32_t expected)
+{
+    FILE *file=fopen(path,"rb");if(!file)return 0;
+    uint32_t value=0;
+    int ok=fread(&value,sizeof(value),1,file)==1 && value==expected && fgetc(file)==EOF;
+    return fclose(file)==0 && ok;
+}
+static int verify_presented_capture_files(void)
+{
+#define CAPTURE_CHECK(expr) do{if(!(expr)){fprintf(stderr,"capture publication test failed at %d\n",__LINE__);goto cleanup;}}while(0)
+    char previous[MAX_PATH],directory[MAX_PATH];
+    DWORD length=GetCurrentDirectoryA(sizeof(previous),previous);
+    if(!length || length>=sizeof(previous))return 0;
+    int written=snprintf(directory,sizeof(directory),
+        "D:\\projeto zeta\\artifacts\\tmp\\presented-capture-test-%lu-%llu",
+        (unsigned long)GetCurrentProcessId(),(unsigned long long)GetTickCount64());
+    /* Only a newly created, isolated directory may contain these fixed names. */
+    if(written<=0 || written>=(int)sizeof(directory) || !CreateDirectoryA(directory,NULL))return 0;
+    if(!SetCurrentDirectoryA(directory)) {RemoveDirectoryA(directory);return 0;}
+    int passed=0;
+    HANDLE blocked=INVALID_HANDLE_VALUE;
+    NativeGraphicsState *state=calloc(1,sizeof(*state));
+    CAPTURE_CHECK(state);
+    const uint32_t old=0x11223344u,next=0x55667788u,physical=0x02E5C000u;
+    state->scanout_plan.physical_address=physical;state->scanout_plan.next_enqueue=42;
+    state->scanout_receipt.present_count=42;
+    state->capture_pending_physical=physical;
+    CAPTURE_CHECK(capture_test_write(native_presented_capture_path,old) &&
+        capture_test_write(native_pending_capture_path,next));
+    /* A stale file without a successful capture flag cannot be published. */
+    native_confirm_presented_capture(state,physical,1);
+    CAPTURE_CHECK(capture_test_read(native_presented_capture_path,old) &&
+        capture_test_read(native_pending_capture_path,next));
+    state->capture_pending=1;
+    native_confirm_presented_capture(state,physical,0);
+    CAPTURE_CHECK(!state->capture_pending && capture_test_read(native_presented_capture_path,old) &&
+        capture_test_read(native_pending_capture_path,next));
+    state->capture_pending=1;
+    native_confirm_presented_capture(state,physical+16,1);
+    CAPTURE_CHECK(!state->capture_pending && capture_test_read(native_presented_capture_path,old));
+    state->capture_pending=1;state->scanout_plan.physical_address=physical+16;
+    native_confirm_presented_capture(state,physical,1);
+    CAPTURE_CHECK(!state->capture_pending && capture_test_read(native_presented_capture_path,old));
+    state->scanout_plan.physical_address=physical;
+    for(unsigned source=0;source<2;++source) {
+        CAPTURE_CHECK(capture_test_write(native_pending_capture_path,next+source));
+        state->capture_pending=1;state->scanout_receipt.source=source;
+        native_confirm_presented_capture(state,physical,1);
+        CAPTURE_CHECK(!state->capture_pending &&
+            capture_test_read(native_presented_capture_path,next+source) &&
+            GetFileAttributesA(native_pending_capture_path)==INVALID_FILE_ATTRIBUTES);
+    }
+    /* Missing source or a destination denying deletion preserves the previous
+     * confirmed bytes. Neither error can manufacture a newer confirmed image. */
+    state->capture_pending=1;
+    native_confirm_presented_capture(state,physical,1);
+    CAPTURE_CHECK(!state->capture_pending && capture_test_read(native_presented_capture_path,next+1));
+    CAPTURE_CHECK(capture_test_write(native_pending_capture_path,old));
+    blocked=CreateFileA(native_presented_capture_path,GENERIC_READ,FILE_SHARE_READ,
+        NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    CAPTURE_CHECK(blocked!=INVALID_HANDLE_VALUE);
+    state->capture_pending=1;
+    native_confirm_presented_capture(state,physical,1);
+    CAPTURE_CHECK(!state->capture_pending && capture_test_read(native_presented_capture_path,next+1) &&
+        capture_test_read(native_pending_capture_path,old));
+    passed=1;
+cleanup:
+    if(blocked!=INVALID_HANDLE_VALUE)CloseHandle(blocked);
+    free(state);
+    DeleteFileA(native_pending_capture_path);DeleteFileA(native_presented_capture_path);
+    if(!SetCurrentDirectoryA(previous))passed=0;
+    if(!RemoveDirectoryA(directory))passed=0;
+    return passed;
+#undef CAPTURE_CHECK
+}
 static int verify_draw_receiver(NativeGraphicsState *state)
 {
     /* Separate synthetic fixture after the refusal tests. No state mutation
@@ -131,6 +212,35 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         CHECK(guest_word(0x3000+y*32+x*4)==(3*sx+4*sy<12?0xFF000000:0xCDCDCDCD),85);
     }
     CHECK(!memcmp(aa_depth_before,guest_memory+0x4000,96),86);
+    /* The same screen-space triangle with original MOV oPos,v0 and W=2
+     * must use the projective AA2 route. NV screen outputs retain x/y; the
+     * translated clip position multiplies by W before the host divide. */
+    const char *inherited_projective=getenv("RECOMP_PROJECTIVE_AA2_APPROXIMATION");
+    char *saved_projective=inherited_projective?_strdup(inherited_projective):NULL;
+    CHECK(!inherited_projective || saved_projective,148);
+    CHECK(!_putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1"),149);
+    for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
+        i==0?0x642:i==3?0x640:0x602,0),150);
+    memset(guest_memory+0x3000,0xCD,96);
+    CHECK(native_method(state,0,0x17FC,5,0),151);
+    for(unsigned i=0;i<3;++i) {
+        float position[4]={aa_points[i][0],aa_points[i][1],0,2};uint32_t data[5];
+        memcpy(data,position,16);data[4]=0xFFFF00FF;
+        for(unsigned j=0;j<5;++j) CHECK(native_method(state,0,0x1818,data[j],0),152);
+    }
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->immediate.ready && !state->immediate.count &&
+        !state->native_immediate.submitted && !state->native_surfaces.gpu_dirty &&
+        state->native_immediate.ia_vertices==6 && state->native_immediate.ps_invocations>0 &&
+        state->aa2_projective==1 && !state->constant_coordinates &&
+        (state->projective_coordinates&1u),153);
+    for(unsigned y=0;y<3;++y) for(unsigned x=0;x<8;++x) {
+        double sx=x/2+((x&1)?.5:0),sy=y+((x&1)?.5:0);
+        CHECK(guest_word(0x3000+y*32+x*4)==(3*sx+4*sy<12?0xFF000000:0xCDCDCDCD),154);
+    }
+    CHECK(!memcmp(aa_depth_before,guest_memory+0x4000,96),155);
+    CHECK(!_putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION",saved_projective?saved_projective:""),156);
+    free(saved_projective);
     /* Switching back must retain the unshifted original VS, not reuse the
      * AA2 raster variant from the previous batch's coverage passes. */
     CHECK(native_method(state,0,0x208,0x128,0) &&
@@ -176,9 +286,64 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !state->vertex_array.ready && state->native_immediate.ia_vertices==9 &&
         state->native_immediate.ps_invocations>0,128);
     for(unsigned i=0;i<12;++i) CHECK(guest_word(0x3000+i*4)==0xFF000000,129);
-    for(unsigned profile=0;profile<2;++profile) {
-    for(unsigned i=0;i<16;++i) CHECK(native_method(state,0,0x1760+i*4,
-        (i==0?0x32:i==3?0x40:i==9?0x22:2)|(profile?0x600:0),0),92);
+    /* FORMAT1042 is four floats at stride16. Keep W=2 from DMA through
+     * the original MOV oPos,v0 and real single-sample strip draw receiver. */
+    const float float4_points[4][4]={{0,0,0,2},{8,0,0,2},{0,6,0,2},{8,6,0,2}};
+    memcpy(guest_memory+0x9000,float4_points,sizeof(float4_points));
+    for(unsigned i=0;i<16;++i)
+        CHECK(native_method(state,0,0x1760+i*4,i?0x1002:0x1042,0),157);
+    CHECK(state->kelvin.vertex_array_format[0]==0x1042 &&
+        native_method(state,0,0x1720,0x9000,0),158);
+    uint8_t float4_depth_before[72];memcpy(float4_depth_before,guest_memory+0x4000,72);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,6,0) &&
+        native_method(state,0,0x1800,0x00010000,0) &&
+        native_method(state,0,0x1800,0x00030002,0),159);
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->vertex_array.ready && !state->immediate.ready && !state->immediate.count &&
+        !state->native_immediate.count && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==6 &&
+        state->native_immediate.ps_invocations>0 && !state->constant_coordinates &&
+        (state->projective_coordinates&1u),160);
+    static const unsigned float4_order[6]={0,1,2,2,1,3};
+    for(unsigned i=0;i<6;++i)
+        CHECK(!memcmp(state->immediate.vertices[i][0],float4_points[float4_order[i]],16),161);
+    for(unsigned i=0;i<12;++i)CHECK(guest_word(0x3000+i*4)==0xFF000000,162);
+    CHECK(!memcmp(float4_depth_before,guest_memory+0x4000,72),163);
+    /* DRAW_ARRAYS first1 skips an authored guard record. Two adjacent
+     * count2 ranges must form the same four-record strip, not two draws. */
+    float ranged_points[5][4]={{1000,1000,0,7}};
+    memcpy(ranged_points+1,float4_points,sizeof(float4_points));
+    memcpy(guest_memory+0x9000,ranged_points,sizeof(ranged_points));
+    CHECK(native_method(state,0,0x1760,0x1042,0),164);
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,6,0) &&
+        native_method(state,0,0x1810,0x01000001,0) &&
+        state->vertex_array.active && state->vertex_array.input_mode==3 &&
+        state->vertex_array.count==2 && state->vertex_array.indices[0]==1 &&
+        state->vertex_array.indices[1]==2,165);
+    CHECK(native_method(state,0,0x1810,0x01000003,0) &&
+        state->vertex_array.count==4 && state->vertex_array.indices[2]==3 &&
+        state->vertex_array.indices[3]==4 && guest_word(0x3000)==0xCDCDCDCD,166);
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->vertex_array.ready && !state->vertex_array.count &&
+        !state->immediate.ready && !state->immediate.count &&
+        !state->native_immediate.count && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==6 &&
+        state->native_immediate.ps_invocations>0 && !state->constant_coordinates &&
+        (state->projective_coordinates&1u),167);
+    for(unsigned i=0;i<6;++i)
+        CHECK(!memcmp(state->immediate.vertices[i][0],float4_points[float4_order[i]],16),168);
+    for(unsigned i=0;i<12;++i)CHECK(guest_word(0x3000+i*4)==0xFF000000,169);
+    CHECK(!memcmp(float4_depth_before,guest_memory+0x4000,72) &&
+        !memcmp(ranged_points,guest_memory+0x9000,sizeof(ranged_points)),170);
+    for(unsigned profile=0;profile<4;++profile) {
+    for(unsigned i=0;i<16;++i) {
+        unsigned stride=profile==0?0u:profile==1?0x600u:profile==2?0xC00u:
+            i==3?0u:i==9?0x800u:0xC00u;
+        CHECK(native_method(state,0,0x1760+i*4,
+            (i==0?0x32:i==3?0x40:i==9?0x22:2)|stride,0),92);
+    }
     memset(guest_memory+0x3000,0xCD,48);
     CHECK(native_method(state,0,0x17FC,8,0),93);
     const float quad[4][3]={{0,0,0},{8,0,0},{8,6,0},{0,6,0}};
@@ -197,6 +362,7 @@ static int verify_draw_receiver(NativeGraphicsState *state)
 }
 int main(void)
 {
+    CHECK(verify_presented_capture_files(),147);
     uint32_t context_address=0x12345678,context_words[119],saved_words[119];
     memset(context_words,0xA5,sizeof(context_words));memcpy(saved_words,context_words,sizeof(saved_words));
     CHECK(!native_scanout_context(&context_address,context_words) && context_address==0x12345678 &&

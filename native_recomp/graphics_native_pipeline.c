@@ -101,8 +101,13 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
         !(fut_graphics_aa2_approximation_enabled() && surface->samples==2 &&
           surface->logical_width==640 && surface->logical_height==480 &&
           state->anti_aliasing_control==0xFFFF0001)) return E_NOTIMPL;
+    /* Programmable oD1 already carries the original secondary RGB. The
+     * fragment adapter implements LIGHT_CONTROL's secondary-alpha selection;
+     * enabling it does not request host fixed-function lighting. */
+    int programmable_specular=state->specular_enable==1 && (state->program_mode&3u)==2u &&
+        !(state->light_control&~0x00030001u);
     if (state->point_params_enable || state->point_smooth || state->fog_enable || state->lighting_enable ||
-        state->specular_enable || state->light_enable_mask || state->texture_matrix_enable[0] ||
+        (state->specular_enable && !programmable_specular) || state->light_enable_mask || state->texture_matrix_enable[0] ||
         state->texture_matrix_enable[1] || state->texture_matrix_enable[2] || state->texture_matrix_enable[3] ||
         s->logic_op || s->stipple || s->line_smooth || s->polygon_smooth ||
         s->front_mode != s->back_mode || s->front_mode == 0x1B00 ||

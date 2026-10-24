@@ -205,6 +205,8 @@ typedef struct {
     uint32_t scanout_before,scanout_disabled;
     int scanout_pending,scanout_received;
     int scanout_callback_pending;
+    int capture_pending;
+    uint32_t capture_pending_physical;
     int diagnostic_preview_enabled;
     int diagnostic_preview_submitted;
     ULONGLONG scanout_idle_report;
@@ -216,6 +218,35 @@ typedef struct {
     uint32_t semaphore_offset;
     FutGraphicsDmaView semaphore_view;
 } NativeGraphicsState;
+
+static const char native_pending_capture_path[]="native-staged-pending.bmp";
+static const char native_presented_capture_path[]="native-presented-latest.bmp";
+
+/* Called only after the existing receipt/guest-retirement checks succeed.
+ * File publication is diagnostic: it cannot complete or acknowledge a frame. */
+static void native_confirm_presented_capture(NativeGraphicsState *state,
+    uint32_t physical,int retired)
+{
+    if(!state || !state->capture_pending) return;
+    state->capture_pending=0;
+    if(!retired || physical!=state->capture_pending_physical ||
+        physical!=state->scanout_plan.physical_address) {
+        fprintf(stderr,"[FRAME-CAPTURE] latest not confirmed: retired=%d physical=%08X captured=%08X planned=%08X; previous confirmed image preserved\n",
+            retired,physical,state->capture_pending_physical,state->scanout_plan.physical_address);
+        return;
+    }
+    if(!MoveFileExA(native_pending_capture_path,native_presented_capture_path,
+        MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
+        fprintf(stderr,"[FRAME-CAPTURE] latest not confirmed: publish_error=%lu physical=%08X ordinal=%u; previous confirmed image preserved\n",
+            (unsigned long)GetLastError(),physical,state->scanout_plan.next_enqueue);
+        return;
+    }
+    fprintf(stderr,"[FRAME-CAPTURE] latest confirmed: file=%s physical=%08X ordinal=%u DXGI_present=%u receipt_source=%s observed_QPC=%lld; matching DXGI receipt and original ISR retirement, host timing approximation\n",
+        native_presented_capture_path,physical,state->scanout_plan.next_enqueue,
+        state->scanout_receipt.present_count,
+        state->scanout_receipt.source==1?"frame-latency-event":"frame-statistics",
+        (long long)state->scanout_receipt.observed_qpc.QuadPart);
+}
 
 static void native_scanout_trace_failure(NativeGraphicsState *state,uint32_t notification,
     const char *reason,uint32_t address,const uint32_t words[119])
@@ -357,6 +388,7 @@ static int native_scanout_service(NativeGraphicsState *state)
         read32(0xFD600800u,&physical) && read32(0x002A1128u,&title_physical) &&
         read32(0xFD40071Cu,&increment) &&
         read32(address+0x7DC+state->scanout_plan.slot*4,&gamma_pending);
+    int capture_retired=0;
     if(valid && !gamma_pending && fut_graphics_scanout_retirement_matches(w,&state->scanout_plan,
         state->scanout_received,physical,state->scanout_before,state->scanout_disabled,title_physical,increment)) {
         if(fut_graphics_flip_available(&state->kelvin)<0 ||
@@ -374,6 +406,7 @@ static int native_scanout_service(NativeGraphicsState *state)
             state->kelvin.flip_write,state->kelvin.flip_modulo);
         state->scanout_pending=state->scanout_received=0;
         state->scanout_idle_report=0;
+        capture_retired=1;
     }
     else if(valid && state->scanout_idle_report && GetTickCount64()>=state->scanout_idle_report) {
         fprintf(stderr,"[GRAPHICS] scanout correlation pending: receipt=%d ordinal=%u/%u expected=%u disabled=%u/%u gamma_pending=%u PCRTC=%08X before=%08X title=%08X expected=%08X increment=%08X\n",
@@ -382,7 +415,9 @@ static int native_scanout_service(NativeGraphicsState *state)
             title_physical,state->scanout_plan.physical_address,increment);
         state->scanout_idle_report=0;
     }
-    fut_guest_interrupt_leave();return valid;
+    fut_guest_interrupt_leave();
+    if(capture_retired) native_confirm_presented_capture(state,title_physical,1);
+    return valid;
 }
 
 static int object_memory_read(void *context, uint32_t address, void *data, size_t size);
@@ -834,12 +869,32 @@ static int native_scanout_enqueue(NativeGraphicsState *state,uint32_t notificati
                 }
             }
         }
+        state->capture_pending=0;
+        if(capture_now && state->native_surfaces.plan.width==640u &&
+            state->native_surfaces.plan.height==480u) {
+            hr=fut_native_surfaces_capture_bmp(&state->native_surfaces,state->device,
+                state->context,&state->native_constants,native_pending_capture_path,backend_stop);
+            if(hr==S_OK) {
+                state->capture_pending=1;
+                state->capture_pending_physical=state->native_surfaces.plan.color_address&0x7FFFFFFFu;
+            } else {
+                fprintf(stderr,"[FRAME-CAPTURE] pending capture failed: hr=%08lX; latest image cannot be confirmed for this frame\n",hr);
+            }
+        } else if(capture_now) {
+            fprintf(stderr,"[FRAME-CAPTURE] pending capture skipped: size=%ux%u; fixed latest capture supports 640x480 only\n",
+                state->native_surfaces.plan.width,state->native_surfaces.plan.height);
+        }
         if(capture && !strcmp(capture,"1") && capture_count<64u &&
             (capture_count<8u || capture_now-capture_at>=capture_interval)) {
             char path[80];
             snprintf(path,sizeof(path),"native-staged-frame-%03u.bmp",capture_count+1u);
-            hr=fut_native_surfaces_capture_bmp(&state->native_surfaces,state->device,
-                state->context,&state->native_constants,path,backend_stop);
+            /* The fixed pending file is the same staged source; avoid a second
+             * GPU readback when retaining a periodic archive of this frame. */
+            if(state->capture_pending)
+                hr=CopyFileA(native_pending_capture_path,path,FALSE)?S_OK:HRESULT_FROM_WIN32(GetLastError());
+            else
+                hr=fut_native_surfaces_capture_bmp(&state->native_surfaces,state->device,
+                    state->context,&state->native_constants,path,backend_stop);
             if(hr!=S_OK) {
                 fprintf(stderr,"[FRAME-CAPTURE] failed: hr=%08lX; no presentation claim\n",hr);
                 return 0;
@@ -1200,14 +1255,18 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fputs("[GRAPHICS] AUTHORIZED_BC2_C9DF00_AA2_APPROXIMATION: exact offset=00C9DF00 FORMAT=09A10E29 1024x512 BC2, pitch=4096; existing 640x480 AA2 and depth-write mappings; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && fut_graphics_untextured_aa2_approximation_enabled() &&
         state->kelvin.textures[0].control0==0 && state->kelvin.fragment.stage_program==0)
-        fputs("[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: disabled texture stages; no retained resource sampling; AA2/depth fidelity unverified NOT_READY\n",stderr);
+        fprintf(stderr,"[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: disabled texture stages; no retained resource sampling; stencil=%u func=%08X ref=%08X read=%08X write=%08X ops=%08X/%08X/%08X depth_func=%08X; AA2/depth/stencil fidelity unverified NOT_READY\n",
+            state->kelvin.stencil_test,state->kelvin.draw.stencil_func,state->kelvin.draw.stencil_ref,
+            state->kelvin.draw.stencil_read,state->kelvin.draw.stencil_write,state->kelvin.draw.stencil_op[0],
+            state->kelvin.draw.stencil_op[1],state->kelvin.draw.stencil_op[2],state->kelvin.draw.depth_func);
     if(aa2 && fut_graphics_bc2_aa2_family_approximation_enabled() &&
         (state->kelvin.textures[0].control0&0x40000000u) &&
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010E29u &&
         state->kelvin.textures[0].valid==0x3BFu && state->kelvin.draw.dither==1)
-        fprintf(stderr,"[GRAPHICS] AUTHORIZED_BC2_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u; one-mip BC2 under observed 640x480 AA2/depth-write/sampler baseline; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",
+        fprintf(stderr,"[GRAPHICS] AUTHORIZED_BC2_AA2_FAMILY_APPROXIMATION: format=%08X offset=%08X texture=%ux%u depth_write=%u address=%08X; one-mip BC2 under observed 640x480 AA2/sampler baseline; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",
             state->kelvin.textures[0].format,state->kelvin.textures[0].offset,
-            state->textures[0].plan.width,state->textures[0].plan.height);
+            state->textures[0].plan.width,state->textures[0].plan.height,
+            state->kelvin.draw.depth_write,state->kelvin.textures[0].address);
     if(aa2 && fut_graphics_p8_aa2_family_approximation_enabled() &&
         (state->kelvin.textures[0].format&~0x0FF00000u)==0x00010B29u &&
         state->kelvin.draw.depth_write<=1 && state->kelvin.draw.dither==1 &&
@@ -1264,9 +1323,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
             state->kelvin.draw.front_mode,state->kelvin.draw.back_mode,state->kelvin.draw.cull_enable,
             state->kelvin.draw.cull_face,state->kelvin.draw.offset_enable[0],state->kelvin.draw.offset_enable[1],
             state->kelvin.draw.offset_enable[2],state->kelvin.draw.offset_factor,state->kelvin.draw.offset_bias);
-        fprintf(stderr,"[GRAPHICS] draw pipeline controls: program_mode=%08X point_params=%u point_smooth=%u fog=%u lighting=%u specular=%u light_mask=%08X texture_matrices=%u,%u,%u,%u blend=%u/%08X/%08X/%08X alpha=%08X/%u\n",
+        fprintf(stderr,"[GRAPHICS] draw pipeline controls: program_mode=%08X point_params=%u point_smooth=%u fog=%u lighting=%u specular=%u light_control=%08X light_mask=%08X texture_matrices=%u,%u,%u,%u blend=%u/%08X/%08X/%08X alpha=%08X/%u\n",
             state->kelvin.program_mode,state->kelvin.point_params_enable,state->kelvin.point_smooth,
-            state->kelvin.fog_enable,state->kelvin.lighting_enable,state->kelvin.specular_enable,
+            state->kelvin.fog_enable,state->kelvin.lighting_enable,state->kelvin.specular_enable,state->kelvin.light_control,
             state->kelvin.light_enable_mask,state->kelvin.texture_matrix_enable[0],
             state->kelvin.texture_matrix_enable[1],state->kelvin.texture_matrix_enable[2],state->kelvin.texture_matrix_enable[3],
             state->kelvin.draw.blend_enable,state->kelvin.draw.blend_src,state->kelvin.draw.blend_dst,state->kelvin.draw.blend_op,
@@ -1274,6 +1333,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
         return 0;
     }
     state->kelvin.draw.dirty=0;
+    if(state->kelvin.specular_enable)
+        fprintf(stderr,"[GRAPHICS] programmable secondary color prepared: original oD1 RGB, alpha_from_program=%u light_control=%08X; finite host color clamp, NV2A exceptional/precision behavior unverified; no draw/completion yet\n",
+            (state->kelvin.light_control&0x00020000u)!=0,state->kelvin.light_control);
     if(state->kelvin.draw.dither) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: ARGB8 dither uses host UNORM conversion without added noise; no NV2A hardware validation\n":
         "[GRAPHICS] ACCEPTED_APPROXIMATION: ARGB8 single-sample dither uses host UNORM conversion without added noise; no NV2A hardware validation\n");
@@ -1393,8 +1455,8 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
 {
     NativeGraphicsState *state = context;
     if(state->vertex_array.active && (subchannel!=0 ||
-        (method!=0x1800u && method!=0x1808u && method!=0x1818u && method!=0x17FCu))) {
-        fprintf(stderr,"[GRAPHICS] command refused inside indexed triangle strip: sub=%u method=%04X\n",subchannel,method);
+        (method!=0x1800u && method!=0x1808u && method!=0x1810u && method!=0x1818u && method!=0x17FCu))) {
+        fprintf(stderr,"[GRAPHICS] command refused inside array triangle strip: sub=%u method=%04X value=%08X\n",subchannel,method,value);
         return 0;
     }
     /* Only the observed attribute form is supported inside a primitive.
@@ -1404,7 +1466,14 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         (subchannel!=0 || (method!=0x17FCu && method!=0x1818u && (method<0x1518u || method>0x1524u) &&
             (method<0x1880u || method>=0x1900u) &&
             (method<0x1940u || method>=0x1980u))))) {
-        fprintf(stderr,"[GRAPHICS] command refused inside/pending immediate primitive: sub=%u method=%04X\n",subchannel,method);
+        fprintf(stderr,"[GRAPHICS] command refused inside/pending immediate primitive: sub=%u method=%04X value=%08X offset=%zu primitive=%u active=%u ready=%u kind=%u vertices=%u pending=%u/%u/%u format_valid=%04X formats=",
+            subchannel,method,value,offset,state->immediate.primitive,state->immediate.active,
+            state->immediate.ready,state->immediate.input_kind,state->immediate.count,
+            state->immediate.pending_x,state->immediate.pending_position,state->immediate.inline_pending,
+            state->kelvin.vertex_array_format_valid);
+        for(unsigned slot=0;slot<16;++slot)
+            fprintf(stderr,"%s%08X",slot?",":"",state->kelvin.vertex_array_format[slot]);
+        fputs("; no draw/completion\n",stderr);
         return 0;
     }
     FutGraphicsBindingStatus binding = fut_graphics_apply_binding(&state->bindings,
@@ -1478,6 +1547,16 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             }
             return 1;
         }
+        if(subchannel==0 && method==0x1810u && state->vertex_array.active) {
+            if(!fut_graphics_vertex_array_draw_arrays(&state->vertex_array,value)) {
+                fprintf(stderr,"[GRAPHICS] DRAW_ARRAYS range refused: word=%08X first=%u count=%u records=%u mode=%u; no draw/completion\n",
+                    value,value&0x00FFFFFFu,(value>>24)+1u,state->vertex_array.count,state->vertex_array.input_mode);
+                return 0;
+            }
+            fprintf(stderr,"[GRAPHICS] DRAW_ARRAYS range captured: first=%u count=%u total_records=%u; no vertex fetch/draw/completion yet\n",
+                value&0x00FFFFFFu,(value>>24)+1u,state->vertex_array.count);
+            return 1;
+        }
         if(subchannel==0 && method==0x1800u && state->vertex_array.active) {
             if(!fut_graphics_vertex_array_indices(&state->vertex_array,value)) {
                 fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT16 refused: value=%08X count=%u\n",value,state->vertex_array.count);return 0;
@@ -1547,7 +1626,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 built=fut_graphics_vertex_array_build_inline(&state->vertex_array,&state->immediate,
                     state->kelvin.vertex_array_format,state->kelvin.attributes,
                     state->kelvin.attribute_valid,required);
-            } else if(built && state->vertex_array.input_mode==1) {
+            } else if(built && (state->vertex_array.input_mode==1 || state->vertex_array.input_mode==3)) {
                 FutGraphicsDmaView view_a,view_b;const unsigned refs=(1u<<7)|(1u<<8);
                 int has_refs=(state->bindings.reference_masks[0]&refs)==refs;
                 /* These exact handles resolve to class 0x3D NVM objects. Reuse
@@ -1578,7 +1657,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 fprintf(stderr,"[GRAPHICS] observed triangle-strip fetch refused: mode=%u indices=%u inline_words=%u required=%04X; no draw/completion\n",
                     state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,required);return 0;
             }
-            fprintf(stderr,"[GRAPHICS] observed triangle strip fetched transactionally: mode=%u indices=%u inline_words=%u expanded_vertices=%u; no pixels yet\n",
+            fprintf(stderr,"[GRAPHICS] observed triangle strip fetched transactionally: mode=%u source_records=%u inline_words=%u expanded_vertices=%u; no pixels yet\n",
                 state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,state->immediate.count);
             if(!native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
             unsigned drawn=state->immediate.count;HRESULT hr;
@@ -1631,7 +1710,12 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             unsigned count=state->immediate.count;
             HRESULT hr;
             stage_started=timing?native_graphics_stage_timing_begin():0;
-            if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
+            if(state->native_surfaces.plan.samples==2 && state->aa2_projective)
+                hr=fut_native_draw_immediate_aa2_projective(&state->native_immediate,&state->immediate,
+                    &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
+                    state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
+                    &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,(state->projective_coordinates&1u)!=0);
+            else if(state->native_surfaces.plan.samples==2) hr=fut_native_draw_immediate_aa2(&state->native_immediate,&state->immediate,
                 &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
                 state->device,state->context,state->aa2_vertex_shader,state->pixel_shader,
                 &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop,state->constant_coordinates!=0);
@@ -1645,9 +1729,9 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     hr,state->native_immediate.submitted,state->native_surfaces.gpu_dirty);
                 return 0;
             }
-            fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
+            fprintf(stderr,"[GRAPHICS] immediate draw completed and surfaces written to guest: vertices=%u IA_vertices=%llu PS_invocations=%llu projective=%u; no present/VBlank\n",
                 count,(unsigned long long)state->native_immediate.ia_vertices,
-                (unsigned long long)state->native_immediate.ps_invocations);
+                (unsigned long long)state->native_immediate.ps_invocations,state->aa2_projective!=0);
             if(state->native_surfaces.plan.samples==2 && fut_graphics_aa2_approximation_enabled())
                 native_preview_log_source_stats(&state->native_surfaces.plan);
             if(state->textures[0].quincunx_experiment) {

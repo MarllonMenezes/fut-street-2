@@ -74,12 +74,12 @@ int main(void)
         if(fut_graphics_kelvin_state(&observed_array_formats,0x1760,unobserved_formats[i])!=FUT_KELVIN_REJECTED ||
             memcmp(&observed_formats_before,&observed_array_formats,sizeof(observed_array_formats))) return 67;
     FutGraphicsKelvinState format_before=state;
-    const uint32_t strided_formats[]={0x10032,0x1032,0xC40,0xC16,0x415};
+    const uint32_t strided_formats[]={0x10032,0x1032,0x1042,0x1842,0x1002,0x1802,0xC40,0xC16,0x415};
     for(unsigned i=0;i<sizeof(strided_formats)/sizeof(strided_formats[0]);++i)
         if(fut_graphics_kelvin_state(&state,0x1760,strided_formats[i])!=FUT_KELVIN_APPLIED ||
             state.vertex_array_format[0]!=strided_formats[i])return 73;
     format_before=state;
-    const uint32_t bad_formats[]={0,0x12,0x42,0x132,0xA32,0x340,0xFFFFFFFFu};
+    const uint32_t bad_formats[]={0,0x12,0x42,0xC42,0x1052,0x1003,0x132,0xA32,0x340,0xFFFFFFFFu};
     for(unsigned i=0;i<sizeof(bad_formats)/sizeof(bad_formats[0]);++i)
         if(fut_graphics_kelvin_state(&state,0x1760,bad_formats[i])!=FUT_KELVIN_REJECTED ||
             memcmp(&format_before,&state,sizeof(state))) return 63;

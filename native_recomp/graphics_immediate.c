@@ -39,14 +39,13 @@ FutImmediateStatus fut_graphics_immediate_method(FutGraphicsImmediate *b,
             b->pending_x || b->pending_position || b->count>=FUT_IMMEDIATE_CAPACITY ||
             b->inline_pending>=words || s->vertex_array_format_valid!=0xFFFFu)
             return FUT_IMMEDIATE_REJECTED;
-        int exact_profile=1,retained_quad_profile=!triangle_color;
         for(unsigned i=0;i<16;++i) {
-            uint32_t format=triangle_color?(i==0?0x642u:i==3?0x640u:0x602u):
+            uint32_t format=triangle_color?(i==0?0x42u:i==3?0x40u:0x02u):
                 (i==0?0x32u:i==3?0x40u:i==9?0x22u:2u);
-            if(s->vertex_array_format[i]!=format) exact_profile=0;
-            if(s->vertex_array_format[i]!=(format|0x600u)) retained_quad_profile=0;
+            /* INLINE_ARRAY packs active TYPE/SIZE attributes contiguously;
+             * the retained DMA stride does not consume inline payload. */
+            if((s->vertex_array_format[i]&255u)!=format) return FUT_IMMEDIATE_REJECTED;
         }
-        if(!exact_profile && !retained_quad_profile) return FUT_IMMEDIATE_REJECTED;
         b->input_kind=2;
         b->inline_words[b->inline_pending++]=value;
         if(b->inline_pending==words) {

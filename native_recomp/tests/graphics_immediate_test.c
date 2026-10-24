@@ -102,11 +102,17 @@ int main(void)
         !memcmp(b.vertices[4],b.vertices[2],sizeof(b.vertices[0])) && rejected(0x1818,0),36);
     FutGraphicsImmediate legacy_quad=b;
     CHECK(fut_graphics_immediate_consume(&b),37);
+    for(unsigned profile=0;profile<3;++profile) {
     memset(&b,0,sizeof(b));
-    for(unsigned i=0;i<16;++i)s.vertex_array_format[i]|=0x600u;
+    for(unsigned i=0;i<16;++i) {
+        unsigned stride=profile==0?0x600u:profile==1?0xC00u:
+            i==3?0u:i==9?0x800u:0xC00u;
+        s.vertex_array_format[i]=(i==0?0x32u:i==3?0x40u:i==9?0x22u:2u)|stride;
+    }
     CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,8)==FUT_IMMEDIATE_APPLIED,55);
-    s.vertex_array_format[3]=0x40;CHECK(rejected(0x1818,0),56);s.vertex_array_format[3]=0x640;
-    s.vertex_array_format[0]=0x732;CHECK(rejected(0x1818,0),60);s.vertex_array_format[0]=0x632;
+    uint32_t saved_color=s.vertex_array_format[3],saved_position=s.vertex_array_format[0];
+    s.vertex_array_format[3]=0x632;CHECK(rejected(0x1818,0),56);s.vertex_array_format[3]=saved_color;
+    s.vertex_array_format[0]=0x642;CHECK(rejected(0x1818,0),60);s.vertex_array_format[0]=saved_position;
     for(unsigned v=0;v<4;++v) {
         uint32_t data[]={0x3F800000u+v,0x40000000,0x40400000,0x80402010,0,0x3F800000};
         for(unsigned j=0;j<6;++j)CHECK(fut_graphics_immediate_method(&b,&s,0x1818,data[j])==FUT_IMMEDIATE_APPLIED,57);
@@ -114,7 +120,8 @@ int main(void)
     CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,0)==FUT_IMMEDIATE_READY &&
         !memcmp(&b,&legacy_quad,sizeof(b)),58);
     CHECK(fut_graphics_immediate_consume(&b),59);
-    for(unsigned i=0;i<16;++i)s.vertex_array_format[i]&=~0x600u;
+    }
+    for(unsigned i=0;i<16;++i)s.vertex_array_format[i]=i==0?0x32u:i==3?0x40u:i==9?0x22u:2u;
     CHECK(fut_graphics_immediate_method(&b,&s,0x17FC,8)==FUT_IMMEDIATE_APPLIED,38);
     s.vertex_array_format[9]=0x32;CHECK(rejected(0x1818,0),39);s.vertex_array_format[9]=0x22;
     for(unsigned i=0;i<FUT_IMMEDIATE_CAPACITY*6;++i)

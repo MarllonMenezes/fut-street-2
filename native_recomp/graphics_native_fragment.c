@@ -94,6 +94,8 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
     if(state->draw.alpha_test>1 || (state->draw.alpha_test &&
         (state->draw.alpha_func<0x200 || state->draw.alpha_func>0x207 ||
          state->draw.alpha_ref>255))) return E_NOTIMPL;
+    if(state->specular_enable && (state->specular_enable!=1 ||
+        (state->program_mode&3u)!=2u || (state->light_control&~0x00030001u))) return E_NOTIMPL;
     char math[65536],source[73728];size_t length;
     if(!fut_fragment_program_hlsl(&state->fragment,math,sizeof(math),&length)) return E_NOTIMPL;
     int n=snprintf(source,sizeof(source),"%s%s%s%s"
@@ -178,6 +180,15 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
         } else if(mode==4) n=snprintf(source+used,sizeof(source)-used,"float4 T%u=input.t%u;\n",stage,stage);
         else if(mode==0) n=snprintf(source+used,sizeof(source)-used,"float4 T%u=float4(0,0,0,1);\n",stage);
         else return E_NOTIMPL;
+        if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
+        used+=n;
+    }
+    /* With programmable specular enabled, RGB is the original oD1 output.
+     * LIGHT_CONTROL bit17 selects its alpha; otherwise exported alpha is 1.
+     * A uniform 1 after interpolation equals an interpolated vertex constant.
+     * The exact generated source is also the fragment-cache key. */
+    if(state->specular_enable && !(state->light_control&0x00020000u)) {
+        n=snprintf(source+used,sizeof(source)-used,"input.col1.a=1.0;\n");
         if(n<0 || (size_t)n>=sizeof(source)-used) return E_OUTOFMEMORY;
         used+=n;
     }

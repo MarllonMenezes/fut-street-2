@@ -4,6 +4,7 @@
 #include "graphics_native_constants.h"
 #include "graphics_shader_interface.h"
 #include "graphics_sample_pattern.h"
+#include "graphics_vertex_program.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -395,6 +396,109 @@ static int verify_dual_projective_mips(ID3D11Device *device,ID3D11DeviceContext 
     puts("Authored BC2/BC1: dual two-level color/LOD, trilinear blend and enabled-but-unsampled T1 verified on WARP; no original-draw/NV2A proof");
     return 0;
 }
+static int verify_programmable_specular(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion)
+{
+    /* Authored original-format MOV oPos,v0; MOV oD1,v4. No hand-written
+     * secondary-color shader bypasses the production VP output adapter. */
+    const uint32_t program[2][4]={
+        {0,(1u<<21)|0x1Bu,2u<<26,(15u<<12)|0x800u},
+        {0,(1u<<21)|(4u<<9)|0x1Bu,2u<<26,(15u<<12)|0x800u|(4u<<3)|1u}};
+    char source[16384];size_t length;uint16_t required=0;
+    CHECK(fut_vertex_program_input_mask(program,2,&required) && required==0x11u,200);
+    CHECK(fut_vertex_program_hlsl(program,2,source,sizeof(source),&length),201);
+    ID3DBlob *vblob=NULL;ID3D11VertexShader *vs=NULL;
+    CHECK(SUCCEEDED(D3DCompile(source,length,"authored_original_specular_words",NULL,NULL,
+        "main","vs_5_0",D3DCOMPILE_IEEE_STRICTNESS,0,&vblob,NULL)),202);
+    CHECK(SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(vblob),
+        ID3D10Blob_GetBufferSize(vblob),NULL,&vs)),203);
+    /* The production generator declares all 16 input semantics. Only ATTR0
+     * and ATTR4 are consumed, as checked by the original-word input mask. */
+    D3D11_INPUT_ELEMENT_DESC elements[16]={0};
+    for(unsigned attribute=0;attribute<16;++attribute) {
+        elements[attribute].SemanticName="ATTR";elements[attribute].SemanticIndex=attribute;
+        elements[attribute].Format=DXGI_FORMAT_R32G32B32A32_FLOAT;
+        elements[attribute].AlignedByteOffset=attribute*16;
+        elements[attribute].InputSlotClass=D3D11_INPUT_PER_VERTEX_DATA;
+    }
+    ID3D11InputLayout *layout=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateInputLayout(device,elements,16,
+        ID3D10Blob_GetBufferPointer(vblob),ID3D10Blob_GetBufferSize(vblob),&layout)),204);
+    float vertices[3][16][4]={0};
+    for(unsigned vertex=0;vertex<3;++vertex) {
+        const float position[4]={vertex==1?3:-1,vertex==2?3:-1,.5f,1};
+        memcpy(vertices[vertex][0],position,sizeof(position));
+    }
+    D3D11_BUFFER_DESC bd={0};bd.ByteWidth=sizeof(vertices);bd.Usage=D3D11_USAGE_DEFAULT;
+    bd.BindFlags=D3D11_BIND_VERTEX_BUFFER;ID3D11Buffer *buffer=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,NULL,&buffer)),205);
+    FutGraphicsKelvinState state={0};FutNativeTexture textures[4]={0};
+    configure(&state.fragment,0x05200000u,0x15200000u,0);
+    state.program_mode=6;state.specular_enable=1;state.draw.valid=0xFFFFF;
+    state.draw.blend_src=1;state.draw.blend_op=0x8006;state.draw.color_mask=0x01010101;
+    state.draw.front_mode=state.draw.back_mode=0x1B02;
+    state.draw.front_face=0x901;state.draw.cull_face=0x405;
+    state.draw.depth_func=state.draw.stencil_func=0x207;
+    state.draw.stencil_op[0]=state.draw.stencil_op[1]=state.draw.stencil_op[2]=0x1E00;
+    state.draw.alpha_func=0x204;state.draw.alpha_ref=127;
+    FutGraphicsSurfacePlan surface={.width=1,.height=1,.logical_width=1,.logical_height=1,.samples=1};
+    FutNativePipeline pipeline={0};FutNativeFragmentCache cache={0};
+    D3D11_TEXTURE2D_DESC td={0};td.Width=td.Height=td.MipLevels=td.ArraySize=td.SampleDesc.Count=1;
+    td.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;td.Usage=D3D11_USAGE_DEFAULT;td.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D *target=NULL,*readback=NULL;ID3D11RenderTargetView *view=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&target)),206);
+    CHECK(SUCCEEDED(ID3D11Device_CreateRenderTargetView(device,(ID3D11Resource*)target,NULL,&view)),207);
+    td.Usage=D3D11_USAGE_STAGING;td.BindFlags=0;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&readback)),208);
+    /* Explicit independent values: toggling bit17 changes only alpha;
+     * localeye/separate bits do not add fixed-function lighting in VP mode. */
+    static const struct {float input[4],expected[4];unsigned control,alpha_test;int hit;} cases[]={
+        {{.25f,.5f,.75f,.375f},{.25f,.5f,.75f,.375f},0x20000,0,0},
+        {{.25f,.5f,.75f,.375f},{.25f,.5f,.75f,1},0,0,0},
+        {{1.25f,-.25f,.625f,1.25f},{1,0,.625f,1},0x20000,0,1},
+        {{.125f,.875f,.25f,-.25f},{.125f,.875f,.25f,1},0,0,1},
+        {{.25f,.5f,.75f,.375f},{.25f,.5f,.75f,.375f},0x30001,0,1},
+        {{.25f,.5f,.75f,.375f},{.25f,.5f,.75f,1},0x10001,0,1},
+        {{.25f,.5f,.75f,.375f},{-1,-1,-1,-1},0x20000,1,0},
+        {{.25f,.5f,.75f,.375f},{.25f,.5f,.75f,1},0,1,0}};
+    for(unsigned test=0;test<sizeof(cases)/sizeof(cases[0]);++test) {
+        state.light_control=cases[test].control;state.draw.alpha_test=cases[test].alpha_test;
+        for(unsigned vertex=0;vertex<3;++vertex)memcpy(vertices[vertex][4],cases[test].input,16);
+        ID3D11DeviceContext_UpdateSubresource(context,(ID3D11Resource*)buffer,0,NULL,vertices,0,0);
+        CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),209);
+        ID3D11PixelShader *ps=NULL;ID3DBlob *pblob=NULL;int hit=-1;
+        CHECK(SUCCEEDED(fut_native_fragment_compile_cached(device,&state,textures,&cache,&ps,&pblob,&hit)) &&
+            hit==cases[test].hit,210);
+        CHECK(SUCCEEDED(fut_native_fragment_linkage(vblob,pblob)),211);
+        const float clear[4]={-1,-1,-1,-1};ID3D11DeviceContext_ClearRenderTargetView(context,view,clear);
+        ID3D11DeviceContext_OMSetRenderTargets(context,1,&view,NULL);
+        ID3D11DeviceContext_IASetInputLayout(context,layout);
+        ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        UINT stride=sizeof(vertices[0]),offset=0;
+        ID3D11DeviceContext_IASetVertexBuffers(context,0,1,&buffer,&stride,&offset);
+        ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);ID3D11DeviceContext_PSSetShader(context,ps,NULL,0);
+        ID3D11DeviceContext_Draw(context,3,0);
+        ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+        ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)readback,(ID3D11Resource*)target);
+        CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),212);
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)readback,0,D3D11_MAP_READ,0,&mapped)),213);
+        const float *actual=mapped.pData;int good=1;
+        for(unsigned c=0;c<4;++c)if(!isfinite(actual[c]) || fabsf(actual[c]-cases[test].expected[c])>.00001f) {
+            fprintf(stderr,"specular case=%u light_control=%08X alpha_test=%u channel=%u actual=%g expected=%g\n",
+                test,state.light_control,state.draw.alpha_test,c,actual[c],cases[test].expected[c]);good=0;
+        }
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
+        CHECK(good,214);ID3D11PixelShader_Release(ps);ID3D10Blob_Release(pblob);
+    }
+    ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
+    fut_native_fragment_cache_destroy(&cache);ID3D11InputLayout_Release(layout);
+    ID3D11Buffer_Release(buffer);ID3D11RenderTargetView_Release(view);
+    ID3D11Texture2D_Release(target);ID3D11Texture2D_Release(readback);
+    ID3D11VertexShader_Release(vs);ID3D10Blob_Release(vblob);
+    puts("Authored original MOV oD1: secondary RGB/alpha, bit17, clamp, cache and alpha discard verified on WARP; no NV2A fidelity proof");
+    return 0;
+}
 int main(void)
 {
     CHECK(verify_linkage()==0,116);
@@ -429,6 +533,7 @@ int main(void)
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),12);
     CHECK(verify_alpha_test(device,context,&completion)==0,135);
     CHECK(verify_dual_projective_mips(device,context,&completion)==0,188);
+    CHECK(verify_programmable_specular(device,context,&completion)==0,215);
     CHECK(verify_math(device,context,&completion,&state,(float[]){.25,.5,.75,.5})==0,13);
     /* Color and alpha read the PREVIOUS stage simultaneously. An in-place
      * RGB write would incorrectly change the subsequent alpha from .75 to .5. */

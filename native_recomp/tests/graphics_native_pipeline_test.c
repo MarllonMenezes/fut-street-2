@@ -58,6 +58,95 @@ static int verify(ID3D11Device *device, ID3D11DeviceContext *context, FutNativeC
     ID3D11Texture2D_Release(staging);
     return good ? 0 : 33;
 }
+static int verify_aa2_stencil(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion,ID3D11Texture2D *color,ID3D11Texture2D *depth,
+    ID3D11RenderTargetView *rt,ID3D11DepthStencilView *dt,
+    ID3D11VertexShader *vs,ID3D11PixelShader *ps,const FutGraphicsKelvinState *initial_state)
+{
+    FutGraphicsKelvinState state=*initial_state;FutNativePipeline pipeline={0};
+    FutGraphicsSurfacePlan surface={.width=16,.height=8,.logical_width=8,.logical_height=8,.samples=2};
+    state.depth_test=state.stencil_test=1;state.draw.depth_func=0x207;
+    state.draw.dither=state.draw.alpha_test=state.draw.blend_enable=state.draw.window_exclusive=0;
+    state.draw.color_mask=0x01010101;
+    for(unsigned i=0;i<8;++i) {
+        state.draw.window_x[i]=i?0x00050005u:0x00020001u;
+        state.draw.window_y[i]=0x00020001u;
+    }
+    state.draw.stencil_op[0]=state.draw.stencil_op[1]=0x1E00;
+    char parity_source[2048];int length=snprintf(parity_source,sizeof(parity_source),
+        "%scbuffer Parity:register(b4){uint slot;};float4 main(float4 p:SV_POSITION):SV_TARGET{"
+        "if((uint(p.x)&1u)!=slot || !fut_window_visible(p.xy))discard;return float4(1,0,0,.5);}",
+        fut_native_window_hlsl());
+    CHECK(length>0 && length<(int)sizeof(parity_source),67);
+    ID3DBlob *parity_blob=NULL;ID3D11PixelShader *parity_ps=NULL;
+    CHECK(SUCCEEDED(D3DCompile(parity_source,length,"authored_aa2_stencil_parity",NULL,NULL,
+        "main","ps_5_0",0,0,&parity_blob,NULL)),68);
+    CHECK(SUCCEEDED(ID3D11Device_CreatePixelShader(device,ID3D10Blob_GetBufferPointer(parity_blob),
+        ID3D10Blob_GetBufferSize(parity_blob),NULL,&parity_ps)),69);
+    D3D11_BUFFER_DESC bd={0};bd.ByteWidth=16;bd.Usage=D3D11_USAGE_DEFAULT;bd.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    ID3D11Buffer *parity_buffer=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,NULL,&parity_buffer)),70);
+    static const struct {unsigned ref,write_mask,depth_write,passes;} cases[]={
+        {0xB3,0xF0,0,1},{0xB4,0xF0,0,0},{0xB3,0xF0,1,1},{0xB3,0x0F,0,1},{0,0xFF,0,1}};
+    for(unsigned test=0;test<sizeof(cases)/sizeof(cases[0]);++test) {
+        int parity=test==4;
+        state.draw.stencil_func=parity?0x207:0x202;
+        state.draw.stencil_read=parity?0xFF:0x0F;
+        state.draw.stencil_write=cases[test].write_mask;state.draw.stencil_ref=cases[test].ref;
+        state.draw.depth_write=cases[test].depth_write;
+        state.draw.stencil_op[2]=parity?0x1E02:0x1E01;
+        CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),71);
+        D3D11_DEPTH_STENCIL_DESC desc;ID3D11DepthStencilState_GetDesc(pipeline.depth,&desc);
+        CHECK(desc.DepthEnable && desc.StencilEnable && desc.StencilReadMask==state.draw.stencil_read &&
+            desc.StencilWriteMask==cases[test].write_mask && desc.FrontFace.StencilFunc==
+                (parity?D3D11_COMPARISON_ALWAYS:D3D11_COMPARISON_EQUAL),72);
+        const float blue[4]={0,0,1,1};ID3D11DeviceContext_ClearRenderTargetView(context,rt,blue);
+        ID3D11DeviceContext_ClearDepthStencilView(context,dt,D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,
+            .375f,parity?0:0xA3);
+        uint32_t before[128],after[128],rgba[128];
+        CHECK(!read_depth_words(device,context,completion,depth,before),73);
+        ID3D11DeviceContext_OMSetRenderTargets(context,1,&rt,dt);
+        ID3D11DeviceContext_IASetInputLayout(context,NULL);
+        ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);
+        ID3D11DeviceContext_PSSetShader(context,parity?parity_ps:ps,NULL,0);
+        for(unsigned slot=0;slot<(parity?2u:1u);++slot) {
+            if(parity) {
+                const uint32_t values[4]={slot,0,0,0};
+                ID3D11DeviceContext_UpdateSubresource(context,(ID3D11Resource*)parity_buffer,0,NULL,values,0,0);
+                ID3D11DeviceContext_PSSetConstantBuffers(context,4,1,&parity_buffer);
+            }
+            ID3D11DeviceContext_Draw(context,3,0);
+        }
+        ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+        /* The readback helper copies raw DWORDs for both16x8 formats. */
+        CHECK(!read_depth_words(device,context,completion,color,rgba) &&
+            !read_depth_words(device,context,completion,depth,after),74);
+        for(unsigned y=0;y<8;++y)for(unsigned x=0;x<16;++x) {
+            unsigned lx=x/2,ly=y,index=y*16+x;
+            int selected=cases[test].passes && ly>=1 && ly<=2 &&
+                ((lx>=1 && lx<=2) || lx==5);
+            unsigned stencil=parity?(selected?1u:0u):selected?(test==3?0xA3u:0xB3u):0xA3u;
+            uint32_t z=after[index]&0xFFFFFFu;
+            uint32_t wanted_z=selected && cases[test].depth_write?0x800000u:before[index]&0xFFFFFFu;
+            unsigned error=z>wanted_z?z-wanted_z:wanted_z-z;
+            /* AA2 stores two X columns per logical pixel and one Y row.
+             * Two parity-discard passes must increment once, never twice. */
+            if(rgba[index]!=(selected?0x80FF0000u:0xFF0000FFu) || (after[index]>>24)!=stencil ||
+                error>(selected && cases[test].depth_write?1u:0u)) {
+                fprintf(stderr,"AA2 stencil case=%u pixel=%u,%u logical=%u,%u rgba=%08X zs=%08X expected_stencil=%02X expected_z=%06X\n",
+                    test,x,y,lx,ly,rgba[index],after[index],stencil,wanted_z);return 75;
+            }
+        }
+    }
+    ID3D11Buffer *empty=NULL;ID3D11DeviceContext_PSSetConstantBuffers(context,4,1,&empty);
+    ID3D11DeviceContext_OMSetRenderTargets(context,1,&rt,dt);
+    ID3D11DeviceContext_PSSetShader(context,ps,NULL,0);
+    fut_native_pipeline_destroy(&pipeline);ID3D11Buffer_Release(parity_buffer);
+    ID3D11PixelShader_Release(parity_ps);ID3D10Blob_Release(parity_blob);
+    puts("AA2 stencil host composition: masked EQUAL/REPLACE, Z write/preserve and parity discard INCR once verified; no NV2A fidelity proof");
+    return 0;
+}
 int main(void)
 {
     FutGraphicsKelvinState state = {0};
@@ -171,6 +260,26 @@ int main(void)
     ID3D11DeviceContext_Draw(context,3,0);
     CHECK(!read_depth_words(device,context,&completion,depth,after_depth) &&
         !memcmp(before_depth,after_depth,sizeof(before_depth)),47);
+    /* Enabled Z testing with write mask ZERO must still shade color while
+     * preserving every D24S8 bit. ALWAYS passes even though fragment Z=.5
+     * is greater than the cleared .375 depth, unlike the previous LESS. */
+    FutGraphicsKelvinState saved_depth_state=state;
+    state.depth_test=1;state.stencil_test=0;
+    state.draw.depth_write=0;state.draw.depth_func=0x207;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),61);
+    ID3D11DepthStencilState_GetDesc(pipeline.depth,&ds);
+    CHECK(ds.DepthEnable && !ds.StencilEnable && ds.DepthFunc==D3D11_COMPARISON_ALWAYS &&
+        ds.DepthWriteMask==D3D11_DEPTH_WRITE_MASK_ZERO,62);
+    ID3D11DeviceContext_ClearRenderTargetView(context,rt,initial);
+    ID3D11DeviceContext_ClearDepthStencilView(context,dt,D3D11_CLEAR_DEPTH|D3D11_CLEAR_STENCIL,.375f,0xA5);
+    CHECK(!read_depth_words(device,context,&completion,depth,before_depth),63);
+    ID3D11DeviceContext_Draw(context,3,0);
+    CHECK(!verify(device,context,&completion,color,0,0,0),64);
+    CHECK(!read_depth_words(device,context,&completion,depth,after_depth) &&
+        !memcmp(before_depth,after_depth,sizeof(before_depth)),65);
+    CHECK(!verify_aa2_stencil(device,context,&completion,color,depth,rt,dt,vs,ps,&state),76);
+    state=saved_depth_state;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),66);
     ID3D11BlendState *saved=pipeline.blend; state.draw.alpha_test=1;
     state.draw.alpha_func=0x208;
     CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_INVALIDARG && pipeline.blend==saved,22);
@@ -199,6 +308,29 @@ int main(void)
     ID3D11BlendState *bound=NULL; float blend_factor[4]; UINT sample_mask;
     ID3D11DeviceContext_OMGetBlendState(context,&bound,blend_factor,&sample_mask);
     CHECK(bound==saved,25); ID3D11BlendState_Release(bound);
+    state.specular_enable=1;state.program_mode=6;
+    const uint32_t light_controls[]={0,1,0x10000,0x20000,0x30001};
+    for(unsigned i=0;i<sizeof(light_controls)/sizeof(light_controls[0]);++i) {
+        state.light_control=light_controls[i];
+        CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),59);
+    }
+    saved=pipeline.blend;
+    for(unsigned bad=0;bad<7;++bad) {
+        state.program_mode=6;state.specular_enable=1;state.light_control=0x20001;
+        switch(bad) {
+        case 0:state.program_mode=0;break;
+        case 1:state.program_mode=1;break;
+        case 2:state.program_mode=3;break;
+        case 3:state.specular_enable=2;break;
+        case 4:state.light_control|=2;break;
+        case 5:state.fog_enable=1;break;
+        case 6:state.lighting_enable=1;break;
+        }
+        CHECK(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)==E_NOTIMPL &&
+            pipeline.blend==saved,60);
+        state.fog_enable=state.lighting_enable=0;
+    }
+    state.program_mode=state.specular_enable=state.light_control=0;
     surface.samples=2;surface.logical_width=640;surface.logical_height=480;
     surface.width=1280;surface.height=480;state.anti_aliasing_control=0xFFFF0001;
     state.draw.dither=1;

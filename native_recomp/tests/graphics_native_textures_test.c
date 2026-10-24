@@ -348,6 +348,69 @@ static int p8_read(void *opaque,uint32_t address,void *data,size_t size)
     if(address==0x80002000u && size==1024 && !m->fail_palette) {memcpy(data,m->palette,1024);return 1;}
     return 0;
 }
+static int verify_p8_clamp_sampling(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion,FutNativeTexture *native,const P8Memory *memory)
+{
+    CHECK(native->sampling_ready && native->sampling_state.filter==0x02062000u &&
+        native->sampling_state.address==0x10303u,227);
+    char source[2048];
+    int n=snprintf(source,sizeof(source),"%sTexture2D<float4> t:register(t0);SamplerState s:register(s0);"
+        "RWStructuredBuffer<float4> o:register(u0);[numthreads(8,1,1)]void main(uint3 id:SV_DispatchThreadID){"
+        "float4 p[8]={float4(-.25,-.125,0,1),float4(1.25,1.125,0,1),"
+        "float4(-.25,.3125,0,1),float4(1.25,.6875,0,1),"
+        "float4(.375,-.125,0,1),float4(.625,1.125,0,1),"
+        "float4(.5,.5,0,1),float4(.625,.5625,0,2)};"
+        "o[id.x]=fut_linear_texture(t,s,p[id.x],float2(1,1));}",fut_native_texture_hlsl());
+    CHECK(n>0 && n<(int)sizeof(source),228);
+    ID3DBlob *blob=NULL;ID3D11ComputeShader *shader=NULL;
+    CHECK(SUCCEEDED(D3DCompile(source,n,"authored_p8_clamp_probe",NULL,NULL,"main","cs_5_0",0,0,&blob,NULL)),229);
+    CHECK(SUCCEEDED(ID3D11Device_CreateComputeShader(device,ID3D10Blob_GetBufferPointer(blob),
+        ID3D10Blob_GetBufferSize(blob),NULL,&shader)),230);
+    D3D11_BUFFER_DESC desc={0};desc.ByteWidth=8*16;desc.Usage=D3D11_USAGE_DEFAULT;
+    desc.BindFlags=D3D11_BIND_UNORDERED_ACCESS;desc.MiscFlags=D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;desc.StructureByteStride=16;
+    ID3D11Buffer *output=NULL,*staging=NULL;ID3D11UnorderedAccessView *uav=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&desc,NULL,&output)),231);
+    CHECK(SUCCEEDED(ID3D11Device_CreateUnorderedAccessView(device,(ID3D11Resource*)output,NULL,&uav)),232);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.MiscFlags=desc.StructureByteStride=0;
+    desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&desc,NULL,&staging)),233);
+    ID3D11DeviceContext_CSSetShader(context,shader,NULL,0);
+    ID3D11DeviceContext_CSSetShaderResources(context,0,1,&native->view);
+    ID3D11DeviceContext_CSSetSamplers(context,0,1,&native->sampler);
+    ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&uav,NULL);
+    ID3D11DeviceContext_Dispatch(context,1,1,1);
+    ID3D11UnorderedAccessView *empty=NULL;ID3D11DeviceContext_CSSetUnorderedAccessViews(context,0,1,&empty,NULL);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)output);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),234);
+    D3D11_MAPPED_SUBRESOURCE mapped;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&mapped)),235);
+    /* Source offsets are independently selected from the authored4x8 table:
+     * first six clamp to a texel center; last two blend four palette entries.
+     * No production interleave, sampler addressing or filtered pixels define
+     * these expected values. Alternating palette alpha must survive too. */
+    static const unsigned offsets[8][4]={{0},{31},{8},{23},{1},{30},
+        {11,14,17,20},{2,3,8,9}};
+    static const float weights[8][4]={{1},{1},{1},{1},{1},{1},
+        {.25f,.25f,.25f,.25f},{.0625f,.1875f,.1875f,.5625f}};
+    static const unsigned shifts[4]={16,8,0,24};int good=1;
+    for(unsigned point=0;point<8;++point)for(unsigned channel=0;channel<4;++channel) {
+        float expected=0;
+        for(unsigned tap=0;tap<4;++tap) {
+            uint32_t color=memory->palette[memory->indices[offsets[point][tap]]];
+            expected+=weights[point][tap]*((color>>shifts[channel])&255)/255.0f;
+        }
+        float actual=((const float*)mapped.pData)[point*4+channel];
+        if(!isfinite(actual) || fabsf(actual-expected)>.00001f) {
+            fprintf(stderr,"P8 clamp point=%u channel=%u actual=%g expected=%g\n",point,channel,actual,expected);good=0;
+        }
+    }
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);ID3D11DeviceContext_ClearState(context);
+    ID3D11Buffer_Release(staging);ID3D11UnorderedAccessView_Release(uav);ID3D11Buffer_Release(output);
+    ID3D11ComputeShader_Release(shader);ID3D10Blob_Release(blob);
+    CHECK(good,236);
+    puts("Authored P8 palette expansion plus observed clamp U/V sampler: eight normalized border/interior RGBA samples verified on WARP");
+    return 0;
+}
 static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion)
 {
     FutGraphicsTextureState s={.valid=0x10B,.control0=0x4003FFC0,.format=0x03210B29,
@@ -391,8 +454,12 @@ static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNative
         if(pixel!=m.palette[m.indices[offsets[y][x]]])good=0;
     }
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
-    ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
+    ID3D11Texture2D_Release(staging);
     CHECK(good,150);
+    s.palette=0x2000;s.valid=0x3BF;s.address=0x10303;s.filter=0x02062000;
+    CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,&s)),237);
+    CHECK(verify_p8_clamp_sampling(device,context,completion,&native,&m)==0,238);
+    fut_native_texture_destroy(&native);
     s.format=0x03220B29;s.palette=0x2000;s.valid=0x3BF;s.address=0x10101;s.filter=0x02063F1B;
     m.fail_palette=0;
     CHECK(fut_graphics_texture_plan(&s,&dma,&plan)==FUT_TEXTURE_READY && plan.span==40 && plan.mip_levels==2,217);

@@ -15,10 +15,13 @@ int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned prim
 int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
 int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *array, uint32_t index);
+/* NV097 DRAW_ARRAYS: low24 first, high8 count-minus-one. Only a single
+ * contiguous strip is admitted; disjoint ranges/mixed input remain refused. */
+int fut_graphics_vertex_array_draw_arrays(FutGraphicsVertexArray *array, uint32_t range);
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);
 /* Transactionally builds the existing triangle-list input. Only the observed
- * S16x3/stride-6 position profile or bounded strided float3/float2,
+ * S16x3/stride-6 position profile or bounded strided float2/3/4,
  * ARGB8, S16 scalar and packed normalized11/11/10 descriptors in their original slots are admitted.
  * Success defines only [0,count) vertex/mask entries and batch metadata;
  * inactive capacity is untouched. Failure preserves the entire output. */
@@ -29,6 +32,7 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *array,
     const float attributes[16][4], const uint8_t attribute_valid[16],
     uint16_t required_mask);
 /* Observed INLINE_ARRAY tuple: float3 position, ARGB8 color, float2 UV.
+ * Retained DMA stride does not affect this packed inline payload.
  * Expands triangle-strip winding into the existing native triangle-list input. */
 int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *array,
     FutGraphicsImmediate *output, const uint32_t formats[16],
