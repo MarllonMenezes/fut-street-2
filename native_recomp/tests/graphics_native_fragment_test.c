@@ -3,8 +3,10 @@
 #include "graphics_native_pipeline.h"
 #include "graphics_native_constants.h"
 #include "graphics_shader_interface.h"
+#include "graphics_sample_pattern.h"
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #define CHECK(expr, code) do { if (!(expr)) { fprintf(stderr,"fragment test failed: %d\n",code); return code; } } while (0)
 static void configure(FutGraphicsFragmentState *s,uint32_t color_input,uint32_t alpha_input,uint32_t modes)
@@ -239,6 +241,160 @@ static int verify_cache(ID3D11Device *device)
     puts("Exact fragment cache: alternation, source/mode/device separation, invalid states, FIFO and COM ownership verified");
     return 0;
 }
+static int dual_mip_read(void *context,uint32_t address,void *output,size_t size)
+{
+    if(address<0x80000000u || address-0x80000000u>512u ||
+        size>512u-(address-0x80000000u)) return 0;
+    memcpy(output,(const unsigned char*)context+(address-0x80000000u),size);
+    return 1;
+}
+static int verify_dual_projective_mips(ID3D11Device *device,ID3D11DeviceContext *context,
+    FutNativeConstants *completion)
+{
+    /* Entirely authored BC blocks: BC2 red/green with alpha 1/8:15;
+     * BC1 blue/white. Four 8x8 blocks followed by one 4x4 mip block.
+     * These colors are the independent oracle, not decoded production output. */
+    unsigned char memory[512]={0};
+    for(unsigned level=0;level<2;++level) for(unsigned block=0;block<(level?1u:4u);++block) {
+        unsigned char *bc2=memory+(level?64u:0u)+block*16u;
+        unsigned char *bc1=memory+256u+(level?32u:0u)+block*8u;
+        uint16_t color2=level?0x07E0u:0xF800u,color1=level?0xFFFFu:0x001Fu;
+        memset(bc2,level?0x88:0xFF,8);
+        memcpy(bc2+8,&color2,2);memcpy(bc1,&color1,2);
+    }
+    FutGraphicsKelvinState state={0};FutNativeTexture textures[4]={0};
+    configure(&state.fragment,0x08200920u,0x18201920u,0x21u);
+    /* R0 = (T0 + T1)/2, independently for RGB and alpha. */
+    state.fragment.color_output[0]=state.fragment.alpha_output[0]=0x30C00u;
+    state.draw.valid=0xFFFFF;
+    for(unsigned i=0;i<8;++i)state.draw.window_x[i]=state.draw.window_y[i]=7u<<16;
+    state.draw.blend_src=1;state.draw.blend_op=0x8006;state.draw.color_mask=0x01010101;
+    state.draw.front_mode=state.draw.back_mode=0x1B02;
+    state.draw.front_face=0x901;state.draw.cull_face=0x405;
+    state.draw.depth_func=state.draw.stencil_func=0x207;
+    state.draw.stencil_op[0]=state.draw.stencil_op[1]=state.draw.stencil_op[2]=0x1E00;
+    FutGraphicsDmaView dma={0x80000000u,sizeof(memory)};
+    for(unsigned stage=0;stage<2;++stage) {
+        state.textures[stage]=(FutGraphicsTextureState){.valid=stage?0xFE2Fu:0x3BFu,
+            .offset=stage?256u:0u,.format=stage?0x03320C29u:0x03320E29u,
+            .address=0x10101u,.control0=0x4003FFC0u,.filter=0x02060000u};
+        /* Stage1 deliberately has neither LC_IMAGE nor CONTROL1 initialized. */
+        if(!stage) {state.textures[stage].control1=0x14000000u;state.textures[stage].image_rect=0x050001E0u;}
+        FutGraphicsTexturePlan plan;
+        CHECK(fut_graphics_texture_plan(&state.textures[stage],&dma,&plan)==FUT_TEXTURE_READY &&
+            plan.mip_levels==2 && plan.span==(stage?40u:80u),170);
+        CHECK(SUCCEEDED(fut_native_texture_upload(&textures[stage],device,&plan,dual_mip_read,memory)),171);
+    }
+    const char *vs_source=FUT_AA2_COVERAGE_HLSL FUT_GRAPHICS_VARYINGS_HLSL("O")
+        "cbuffer DualLod:register(b3){float4 scales;};"
+        "O main(uint id:SV_VertexID){O o=(O)0;"
+        "float2 p=float2(id==1?3:-1,id==2?3:-1);"
+        "o.pos=fut_sample_position(float4(p,.5,1));"
+        "float u=(p.x+1)*.5;"
+        "o.t0=float4(u*scales.x,.375,0,1);o.t1=float4(u*scales.y,.625,0,1);return o;}";
+    ID3DBlob *vblob=NULL;ID3D11VertexShader *vs=NULL;
+    CHECK(SUCCEEDED(D3DCompile(vs_source,strlen(vs_source),"authored_dual_mip_geometry",NULL,NULL,
+        "main","vs_5_0",D3DCOMPILE_IEEE_STRICTNESS,0,&vblob,NULL)),172);
+    CHECK(SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(vblob),
+        ID3D10Blob_GetBufferSize(vblob),NULL,&vs)),173);
+    D3D11_BUFFER_DESC bd={0};bd.ByteWidth=16;bd.Usage=D3D11_USAGE_DEFAULT;bd.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    ID3D11Buffer *scale_buffer=NULL,*passes[2]={0};
+    CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,NULL,&scale_buffer)),174);
+    for(unsigned slot=0;slot<2;++slot) {
+        FutGraphicsSamplePass pass;CHECK(fut_graphics_aa2_coverage_pass(8,8,slot,&pass),175);
+        D3D11_SUBRESOURCE_DATA initial={&pass,0,0};
+        CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,&initial,&passes[slot])),176);
+    }
+    FutGraphicsSurfacePlan surface={.width=16,.height=8,.logical_width=8,.logical_height=8,.samples=2};
+    FutNativePipeline pipeline={0};
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),177);
+    D3D11_TEXTURE2D_DESC td={0};td.Width=16;td.Height=8;td.MipLevels=td.ArraySize=td.SampleDesc.Count=1;
+    td.Format=DXGI_FORMAT_R32G32B32A32_FLOAT;td.Usage=D3D11_USAGE_DEFAULT;td.BindFlags=D3D11_BIND_RENDER_TARGET;
+    ID3D11Texture2D *target=NULL,*readback=NULL;ID3D11RenderTargetView *view=NULL;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&target)),178);
+    CHECK(SUCCEEDED(ID3D11Device_CreateRenderTargetView(device,(ID3D11Resource*)target,NULL,&view)),179);
+    td.Usage=D3D11_USAGE_STAGING;td.BindFlags=0;td.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&td,NULL,&readback)),180);
+    static const struct {float scale[2],lod[2];unsigned bias,stages;} cases[]={
+        {{.5f,.5f},{0,0},0,0x21},{{2,.5f},{1,0},0,0x21},{{.5f,2},{0,1},0,0x21},
+        {{2,2},{1,1},0,0x21},{{1,1},{.5f,.5f},128,0x21},
+        /* Observed FILTER=02063F1B: signed bias -229/256. Independent
+         * gradients select clamped LOD1 and LOD(1-229/256)=27/256. */
+        {{4,2},{1,27.0f/256.0f},0x3F1Bu,0x21},
+        /* T1 remains enabled, uploaded and bound as white, but mode0 does
+         * not sample it. The combiner must return T0 red without T1. */
+        {{.5f,2},{0,1},0,1}};
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
+    for(unsigned test=0;test<sizeof(cases)/sizeof(cases[0]);++test) {
+        int sampled_secondary=cases[test].stages==0x21u;
+        configure(&state.fragment,sampled_secondary?0x08200920u:0x08200000u,
+            sampled_secondary?0x18201920u:0x18200000u,cases[test].stages);
+        if(sampled_secondary)
+            state.fragment.color_output[0]=state.fragment.alpha_output[0]=0x30C00u;
+        for(unsigned stage=0;stage<2;++stage) {
+            state.textures[stage].filter=0x02060000u|cases[test].bias;
+            CHECK(SUCCEEDED(fut_native_texture_sampler(&textures[stage],device,&state.textures[stage])),181);
+        }
+        ID3D11PixelShader *ps=NULL;ID3DBlob *pblob=NULL;
+        /* Synchronization is mandatory only when the shader samples T1. */
+        if(sampled_secondary) {
+            state.textures[1].filter^=1u;
+            CHECK(fut_native_fragment_compile_aa2_projective(device,&state,textures,1,NULL,&ps,&pblob,NULL)==E_NOTIMPL &&
+                !ps && !pblob,182);
+            state.textures[1].filter^=1u;
+        }
+        CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_projective(device,&state,textures,1,NULL,&ps,&pblob,NULL)),183);
+        CHECK(SUCCEEDED(fut_native_fragment_linkage(vblob,pblob)),184);
+        float scales[4]={cases[test].scale[0],cases[test].scale[1],0,0};
+        ID3D11DeviceContext_UpdateSubresource(context,(ID3D11Resource*)scale_buffer,0,NULL,scales,0,0);
+        const float clear[4]={-1,-1,-1,-1};ID3D11DeviceContext_ClearRenderTargetView(context,view,clear);
+        ID3D11DeviceContext_OMSetRenderTargets(context,1,&view,NULL);
+        ID3D11DeviceContext_IASetInputLayout(context,NULL);
+        ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);ID3D11DeviceContext_PSSetShader(context,ps,NULL,0);
+        ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&scale_buffer);
+        for(unsigned stage=0;stage<2;++stage) {
+            ID3D11DeviceContext_PSSetShaderResources(context,stage,1,&textures[stage].view);
+            ID3D11DeviceContext_PSSetSamplers(context,stage,1,&textures[stage].sampler);
+        }
+        for(unsigned slot=0;slot<2;++slot) {
+            ID3D11DeviceContext_VSSetConstantBuffers(context,4,1,&passes[slot]);
+            ID3D11DeviceContext_PSSetConstantBuffers(context,4,1,&passes[slot]);
+            ID3D11DeviceContext_Draw(context,3,0);
+        }
+        ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+        ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)readback,(ID3D11Resource*)target);
+        CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),185);
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)readback,0,D3D11_MAP_READ,0,&mapped)),186);
+        float l0=cases[test].lod[0],l1=cases[test].lod[1];
+        const float expected[4]={sampled_secondary?(1-l0+l1)*.5f:1-l0,
+            sampled_secondary?(l0+l1)*.5f:l0,sampled_secondary?.5f:0,
+            1-l0*7.0f/(sampled_secondary?30.0f:15.0f)};
+        /* Horizontal UV gradients only: omitting the AA2 x2 correction, using
+         * stage0's gradients for stage1, or forcing level0 changes the oracle.
+         * A small host filtering tolerance is not an NV2A precision claim. */
+        for(unsigned y=1;y<7;++y)for(unsigned x=2;x<14;++x) {
+            const float *actual=(const float*)((const unsigned char*)mapped.pData+y*mapped.RowPitch)+x*4;
+            for(unsigned c=0;c<4;++c)if(!isfinite(actual[c]) || fabsf(actual[c]-expected[c])>.002f) {
+                fprintf(stderr,"dual mip case=%u pixel=%u,%u channel=%u actual=%g expected=%g\n",
+                    test,x,y,c,actual[c],expected[c]);
+                ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);return 187;
+            }
+        }
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
+        ID3D11PixelShader_Release(ps);ID3D10Blob_Release(pblob);
+    }
+    _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
+    ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
+    for(unsigned stage=0;stage<2;++stage)fut_native_texture_destroy(&textures[stage]);
+    for(unsigned slot=0;slot<2;++slot)ID3D11Buffer_Release(passes[slot]);
+    ID3D11Buffer_Release(scale_buffer);ID3D11RenderTargetView_Release(view);
+    ID3D11Texture2D_Release(target);ID3D11Texture2D_Release(readback);
+    ID3D11VertexShader_Release(vs);ID3D10Blob_Release(vblob);
+    puts("Authored BC2/BC1: dual two-level color/LOD, trilinear blend and enabled-but-unsampled T1 verified on WARP; no original-draw/NV2A proof");
+    return 0;
+}
 int main(void)
 {
     CHECK(verify_linkage()==0,116);
@@ -272,6 +428,7 @@ int main(void)
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),11);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),12);
     CHECK(verify_alpha_test(device,context,&completion)==0,135);
+    CHECK(verify_dual_projective_mips(device,context,&completion)==0,188);
     CHECK(verify_math(device,context,&completion,&state,(float[]){.25,.5,.75,.5})==0,13);
     /* Color and alpha read the PREVIOUS stage simultaneously. An in-place
      * RGB write would incorrectly change the subsequent alpha from .75 to .5. */

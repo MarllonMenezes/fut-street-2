@@ -67,6 +67,52 @@ int fut_graphics_software_linear_draw_ready(const FutGraphicsSoftwareState *s,
     }
     return 1;
 }
+/* Compressed projective storage uses FORMAT dimensions and a tightly packed
+ * mip chain. CONTROL1/IMAGE_RECT describe linear storage and may be unwritten
+ * on a secondary compressed stage. Validate the fields actually consumed. */
+static int projective_compressed_stage(const FutGraphicsTextureState *t)
+{
+    unsigned header=t->format&~0x0FFF0000u;
+    int bc1=header==0x00000C29u,bc2=header==0x00000E29u;
+    unsigned u=(t->format>>20)&15u,v=(t->format>>24)&15u;
+    unsigned levels=(t->format>>16)&15u,largest=u>v?u:v;
+    if((!bc1 && !bc2) || !fut_graphics_projective_aa2_approximation_enabled() ||
+        (bc1 && !fut_graphics_dxt1_noise_approximation_enabled()) ||
+        (bc2 && !fut_graphics_bc2_aa2_family_approximation_enabled()) ||
+        u<2 || u>12 || v<2 || v>12 || !levels || levels>largest+1 ||
+        (t->valid&0x2Fu)!=0x2Fu || t->control0!=0x4003FFC0u ||
+        t->filter!=0x02063F1Bu ||
+        (t->address!=0x10101u && !(bc1 && t->address==0x10303u)) ||
+        (t->offset&(bc1?7u:15u))) return 0;
+    uint64_t span=0;
+    for(unsigned level=0;level<levels;++level) {
+        unsigned w=(1u<<u)>>level,h=(1u<<v)>>level;
+        span+=(uint64_t)(((w?w:1u)+3u)/4u)*(((h?h:1u)+3u)/4u)*(bc1?8u:16u);
+    }
+    return span<=0x04000000u && t->offset<=0x04000000u-span;
+}
+
+/* Caller has already validated stage0's established projective family. An
+ * enabled secondary resource may remain bound after its shader mode becomes
+ * zero; the original mode determines whether the fragment program samples it. */
+static int projective_secondary_stages(const FutGraphicsKelvinState *k)
+{
+    unsigned secondary=0;
+    if(!(k->fragment.valid&2u) || k->fragment.stage_program&~0xFFFFFu ||
+        k->draw.dither!=1 || k->depth_test!=1 || k->stencil_test ||
+        k->draw.depth_write!=1 || k->compress_depth!=1 || k->control0!=0x00100001u)
+        return 0;
+    if((k->fragment.stage_program&31u)!=1u || !(k->textures[0].control0&0x40000000u)) return 0;
+    for(unsigned stage=1;stage<4;++stage) {
+        unsigned mode=(k->fragment.stage_program>>(stage*5u))&31u;
+        if(k->textures[stage].control0&0x40000000u) {
+            if((mode!=0u && mode!=1u) || !projective_compressed_stage(&k->textures[stage])) return 0;
+            secondary|=1u<<stage;
+        } else if(mode) return 0;
+    }
+    return secondary!=0;
+}
+
 int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     const FutGraphicsKelvinState *k,const FutGraphicsSurfacePlan *surface)
 {
@@ -116,8 +162,8 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
         (projective_argb || projective_bc1 || projective_bc2 || projective_bc3 || projective_p8) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
         t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
-        (t0->filter==0x02063F1Bu || (projective_p8 && levels==1 && t0->filter==0x02062000u)) && (t0->address==0x10101u ||
-            (projective_bc1 && t0->address==0x10303u)) &&
+        (t0->filter==0x02063F1Bu || ((projective_p8 || projective_argb) && levels==1 && t0->filter==0x02062000u)) && (t0->address==0x10101u ||
+            ((projective_bc1 || (projective_argb && levels==1 && t0->filter==0x02062000u)) && t0->address==0x10303u)) &&
         !(t0->offset&((projective_bc3 || projective_bc2)?15u:projective_bc1?7u:3u)) && projective_span<=0x04000000u && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
@@ -176,6 +222,11 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
             s->noise_valid!=1 || s->dxt1_noise!=1 ||
             s->rdi_index[0]!=0xE00050 || s->rdi_index[1]!=0xDF0008 ||
             s->rdi_value[0]!=1 || s->rdi_value[1]!=1) return 0;
+        unsigned secondary_projective=k->fragment.stage_program&~31u;
+        for(unsigned stage=1;stage<4;++stage)
+            secondary_projective|=k->textures[stage].control0&0x40000000u;
+        if(observed_projective_texture && secondary_projective)
+            return projective_secondary_stages(k);
         for(unsigned stage=0;stage<4;++stage) if(k->textures[stage].control0&0x40000000u) {
             uint32_t format=k->textures[stage].format;
             if(format!=0x11229 && format!=0x1122A && format!=0x11F29 && format!=0x11F2A) {

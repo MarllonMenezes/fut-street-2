@@ -14,77 +14,67 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 23 de outubro de 2026
+## Estado verificável — 24 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** A lógica original
-recompilada atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, com Brasil
-e Inglaterra, e iniciou o carregamento seguinte. Cenário jogável, partida,
-controle físico e 1920×1080 ainda não foram comprovados.
+**NOT_READY — ainda não é um jogo recompilado jogável.** A navegação original
+já atravessou Start, “PICK SIDES”, Ready e “SELECT TEAM”, chegando ao
+carregamento seguinte. Cenário apresentado, controle durante uma partida e
+partida curta ainda não foram comprovados. A última imagem conferida mostra
+“LOADING”, sem cenário jogável identificável.
 
-O host agora carrega **P8 com mipmaps**, expandindo os índices pela paleta
-original em cada nível. Testes D3D11 conferem ambos os níveis, incluindo
-textura retangular, e preservação do recurso anterior quando a leitura falha.
-Na execução original, uma textura P8 de dois níveis e 5.120 bytes participou
-de um desenho com 2.004 invocações de pixel shader e gravação na superfície.
-Não são gerados mipmaps substitutos.
+O host valida os estágios de texturas comprimidas **BC1/BC2 com mipmaps**
+independentemente, preservando seus dados, samplers e opções experimentais.
+Dimensões e tamanho da cadeia vêm do formato; campos de armazenamento linear
+não são exigidos para uma textura comprimida do estágio secundário.
+Recursos retidos são distinguidos dos efetivamente amostrados pelo shader.
+Descritores desconhecidos, controles, limites de memória, shaders e
+profundidade continuam sujeitos aos seus gates.
 
-O tradutor também implementa **SLT**, exigido pelo shader original de
-18 instruções capturado. O programa completo passou pela tradução,
-compilação HLSL e criação do recurso D3D11/WARP. Testes GPU verificam
-comparações por componente, igualdade e dependência do segundo operando.
-SLT/SGE usam comparações do host; a ordenação especial NV de zeros com sinais
-e NaNs não está reproduzida nem validada em hardware.
+Um desenho original com BC2 no estágio 0 e BC1 no estágio 1, ambas com dois
+níveis, concluiu com **276 vértices, 39.004 invocações de pixel shader e
+gravação na superfície do jogo**. Isso comprova execução e rasterização desse
+desenho; não comprova sua apresentação nem gameplay.
 
-A leitura de vértices admite o formato **CMP normalizado 11/11/10**, além de
-S16 e dos formatos anteriores, nos slots originais. Stride e tamanho do
-atributo são tratados separadamente, permitindo registros intercalados sem
-ler o preenchimento. Os testes conferem extremos, frações, os últimos bytes
-do buffer, preservação da saída em falhas e posição S16 com UV float2.
-Não há remapeamento de atributos nem descarte de índices.
+O desenho P8 seguinte, com T1 retida e não amostrada, também concluiu no jogo
+original: **3.198 vértices, 1.068 invocações de pixel shader e gravação na
+superfície**. O shader mantém sua seleção original de estágios.
 
-O certificado projetivo experimental aceita coordenadas de tela até 2²³
-somente para vértices fora dos limites XY definidos pelo módulo de W;
-preserva o sinal de W para clipping, com os demais limites e o caminho afim
-mantidos. O teste GPU com W de sinais mistos confere cor e UV contra referência
-racional independente: erro máximo observado de aproximadamente 3,58×10⁻⁷.
-Os casos de clipping distante permitem erro absoluto máximo de 1/65.536;
-os testes anteriores mantêm sua tolerância. A precisão NV2A não foi medida.
+Sete casos GPU com dados próprios verificam influência dos dois estágios,
+LOD independente, mistura trilinear, o bias negativo do filtro capturado e
+um shader que usa apenas T0 enquanto T1 continua vinculada. Os testes de
+controles incluem opt-ins desligados, descritores inválidos e cadeias fora
+dos limites. A combinação ARGB8 de um nível com filtro sem bias e clamp também
+é admitida sob o experimento projetivo existente, com testes positivos e
+negativos. Os **45 gates obrigatórios passaram**.
 
-A execução original já ultrapassou as recusas de SLT, de coordenadas com W
-negativo e do descritor CMP, executando desenhos adicionais com gravação na
-superfície do jogo. Isso não comprova apresentação desses desenhos nem
-gameplay. A última imagem verificada ainda mostra “LOADING”.
+O diagnóstico de **INLINE_ARRAY (0x1818)** agora registra o estado completo
+dos formatos quando há recusa. O pacote histórico contém 48 palavras de
+atributos; não é ARRAY_ELEMENT32. A recusa não reapareceu nas execuções
+seguintes, portanto sua causa específica ainda não foi confirmada nem
+apresentada como corrigida.
 
-O lote original de 633 índices com posição S16 e UV float2 passou pela
-montagem transacional e execução do vertex shader. A combinação observada de
-P8 com um nível, filtro sem bias e endereço projetivo também passou do gate
-anterior, mantendo opções experimentais e validação de paleta/sampler.
+O orçamento de execução da fila circular passou de 2 para **4 MiB**, após uma
+submissão observada exigir até 2.462.684 bytes dentro da fila de 4 MiB. As
+leituras continuam limitadas a 8 KiB por pacote, com salto explícito,
+rechecagem de header e recusa de excesso. Testes com dados próprios conferem
+ordem, fronteira do orçamento e falhas tardias; decodificar não sinaliza
+conclusão gráfica.
 
-**Bloqueio atual:** o gate de controles gráficos recusa um desenho com duas
-texturas ativas: BC2 128×128 com dois níveis no estágio 0 e BC1 128×128 com
-dois níveis no estágio 1. Os dois uploads concluíram; a submissão não recebeu
-conclusão. O próximo experimento exige validar os controles dos dois estágios
-e a combinação dos samplers/shader antes de habilitar esse desenho.
-A captura final apresentada ainda mostra “LOADING”.
+**Bloqueio atual:** o desenho seguinte com ARGB8 e vertex shader original de
+46 instruções passa pelos controles de textura, pela execução do VS e pela
+compilação e ligação dos shaders, mas a preparação do estado do pipeline
+retorna `E_NOTIMPL`. A recusa agora registra os controles adicionais para
+identificar a causa antes de alterar sua tradução. A submissão continua
+incompleta. As execuções usam timeout de 300 segundos e diretórios isolados
+no D:.
 
-Os **45 gates obrigatórios passaram**. A execução final usou timeout de
-300 segundos e logs/saves isolados no D:, encerrando com diagnóstico antes
-do limite. ISO/XBE e insumos originais permanecem intactos. AA2/quincunx,
-aproximações de texturas, PCM e bypass artificial da espera de efeitos
-continuam experimentais, sem alegação de fidelidade NV2A ou DSP.
-
-As referências xemu/nxdk orientaram formatos e organização dos mipmaps;
-nenhum código externo foi copiado. O REA está conectado, mas a análise nativa
-não foi realizada: Ghidra/IDA não estão configurados e a captura de processos
-do REA não suporta Windows neste ambiente.
-
-| Etapa | Evidência mais recente |
-| --- | --- |
-| Compilação | Executável nativo atualizado; 45 gates aprovados. |
-| Entrada | SDK e navegação originais chegaram a “SELECT TEAM” e ao carregamento seguinte. |
-| Rendering | Novos layouts de vértice executados; combinação BC2/BC1 em dois estágios bloqueada pelos controles. |
-| Gameplay | Cenário jogável e partida curta ainda não comprovados. |
-| Áudio | PCM experimental; bypass artificial ainda necessário, sem validação DSP. |
+AA2/quincunx, omissão do ruído BC1, filtragem, PCM e bypass artificial da
+espera de áudio continuam experimentais, sem fidelidade NV2A ou DSP
+comprovada. ISO/XBE e insumos originais são preservados; dados proprietários
+e capturas ficam locais. Referências xemu/nxdk orientam a semântica, sem
+cópia de implementação externa. O REA está conectado, mas Ghidra/IDA não
+estão configurados e sua captura de processos não suporta Windows neste
+ambiente; nenhuma análise nativa foi atribuída a ele.
 
 ### Opções de diagnóstico e reprodução
 

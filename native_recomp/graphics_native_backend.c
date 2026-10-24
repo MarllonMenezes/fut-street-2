@@ -1151,17 +1151,19 @@ static int native_prepare_draw(NativeGraphicsState *state)
             state->software.noise_valid,state->software.dxt1_noise,state->software.rdi_index[0],state->software.rdi_value[0],
             state->software.rdi_index[1],state->software.rdi_value[1],state->software.register_valid,
             state->software.register_words[0],state->software.register_words[1]);
-        fprintf(stderr,"[GRAPHICS] blocked draw domain: depth=%u stencil=%u depth_write=%u compress_depth=%u samples=%u format=%08X control0=%08X dither=%u anti_alias_control=%08X\n",
+        fprintf(stderr,"[GRAPHICS] blocked draw domain: depth=%u stencil=%u depth_write=%u compress_depth=%u samples=%u format=%08X control0=%08X dither=%u anti_alias_control=%08X stage_program=%08X\n",
             state->kelvin.depth_test,state->kelvin.stencil_test,state->kelvin.draw.depth_write,
             state->kelvin.compress_depth,state->native_surfaces.plan.samples,state->surfaces.format,
-            state->kelvin.control0,state->kelvin.draw.dither,state->kelvin.anti_aliasing_control);
-        const FutGraphicsTextureState *blocked_texture=&state->kelvin.textures[0];
-        fprintf(stderr,"[GRAPHICS] blocked texture0 state: valid=%X offset=%08X format=%08X address=%08X control0=%08X control1=%08X filter=%08X image_rect=%08X surface=%ux%u logical=%ux%u\n",
+            state->kelvin.control0,state->kelvin.draw.dither,state->kelvin.anti_aliasing_control,state->kelvin.fragment.stage_program);
+        for(unsigned stage=0;stage<4;++stage) {
+        const FutGraphicsTextureState *blocked_texture=&state->kelvin.textures[stage];
+        fprintf(stderr,"[GRAPHICS] blocked texture%u state: valid=%X offset=%08X format=%08X address=%08X control0=%08X control1=%08X filter=%08X image_rect=%08X surface=%ux%u logical=%ux%u\n",stage,
             blocked_texture->valid,blocked_texture->offset,blocked_texture->format,
             blocked_texture->address,blocked_texture->control0,blocked_texture->control1,
             blocked_texture->filter,blocked_texture->image_rect,
             state->native_surfaces.plan.width,state->native_surfaces.plan.height,
             state->native_surfaces.plan.logical_width,state->native_surfaces.plan.logical_height);
+        }
         FutGraphicsRopControls rop;
         if(fut_graphics_software_rop_controls(&state->software,&rop))
             fprintf(stderr,"[GRAPHICS] decoded XDK ROP controls: compare_always_read=%u depth_read=%u dont_cull_uncompressed=%u baseline=%08X/%08X; other baseline effects unmodeled\n",
@@ -1173,6 +1175,12 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
     if(aa2 && projective_format)
         fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_AA2_APPROXIMATION: rational pixel-center interpolation, original signed W and mip chain, logical-pixel gradients; NV2A precision/AA2 fidelity unverified NOT_READY\n",stderr);
+    if(aa2 && projective_format) for(unsigned stage=1;stage<4;++stage) {
+        const FutGraphicsTextureState *t=&state->kelvin.textures[stage];
+        if(t->control0&0x40000000u)
+            fprintf(stderr,"[GRAPHICS] AUTHORIZED_PROJECTIVE_SECONDARY_TEXTURE_APPROXIMATION: stage=%u format=%08X levels=%u sampled=%u; independent original mip chain/sampler, standard BC decoding with unknown NV2A BC1 noise omitted; AA2/filtering fidelity unverified NOT_READY\n",
+                stage,t->format,(t->format>>16)&15u,((state->kelvin.fragment.stage_program>>(stage*5u))&31u)!=0);
+    }
     if(aa2 && projective_format && (state->kelvin.textures[0].format&0xFF00u)==0x0C00u)
         fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_BC1_NOISE_APPROXIMATION: standard BC1 bytes/mips, unknown NV2A noise omitted; scoped projective experiment NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x05510B29u &&
@@ -1256,6 +1264,13 @@ static int native_prepare_draw(NativeGraphicsState *state)
             state->kelvin.draw.front_mode,state->kelvin.draw.back_mode,state->kelvin.draw.cull_enable,
             state->kelvin.draw.cull_face,state->kelvin.draw.offset_enable[0],state->kelvin.draw.offset_enable[1],
             state->kelvin.draw.offset_enable[2],state->kelvin.draw.offset_factor,state->kelvin.draw.offset_bias);
+        fprintf(stderr,"[GRAPHICS] draw pipeline controls: program_mode=%08X point_params=%u point_smooth=%u fog=%u lighting=%u specular=%u light_mask=%08X texture_matrices=%u,%u,%u,%u blend=%u/%08X/%08X/%08X alpha=%08X/%u\n",
+            state->kelvin.program_mode,state->kelvin.point_params_enable,state->kelvin.point_smooth,
+            state->kelvin.fog_enable,state->kelvin.lighting_enable,state->kelvin.specular_enable,
+            state->kelvin.light_enable_mask,state->kelvin.texture_matrix_enable[0],
+            state->kelvin.texture_matrix_enable[1],state->kelvin.texture_matrix_enable[2],state->kelvin.texture_matrix_enable[3],
+            state->kelvin.draw.blend_enable,state->kelvin.draw.blend_src,state->kelvin.draw.blend_dst,state->kelvin.draw.blend_op,
+            state->kelvin.draw.alpha_func,state->kelvin.draw.alpha_ref);
         return 0;
     }
     state->kelvin.draw.dirty=0;
@@ -1593,7 +1608,17 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
             (method>=0x1880u && method<0x1900u))) {
             FutImmediateStatus status=fut_graphics_immediate_method(&state->immediate,&state->kelvin,method,value);
             if(status==FUT_IMMEDIATE_APPLIED) return 1;
-            if(status!=FUT_IMMEDIATE_READY) return 0;
+            if(status!=FUT_IMMEDIATE_READY) {
+                fprintf(stderr,"[GRAPHICS] immediate method refused: method=%04X value=%08X offset=%zu primitive=%u active=%u ready=%u kind=%u vertices=%u pending=%u/%u/%u format_valid=%04X formats=",
+                    method,value,offset,state->immediate.primitive,state->immediate.active,
+                    state->immediate.ready,state->immediate.input_kind,state->immediate.count,
+                    state->immediate.pending_x,state->immediate.pending_position,state->immediate.inline_pending,
+                    state->kelvin.vertex_array_format_valid);
+                for(unsigned slot=0;slot<16;++slot)
+                    fprintf(stderr,"%s%08X",slot?",":"",state->kelvin.vertex_array_format[slot]);
+                fputs("; no draw/completion\n",stderr);
+                return 0;
+            }
             int timing=native_graphics_stage_timing_enabled();
             uint64_t stage_started=timing?native_graphics_stage_timing_begin():0;
             int prepared=native_prepare_immediate(state);

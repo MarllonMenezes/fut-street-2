@@ -2,6 +2,86 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
+{
+    FutGraphicsSurfacePlan surface={.width=1280,.height=480,.logical_width=640,
+        .logical_height=480,.samples=2};
+    FutGraphicsKelvinState base={0};
+    base.anti_aliasing_control=0xFFFF0001; base.depth_test=base.compress_depth=1;
+    base.draw.depth_write=base.draw.dither=1; base.control0=0x00100001;
+    base.fragment.valid=2; base.fragment.stage_program=0x21;
+    base.textures[0]=(FutGraphicsTextureState){.valid=0x3BF,.format=0x07720E29,
+        .offset=0x01678280,.address=0x10101,.control0=0x4003FFC0,
+        .control1=0x14000000,.filter=0x02063F1B,.image_rect=0x050001E0};
+    base.textures[1]=(FutGraphicsTextureState){.valid=0xFE2F,.format=0x07720C29,
+        .offset=0x01549B80,.address=0x10101,.control0=0x4003FFC0,.filter=0x02063F1B};
+    const char *opts[]={"RECOMP_AA2_APPROXIMATION","RECOMP_PROJECTIVE_AA2_APPROXIMATION",
+        "RECOMP_BC2_AA2_FAMILY_APPROXIMATION","RECOMP_DXT1_NOISE_APPROXIMATION"};
+    for(unsigned i=0;i<4;++i)_putenv_s(opts[i],"1");
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&base,&surface))return 160;
+    FutGraphicsKelvinState retained=base;
+    retained.fragment.stage_program=1;
+    retained.textures[0].format=0x07710B29;retained.textures[0].offset=0x013DC580;
+    retained.textures[0].filter=0x02062000;retained.textures[0].palette=0x016B9900;
+    _putenv_s("RECOMP_P8_AA2_FAMILY_APPROXIMATION","1");
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&retained,&surface))return 170;
+    retained.fragment.stage_program=0x21;
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&retained,&surface))return 171;
+    retained.fragment.stage_program=1;
+    retained.textures[1].filter^=1;
+    if(fut_graphics_software_aa2_draw_ready(baseline,&retained,&surface))return 172;
+    for(unsigned i=0;i<4;++i) {
+        _putenv_s(opts[i],"0");
+        if(fut_graphics_software_aa2_draw_ready(baseline,&base,&surface))return 161;
+        _putenv_s(opts[i],"1");
+    }
+    /* Exact end of each independent mip span, then swapped compression family.
+     * No address, size, or secondary-stage valid-word allowlist. */
+    FutGraphicsKelvinState k=base;
+    k.textures[0].offset=0x04000000u-20480u;k.textures[1].offset=0x04000000u-10240u;
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 162;
+    k=base;k.textures[0].format=0x07720C29;k.textures[1].format=0x07720E29;
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 163;
+    for(unsigned stage=2;stage<4;++stage) {
+        k.textures[stage]=k.textures[1];k.fragment.stage_program|=1u<<(stage*5u);
+        if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 164;
+    }
+    for(unsigned stage=0;stage<2;++stage) for(unsigned bad=0;bad<17;++bad) {
+        k=base;FutGraphicsTextureState *t=&k.textures[stage];
+        switch(bad) {
+        case 0:t->valid&=~1u;break;case 1:t->valid&=~2u;break;
+        case 2:t->valid&=~4u;break;case 3:t->valid&=~8u;break;
+        case 4:t->valid&=~0x20u;break;case 5:t->control0^=0x40;break;
+        case 6:t->filter^=1;break;case 7:t->address=0x30303;break;
+        case 8:t->format^=3;break;case 9:t->format^=0x100;break;
+        case 10:t->format=0x07120C29;break;case 11:t->format=0x07D20C29;break;
+        case 12:t->format&=~0xF0000u;break;case 13:t->format=0x07790C29;break;
+        case 14:++t->offset;break;
+        case 15:t->offset=0x04000000u-(stage?10240u:20480u)+16u;break;
+        case 16:k.fragment.stage_program^=3u<<(stage*5u);break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(baseline,&k,&surface)) {
+            fprintf(stderr,"projective stage negative admitted: %u/%u\n",stage,bad);return 165;
+        }
+    }
+    for(unsigned bad=0;bad<13;++bad) {
+        k=base;FutGraphicsSoftwareState s=*baseline;
+        switch(bad) {
+        case 0:k.draw.dither=0;break;case 1:k.depth_test=0;break;
+        case 2:k.draw.depth_write=0;break;case 3:k.stencil_test=1;break;
+        case 4:k.compress_depth=0;break;case 5:k.control0^=1;break;
+        case 6:k.fragment.valid=0;break;case 7:k.fragment.stage_program|=1u<<20;break;
+        case 8:k.textures[2].control0=0x40000000;break;
+        case 9:k.fragment.stage_program|=1u<<10;break;
+        case 10:k.textures[1].control0=0;break;
+        case 11:s.register_words[1]^=1;break;case 12:s.rdi_value[0]=0;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&s,&k,&surface)) {
+            fprintf(stderr,"projective common negative admitted: %u\n",bad);return 166;
+        }
+    }
+    return 0;
+}
 int main(void)
 {
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
@@ -669,6 +749,34 @@ int main(void)
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 132;
     _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 133;
+    FutGraphicsKelvinState argb_linear=kelvin;
+    argb_linear.textures[0].format=0x08810629;
+    argb_linear.textures[0].offset=0x0121CC00;
+    argb_linear.textures[0].filter=0x02062000;
+    argb_linear.textures[0].address=0x10303;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&argb_linear,&surface))return 167;
+    argb_linear.textures[0].format=0x07810629;
+    argb_linear.textures[0].address=0x10101;
+    argb_linear.textures[0].offset=0x04000000u-131072u;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&argb_linear,&surface))return 168;
+    for(unsigned bad=0;bad<10;++bad) {
+        FutGraphicsKelvinState variant=argb_linear;
+        switch(bad) {
+        case 0:variant.textures[0].filter^=1;break;
+        case 1:variant.textures[0].address=0x30303;break;
+        case 2:variant.textures[0].format+=0x10000;break;
+        case 3:variant.textures[0].control1=0;break;
+        case 4:variant.textures[0].image_rect=0;break;
+        case 5:variant.textures[0].valid&=~2u;break;
+        case 6:variant.textures[0].offset+=4;break;
+        case 7:variant.draw.depth_write=0;break;
+        case 8:_putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");break;
+        case 9:_putenv_s("RECOMP_AA2_APPROXIMATION","0");break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&state,&variant,&surface))return 169;
+        _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
+        _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    }
     kelvin.textures[0].format=0x07830629;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 143;
     kelvin.textures[0].offset=0x04000000u-172032u+4u;
@@ -720,6 +828,7 @@ int main(void)
     kelvin.textures[0].format=0x07730629;
     kelvin.textures[0].offset=0x04000000u-86016u+4u;
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 134;
+    int stage_test=verify_projective_stages(&baseline);if(stage_test)return stage_test;
     _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");kelvin=untextured;
     _putenv_s("RECOMP_AA2_APPROXIMATION","0");
     if(fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 102;

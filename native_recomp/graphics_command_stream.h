@@ -41,12 +41,14 @@ FutGraphicsDecodeStatus fut_graphics_decode_live(size_t size,
     FutGraphicsCommandReader reader, void *reader_context,
     FutGraphicsMethodReceiver receiver, void *context, FutGraphicsDecodeResult *result);
 
-#define FUT_GRAPHICS_WRAP_MAX_BYTES (2u * 1024u * 1024u)
+/* The observed 4 MiB ring has a pending wrapped path of 2,462,684 bytes.
+ * This is a finite executed-byte budget, not a snapshot allocation. */
+#define FUT_GRAPHICS_WRAP_MAX_BYTES (4u * 1024u * 1024u)
 
 /* Observed circular queue transition only: PUT is below cursor and a single
  * absolute low-bits-01 jump returns to ring_start. Reader offsets are relative
  * to ring_start; receiver/result offsets count executed bytes, excluding padding
- * after the jump. At most 2 MiB executed bytes, fetched one bounded packet at
+ * after the jump. At most 4 MiB executed bytes, fetched one bounded packet at
  * a time; other control flow is refused. Linear submissions are unchanged.
  * A decoded jump is NOT permission to update DMA GET or claim GPU completion. */
 FutGraphicsDecodeStatus fut_graphics_decode_wrapped_live(uint32_t ring_start,

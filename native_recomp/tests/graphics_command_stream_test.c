@@ -194,13 +194,16 @@ static int test_wrapped(void)
 #undef WRAP_CHECK
 }
 typedef struct {
-    uint8_t *bytes;size_t size;unsigned reads,fail;Recording record;
+    uint8_t *bytes;size_t size,max_read;unsigned reads,fail,change_read;Recording record;
 } LargeRing;
 static int large_read(void *context,size_t offset,uint8_t *bytes,size_t size)
 {
     LargeRing *r=context;
+    if(size>r->max_read) r->max_read=size;
     if(++r->reads==r->fail || offset>r->size || size>r->size-offset || size>8192) return 0;
-    memcpy(bytes,r->bytes+offset,size);return 1;
+    memcpy(bytes,r->bytes+offset,size);
+    if(r->reads==r->change_read) bytes[0]^=4;
+    return 1;
 }
 static void large_word(LargeRing *r,size_t offset,uint32_t value)
 {
@@ -224,16 +227,106 @@ static int test_large_wrapped(void)
     LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_HANDLER_REJECTED && r.record.count==1 && result.blocked_offset==1629776);
     r.record.count=r.reads=0;r.record.reject_at=99;r.fail=100000;
     LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_READ_FAILED && result.decoded_bytes>65536 && jump==SIZE_MAX);
-    memset(r.bytes,0,r.size);r.record.count=r.reads=r.fail=0;
+    free(r.bytes);r.size=8u*1024u*1024u;r.bytes=calloc(1,r.size);
+    if(!r.bytes)return 0;
+    r.record.count=r.reads=r.fail=0;
     large_word(&r,r.size-4,(base&0x7FFFFFFFu)|1u);
-    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES-4,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_DECODED && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES && jump==0 && !r.record.count);
+    /* An 8 MiB allocation leaves space on both sides of the global 4 MiB
+     * execution boundary. The observed title ring above remains 4 MiB. */
+    const uint32_t budget_end=base+(uint32_t)r.size;
+    LARGE_CHECK(FUT_GRAPHICS_WRAP_MAX_BYTES==4u*1024u*1024u);
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,budget_end,budget_end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES-4,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_DECODED && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES && jump==0 && !r.record.count && r.max_read<=8192);
     r.reads=0;
-    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && !r.reads && !r.record.count);
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,budget_end,budget_end-4,base+FUT_GRAPHICS_WRAP_MAX_BYTES,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && !r.reads && !r.record.count && jump==SIZE_MAX);
     /* A long zero-filled tail cannot wrap implicitly even within the ring. */
     r.reads=0;
-    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,end,base+0x100000,base+8,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES-8 && jump==SIZE_MAX && !r.record.count);
-    free(r.bytes);puts("Large observed ring span: bounded live packets, explicit jump, 2 MiB budget, failures and no implicit wrap verified");return 1;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,budget_end,base+0x100000,base+8,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_UNSUPPORTED_CONTROL && result.decoded_bytes==FUT_GRAPHICS_WRAP_MAX_BYTES-8 && jump==SIZE_MAX && !r.record.count);
+    /* A declared ring span cannot make a reader access unallocated bytes. */
+    r.reads=0;
+    LARGE_CHECK(fut_graphics_decode_wrapped_live(base,budget_end+4,budget_end,base+8,large_read,&r,receive,&r.record,&result,&jump)==FUT_GRAPHICS_READ_FAILED && r.reads==1 && !result.decoded_bytes && !r.record.count);
+    free(r.bytes);puts("Large observed ring span: bounded live packets, explicit jump, 4 MiB budget, failures and no implicit wrap verified");return 1;
 #undef LARGE_CHECK
+}
+
+typedef struct {
+    LargeRing ring;
+    size_t tail_bytes,methods,last_offset,first_head_offset;
+} PayloadRing;
+
+/* Author independent NON_INC payloads instead of using captured game bytes.
+ * Every value encodes its executed offset, so the receiver checks ordering
+ * across packet boundaries and the absolute ring jump. */
+static size_t payload_packets(LargeRing *r,size_t physical,size_t bytes,
+    size_t logical,unsigned channel,uint32_t method,size_t *packets)
+{
+    size_t methods=0;
+    *packets=0;
+    while(bytes) {
+        unsigned count=(unsigned)(bytes/4-1);
+        if(count>2047)count=2047;
+        size_t packet_bytes=4u+(size_t)count*4u;
+        large_word(r,physical,0x40000000u|(count<<18)|(channel<<13)|method);
+        for(unsigned i=0;i<count;++i)
+            large_word(r,physical+4u+(size_t)i*4u,
+                0xA5000000u^(uint32_t)(logical+4u+(size_t)i*4u));
+        physical+=packet_bytes;logical+=packet_bytes;bytes-=packet_bytes;
+        methods+=count;++*packets;
+    }
+    return methods;
+}
+
+static int payload_receive(void *context,unsigned channel,uint32_t method,
+    uint32_t value,size_t offset)
+{
+    PayloadRing *r=context;
+    unsigned head=offset>=r->tail_bytes;
+    if((offset&3u) || offset<=r->last_offset ||
+        channel!=(head?3u:0u) || method!=(head?0x104u:0x1818u) ||
+        value!=(0xA5000000u^(uint32_t)offset)) return 0;
+    if(head && !r->first_head_offset)r->first_head_offset=offset;
+    r->last_offset=offset;++r->methods;return 1;
+}
+
+static int test_payload_wrapped(void)
+{
+#define PAYLOAD_CHECK(x) do{if(!(x)){fprintf(stderr,"payload wrap failed at %d\n",__LINE__);free(r.ring.bytes);return 0;}}while(0)
+    const uint32_t base=0x82802000u,end=0x82C02000u;
+    const uint32_t cursor=0x82BC446Cu,put=0x82A1D848u;
+    PayloadRing r={0};r.ring.size=end-base;
+    r.ring.bytes=calloc(1,r.ring.size);if(!r.ring.bytes)return 0;
+    r.tail_bytes=end-cursor;
+    size_t head_bytes=put-base,tail_packets=0,head_packets=0;
+    size_t tail_methods=payload_packets(&r.ring,cursor-base,r.tail_bytes-4,
+        0,0,0x1818,&tail_packets);
+    large_word(&r.ring,r.ring.size-4,(base&0x7FFFFFFFu)|1u);
+    size_t head_methods=payload_packets(&r.ring,0,head_bytes,r.tail_bytes,
+        3,0x104,&head_packets);
+    FutGraphicsDecodeResult result;size_t jump;
+    PAYLOAD_CHECK(r.tail_bytes+head_bytes==2462684u && head_bytes>2u*1024u*1024u);
+    PAYLOAD_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r.ring,
+        payload_receive,&r,&result,&jump)==FUT_GRAPHICS_DECODED);
+    PAYLOAD_CHECK(result.decoded_bytes==r.tail_bytes+head_bytes && jump==r.tail_bytes-4 &&
+        result.packets==tail_packets+head_packets+1 && result.methods==tail_methods+head_methods &&
+        r.methods==result.methods && r.first_head_offset==r.tail_bytes+4 &&
+        r.last_offset==result.decoded_bytes-4 && r.ring.max_read==8192);
+    /* Fail/alter the last head packet after more than 2 MiB have decoded.
+     * No payload from that packet may reach the receiver on either failure. */
+    unsigned last_packet_read=(unsigned)(2u*(tail_packets+head_packets+1u));
+    for(unsigned changed=0;changed<2;++changed) {
+        r.methods=r.last_offset=r.first_head_offset=0;r.ring.reads=0;
+        r.ring.fail=changed?0:last_packet_read;
+        r.ring.change_read=changed?last_packet_read:0;
+        PAYLOAD_CHECK(fut_graphics_decode_wrapped_live(base,end,cursor,put,large_read,&r.ring,
+            payload_receive,&r,&result,&jump)==(changed?FUT_GRAPHICS_PACKET_CHANGED:FUT_GRAPHICS_READ_FAILED));
+        PAYLOAD_CHECK(result.decoded_bytes>2u*1024u*1024u &&
+            result.decoded_bytes<r.tail_bytes+head_bytes && jump==r.tail_bytes-4 &&
+            result.methods==r.methods && r.last_offset==result.decoded_bytes-4 &&
+            r.ring.reads==last_packet_read && r.ring.max_read==8192);
+    }
+    free(r.ring.bytes);
+    puts("Authored 2462684-byte wrap: method/value/offset order, 2047-DWORD packets, bounded reads and late failures verified; decoding only");
+    return 1;
+#undef PAYLOAD_CHECK
 }
 int main(int argc, char **argv)
 {
@@ -307,6 +400,7 @@ int main(int argc, char **argv)
     if (!test_live()) return 9;
     if (!test_wrapped()) return 13;
     if (!test_large_wrapped()) return 14;
+    if (!test_payload_wrapped()) return 15;
     puts("graphics command decoding, live CPU patches, rejection and input preservation OK");
     return 0;
 }
