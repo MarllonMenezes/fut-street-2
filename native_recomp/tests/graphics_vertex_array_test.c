@@ -32,7 +32,7 @@ static int check(int ok,int line){return ok?0:line;}
 #define CHECK(x) do { int e=check((x),__LINE__);if(e)return e; } while(0)
 static int test_float_streams(void)
 {
-    FutGraphicsVertexArray a={0};FutGraphicsImmediate out,before;
+    FutGraphicsVertexArray a={0};static FutGraphicsImmediate out,before;
     FutGraphicsDmaView view={0x1000,96},short_view={0x1000,95};
     uint32_t formats[16],offsets[16]={0,48,80};float attrs[16][4]={0};uint8_t valid[16]={0};
     const float positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
@@ -72,12 +72,25 @@ static int test_float_streams(void)
     before=out;
     CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_view,&short_view,formats,offsets,attrs,valid,3) && !memcmp(&out,&before,sizeof(out)));
     CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,formats,offsets,attrs,valid,7));
+    const int16_t scalar[]={-3,0,12,32767};memcpy(memory+96,scalar,8);
+    for(unsigned slot=1;slot<16;++slot)formats[slot]=0xC02;
+    formats[1]=formats[3]=0xC32;formats[4]=0x215;
+    offsets[1]=offsets[3]=0;offsets[4]=96;
+    FutGraphicsDmaView extended={0x1000,104},short_extended={0x1000,103};
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&extended,&extended,formats,offsets,attrs,valid,0x1B));
+    for(unsigned i=0;i<6;++i) {
+        unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[1],positions[src],12) && !memcmp(v[3],positions[src],12) && out.defined[i]==0x1B);
+        CHECK(v[4][0]==scalar[src] && v[4][1]==0 && v[4][2]==0 && v[4][3]==1);
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_extended,&short_extended,formats,offsets,attrs,valid,0x1B) && !memcmp(&out,&before,sizeof(out)));
     return 0;
 }
 int main(void)
 {
     int float_error=test_float_streams();if(float_error)return float_error;
-    FutGraphicsVertexArray a={0};FutGraphicsImmediate out={0},before;
+    FutGraphicsVertexArray a={0};static FutGraphicsImmediate out={0},before;
     FutGraphicsDmaView va={0x1000,25},vb={0x1000,25},different={0x1000,23};
     uint32_t formats[16],offsets[16]={0};float attrs[16][4]={0};uint8_t valid[16]={0};
     int16_t positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
@@ -122,11 +135,11 @@ int main(void)
     CHECK(out.vertices[0][0][0]==-1 && out.vertices[1][0][0]==0 && out.vertices[2][0][0]==1);
     CHECK(out.vertices[3][0][0]==1 && out.vertices[4][0][0]==0 && out.vertices[5][0][0]==0);
     CHECK(out.vertices[0][3][0]==128.0f/255.0f && out.vertices[0][9][1]==0.0f);
-    FutGraphicsImmediate legacy_inline=out;
+    static FutGraphicsImmediate legacy_inline;legacy_inline=out;
     for(unsigned i=0;i<16;++i) inline_formats[i]|=0x600u;
     CHECK(fut_graphics_vertex_array_build_inline(&a,&out,inline_formats,attrs,valid,0x201));
     CHECK(memcmp(&out,&legacy_inline,sizeof(out))==0);
-    FutGraphicsImmediate inline_before=out;inline_formats[3]=0x740u;
+    static FutGraphicsImmediate inline_before;inline_before=out;inline_formats[3]=0x740u;
     CHECK(!fut_graphics_vertex_array_build_inline(&a,&out,inline_formats,attrs,valid,0x201));
     CHECK(memcmp(&out,&inline_before,sizeof(out))==0);
 
@@ -177,7 +190,7 @@ int main(void)
     CHECK(out.ready && out.primitive==2 && out.input_kind==4 && out.count==32);
     CHECK(out.vertices[0][0][0]==0 && out.vertices[1][0][0]==10 &&
         out.vertices[30][0][0]==150 && out.vertices[31][0][0]==0);
-    FutGraphicsImmediate line_before=out;
+    static FutGraphicsImmediate line_before;line_before=out;
     relocated_base=0x801641A4u;line_offsets[0]=0x001641A4u;
     CHECK(fut_graphics_vertex_array_build_observed_lines(&a,&out,read_memory,NULL,
         &captured_view,&captured_view,line_formats,line_offsets,attrs,valid,1));
@@ -295,7 +308,7 @@ int main(void)
     /* Large profile strip: keep degenerate indices and parity exactly as
      * supplied, including beyond the old 256-index diagnostic limit. */
     memcpy(memory,positions,sizeof(positions));
-    const unsigned lengths[]={912,1024,2315,FUT_VERTEX_ARRAY_INDEX_CAPACITY};
+    const unsigned lengths[]={912,1024,2315,2560,3522,FUT_VERTEX_ARRAY_INDEX_CAPACITY};
     for(unsigned sample=0;sample<sizeof(lengths)/sizeof(lengths[0]);++sample) {
         unsigned length=lengths[sample];
         fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,6));

@@ -125,7 +125,7 @@ static int run_fixture(int mode)
         program[0][1]=(5u<<21)|(2u<<9)|0x1Bu;
         program[0][2]=(2u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17);
         program[0][3]=(15u<<24)|(2u<<20);
-        program[1][1]=(10u<<21)|(1u<<13)|0x1Bu;
+        program[1][1]=((mode<=-27?12u:10u)<<21)|(1u<<13)|0x1Bu;
         program[1][2]=(2u<<28)|(1u<<26)|(3u<<11)|(1u<<21)|(2u<<19)|(3u<<17);
         program[1][3]=(15u<<24)|(3u<<20);
         program[2][1]=(4u<<25)|(3u<<9);program[2][3]=(2u<<28)|(1u<<20)|(15u<<16);
@@ -149,7 +149,8 @@ static int run_fixture(int mode)
         for(unsigned i=0;i<192;++i){uniforms[i][0]=(float)i;uniforms[i][1]=.25f;uniforms[i][2]=.5f;uniforms[i][3]=1;}
         const float initial_address[]={.1f,.2f,.3f,.4f};memcpy(uniforms[96],initial_address,16);
     }
-    if(lighting) {const float maximum[]={.1f,.3f,.15f,.4f};memcpy(uniforms[1],maximum,16);}
+    if(lighting) {const float maximum[]={.1f,.3f,.15f,.4f};memcpy(uniforms[1],maximum,16);
+        if(mode==-28){const float equality[]={0,1,-1,0};memcpy(uniforms[1],equality,16);}}
     if (!fut_native_constants_finish(&constants, (const uint32_t (*)[4])uniforms, 2000, NULL)) return 8;
     D3D11_INPUT_ELEMENT_DESC elements[16] = {0};
     for (unsigned i = 0; i < 16; ++i) {
@@ -184,6 +185,7 @@ static int run_fixture(int mode)
         if(mode==-24)vertex[4][0]=-.4f;
         if(mode==-25){vertex[4][1]=0;vertex[4][3]=-2;}
         if(mode==-26){vertex[4][1]=.99f;vertex[4][3]=200;}
+        if(mode==-28)vertex[2][0]=vertex[2][1]=vertex[2][2]=0;
     }
     D3D11_BUFFER_DESC desc = {0}; desc.ByteWidth = sizeof(vertex);
     desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
@@ -225,6 +227,7 @@ static int run_fixture(int mode)
         float x=fmaxf(vertex[4][0],0),y=fmaxf(vertex[4][1],0),power=fminf(fmaxf(vertex[4][3],-127.99609375f),127.99609375f);
         expected[0]=1;expected[1]=x;expected[2]=x>0?powf(y,power):0;expected[3]=1;
         expected[4]=fminf(1.0f,1.0f/sqrtf(fabsf(vertex[3][0])));expected[5]=.3f;expected[6]=.2f;expected[7]=.4f;
+        if(mode<=-27){expected[5]=0;expected[6]=1;expected[7]=mode==-28?1:0;}
     }
     const float *actual = mapped.pData;
     int correct = 1;
@@ -324,7 +327,7 @@ int main(void)
     int cache=verify_cache();if(cache)return cache;
     for(int mode=-3;mode>=-7;--mode) {int result=run_fixture(mode);if(result)return result;}
     for(int mode=-8;mode>=-16;--mode){int result=run_fixture(mode);if(result)return result;}
-    for(int mode=-20;mode>=-26;--mode){int result=run_fixture(mode);if(result)return result;}
+    for(int mode=-20;mode>=-28;--mode){int result=run_fixture(mode);if(result)return result;}
     int mad=run_fixture(-2);
     if(mad) return mad;
     int paired=run_fixture(-1);

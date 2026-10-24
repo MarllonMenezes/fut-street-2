@@ -1027,7 +1027,11 @@ static int native_prepare_aa2_programs(NativeGraphicsState *state)
 {
     int projective=!state->constant_coordinates && (state->projective_coordinates&1u) &&
         fut_graphics_projective_aa2_approximation_enabled();
-    if(!state->constant_coordinates && !projective) return 0;
+    if(!state->constant_coordinates && !projective) {
+        fprintf(stderr,"[GRAPHICS] AA2 coordinate certificate refused: vertices=%u affine_mask=%X projective_mask=%X opt_in=%d; no draw\n",
+            state->native_immediate.count,state->constant_coordinates,state->projective_coordinates,
+            fut_graphics_projective_aa2_approximation_enabled());return 0;
+    }
     state->aa2_projective=projective;
     unsigned first=state->kelvin.program_start,count=0;
     while(first+count<136 && state->kelvin.program_valid[first+count]==15) {
@@ -1110,6 +1114,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fut_graphics_software_aa2_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan):
         fut_graphics_software_linear_draw_ready(&state->software,&state->kelvin,&state->native_surfaces.plan);
     int projective_format=(state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000629u ||
+        ((state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000B29u &&
+         (((state->kelvin.textures[0].format>>16)&15u)>1 || state->kelvin.textures[0].filter==0x02063F1Bu)) ||
         ((state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000E29u &&
          (((state->kelvin.textures[0].format>>16)&15u)>1 || state->kelvin.textures[0].filter==0x02063F1Bu)) ||
         state->kelvin.textures[0].format==0x09A30F29u ||
@@ -1309,6 +1315,19 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
     state->projective_coordinates=fut_native_immediate_projective_coordinates(positions,state->native_immediate.count);
     state->quincunx_coordinates=fut_native_immediate_quincunx_coordinates(positions,state->native_immediate.count);
+    if(!state->constant_coordinates && !(state->projective_coordinates&1u)) {
+        const char *capture=getenv("RECOMP_GRAPHICS_SNAPSHOT");
+        if(capture && !strcmp(capture,"1")) {
+            FILE *file=fopen("graphics-coordinate-rejected-so.bin","wb");
+            if(file){fwrite(positions,sizeof(*positions),state->native_immediate.count,file);fclose(file);}
+            file=fopen("graphics-coordinate-rejected-input.bin","wb");
+            if(file){fwrite(state->immediate.vertices,sizeof(state->immediate.vertices[0]),state->immediate.count,file);fclose(file);}
+            file=fopen("graphics-coordinate-rejected-program.bin","wb");
+            if(file){fwrite(state->kelvin.program+first,sizeof(state->kelvin.program[0]),count,file);fclose(file);}
+            file=fopen("graphics-coordinate-rejected-constants.bin","wb");
+            if(file){fwrite(state->kelvin.constants,sizeof(state->kelvin.constants),1,file);fclose(file);}
+        }
+    }
     fprintf(stderr,"[GRAPHICS] original vertex program executed with no rasterized stream: vertices=%u; no pixels/submission completion\n",
         state->native_immediate.count);
     for(unsigned i=0;i<state->native_immediate.count && i<3;++i) fprintf(stderr,

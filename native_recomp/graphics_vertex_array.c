@@ -1,5 +1,19 @@
 #include "graphics_vertex_array.h"
+#include <stddef.h>
 #include <string.h>
+
+/* Every active vertex and its mask is fully assigned before commit. Inactive
+ * capacity is not payload; avoid clearing/copying megabytes for tiny UI strips. */
+static void initialize_batch(FutGraphicsImmediate *batch)
+{
+    memset(&batch->count,0,sizeof(*batch)-offsetof(FutGraphicsImmediate,count));
+}
+static void commit_batch(FutGraphicsImmediate *out,const FutGraphicsImmediate *next)
+{
+    memcpy(out->vertices,next->vertices,next->count*sizeof(next->vertices[0]));
+    memcpy(out->defined,next->defined,next->count*sizeof(next->defined[0]));
+    memcpy(&out->count,&next->count,sizeof(*next)-offsetof(FutGraphicsImmediate,count));
+}
 
 void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *a)
 {
@@ -75,17 +89,18 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
     const int float_streams=formats[0]==0xC32u;
     if(!float_streams && formats[0]!=0x635u) return 0;
-    const int position_color=float_streams && formats[1]==0x440u;
-    unsigned fetched=float_streams?(position_color?2u:3u):1u;
+    unsigned fetched_mask=1u;
     for(unsigned slot=1;slot<16;++slot) {
-        uint32_t expected=float_streams?(slot==1?(position_color?0x440u:0x822u):
-            slot==2 && !position_color?0x440u:0xC02u):0x602u;
-        if(formats[slot]!=expected || (slot>=fetched && (required&(1u<<slot)) && attribute_valid[slot]!=15)) return 0;
+        uint32_t format=formats[slot];
+        int enabled=float_streams && (format==0xC32u || format==0x822u || format==0x440u || format==0x215u);
+        if(!enabled && format!=(float_streams?0xC02u:0x602u)) return 0;
+        if(enabled)fetched_mask|=1u<<slot;
+        else if((required&(1u<<slot)) && attribute_valid[slot]!=15)return 0;
     }
     if((required&1u)==0) return 0;
     draw_count=(uint64_t)(a->count-2)*3;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY || draw_count%3) return 0;
-    memset(&next,0,sizeof(next));
+    initialize_batch(&next);
     for(unsigned tri=0;tri<a->count-2;++tri) {
         unsigned order[3];
         if(tri&1u) { order[0]=tri+1;order[1]=tri;order[2]=tri+2; }
@@ -93,8 +108,8 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         for(unsigned corner=0;corner<3;++corner) {
             unsigned dst=tri*3+corner;
             memcpy(next.vertices[dst],attributes,sizeof(next.vertices[dst]));
-            for(unsigned slot=0;slot<fetched;++slot) {
-                size_t stride=float_streams?(slot==0?12u:position_color?4u:slot==1?8u:4u):6u;
+            for(unsigned slot=0;slot<16;++slot) if(fetched_mask&(1u<<slot)) {
+                size_t stride=float_streams?(formats[slot]>>8):6u;
                 uint64_t rel=(uint64_t)offsets[slot]+(uint64_t)a->indices[order[corner]]*stride;
                 uint8_t raw[12];
                 if(rel>view_a->size || view_a->size-rel<stride ||
@@ -105,7 +120,9 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
                 if(!float_streams) {
                     int16_t component[3];memcpy(component,raw,sizeof(component));
                     for(unsigned i=0;i<3;++i)v[i]=(float)component[i];
-                } else if(slot==0 || (!position_color && slot==1)) memcpy(v,raw,stride);
+                } else if(formats[slot]==0x215u) {
+                    int16_t value;memcpy(&value,raw,2);v[0]=(float)value;
+                } else if(formats[slot]==0xC32u || formats[slot]==0x822u) memcpy(v,raw,stride);
                 else {
                     uint32_t color;memcpy(&color,raw,sizeof(color));
                     v[0]=(float)((color>>16)&255u)/255.0f;
@@ -116,11 +133,11 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
             }
             unsigned defined=0;
             for(unsigned slot=0;slot<16;++slot) if(attribute_valid[slot]==15) defined|=1u<<slot;
-            next.defined[dst]=(uint16_t)(defined|((1u<<fetched)-1u));
+            next.defined[dst]=(uint16_t)(defined|fetched_mask);
         }
     }
     next.count=(unsigned)draw_count;next.primitive=5;next.ready=1;next.input_kind=3;
-    *out=next;
+    commit_batch(out,&next);
     return 1;
 }
 
@@ -141,7 +158,7 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
     unsigned vertices=a->inline_count/6u;
     uint64_t draw_count=(uint64_t)(vertices-2)*3u;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY) return 0;
-    memset(&next,0,sizeof(next));
+    initialize_batch(&next);
     for(unsigned tri=0;tri<vertices-2;++tri) {
         unsigned order[3];
         if(tri&1u) {order[0]=tri+1;order[1]=tri;order[2]=tri+2;}
@@ -164,7 +181,7 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
         }
     }
     next.count=(unsigned)draw_count;next.primitive=5;next.ready=1;next.input_kind=3;
-    *out=next;return 1;
+    commit_batch(out,&next);return 1;
 }
 
 int fut_graphics_vertex_array_capture_observed_lines(FutGraphicsMemoryRead read,
@@ -202,7 +219,7 @@ int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray 
         view_a->guest_address>UINT32_MAX-view_a->size || attribute_valid[0]!=15) return 0;
     for(unsigned i=0;i<a->count;++i) if(a->indices[i]!=(a->count==8u?rectangle[i]:expected[i])) return 0;
     for(unsigned slot=1;slot<16;++slot) if(formats[slot]!=0x602u) return 0;
-    memset(&next,0,sizeof(next));
+    initialize_batch(&next);
     for(unsigned i=0;i<a->count;++i) {
         uint8_t raw[6];uint64_t rel=(uint64_t)offsets[0]+(uint64_t)a->indices[i]*6u;
         if(rel>view_a->size || view_a->size-rel<sizeof(raw) ||
@@ -219,7 +236,7 @@ int fut_graphics_vertex_array_build_observed_lines(const FutGraphicsVertexArray 
             next.defined[i]|=(uint16_t)(1u<<slot);
     }
     next.count=a->count;next.primitive=2;next.ready=1;next.input_kind=4;
-    *out=next;
+    commit_batch(out,&next);
     return 1;
 }
 

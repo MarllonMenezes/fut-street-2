@@ -340,11 +340,11 @@ static int verify_bc2(ID3D11Device *device,ID3D11DeviceContext *context,FutNativ
     ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
     CHECK(exact,173);return 0;
 }
-typedef struct {uint8_t indices[32];uint32_t palette[256];unsigned reads;int fail_palette;} P8Memory;
+typedef struct {uint8_t indices[40];uint32_t palette[256];unsigned reads;int fail_palette;} P8Memory;
 static int p8_read(void *opaque,uint32_t address,void *data,size_t size)
 {
     P8Memory *m=opaque;m->reads++;
-    if(address==0x80001000u && size==32) {memcpy(data,m->indices,32);return 1;}
+    if(address==0x80001000u && (size==32 || size==40)) {memcpy(data,m->indices,size);return 1;}
     if(address==0x80002000u && size==1024 && !m->fail_palette) {memcpy(data,m->palette,1024);return 1;}
     return 0;
 }
@@ -362,7 +362,7 @@ static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNative
     s.palette=0x2004;
     CHECK(fut_graphics_texture_plan(&s,&dma,&sentinel)==FUT_TEXTURE_UNSUPPORTED,143);
     P8Memory m={0};
-    for(unsigned i=0;i<32;++i)m.indices[i]=(uint8_t)(128+i);
+    for(unsigned i=0;i<40;++i)m.indices[i]=(uint8_t)(128+i);
     m.indices[0]=255;
     for(unsigned i=0;i<256;++i)m.palette[i]=((i&1)?0:0xFF000000u)|
         (((i*3)&255)<<16)|(((i*5)&255)<<8)|((i*7)&255);
@@ -392,7 +392,35 @@ static int verify_p8(ID3D11Device *device,ID3D11DeviceContext *context,FutNative
     }
     ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);
     ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
-    CHECK(good,150);return 0;
+    CHECK(good,150);
+    s.format=0x03220B29;s.palette=0x2000;s.valid=0x3BF;s.address=0x10101;s.filter=0x02063F1B;
+    m.fail_palette=0;
+    CHECK(fut_graphics_texture_plan(&s,&dma,&plan)==FUT_TEXTURE_READY && plan.span==40 && plan.mip_levels==2,217);
+    CHECK(SUCCEEDED(fut_native_texture_upload(&native,device,&plan,p8_read,&m)),218);
+    CHECK(SUCCEEDED(fut_native_texture_sampler(&native,device,&s)),219);
+    old=native.texture;m.fail_palette=1;
+    CHECK(FAILED(fut_native_texture_upload(&native,device,&plan,p8_read,&m)) && native.texture==old,220);
+    m.fail_palette=0;
+    ID3D11Texture2D_GetDesc(native.texture,&desc);
+    CHECK(desc.MipLevels==2 && desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM,221);
+    desc.Usage=D3D11_USAGE_STAGING;desc.BindFlags=0;desc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+    CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&desc,NULL,&staging)),222);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)native.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),223);
+    for(unsigned level=0;level<2;++level) {
+        CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,level,D3D11_MAP_READ,0,&map)),224);
+        unsigned w=4u>>level,h=8u>>level;good=1;
+        for(unsigned y=0;y<h;++y)for(unsigned x=0;x<w;++x) {
+            unsigned index=level?32u+y*2u+x:offsets[y][x];uint32_t pixel;
+            memcpy(&pixel,(uint8_t*)map.pData+y*map.RowPitch+x*4u,4);
+            if(pixel!=m.palette[m.indices[index]])good=0;
+        }
+        ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,level);CHECK(good,225);
+    }
+    ID3D11Texture2D_Release(staging);fut_native_texture_destroy(&native);
+    s.format=0x05720B29;s.offset=0x0166CF80;s.palette=0x0166E3C0;dma.size=0x04000000;
+    CHECK(fut_graphics_texture_plan(&s,&dma,&plan)==FUT_TEXTURE_READY && plan.span==5120 && plan.width==128 && plan.height==32,226);
+    return 0;
 }
 typedef struct {uint8_t bytes[84];int fail;} MipMemory;
 static int mip_read(void *context,uint32_t address,void *bytes,size_t size)

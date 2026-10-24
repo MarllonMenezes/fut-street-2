@@ -60,8 +60,11 @@ int main(void)
         CHECK(SUCCEEDED(ID3D11Device_CreateBuffer(device,&bd,&initial,&passes[slot])),11);
     }
     FutNativeTexture textures[4]={0};
-    for(unsigned projective=0;projective<2;++projective) {
-    for(unsigned i=0;i<3;++i)batch.vertices[i][0][3]=projective?(float)(1u<<i):1.0f;
+    for(unsigned projective=0;projective<3;++projective) {
+    for(unsigned i=0;i<3;++i) {
+        batch.vertices[i][0][0]=i==1?(projective==2?1572864.0f:8.0f):0;
+        batch.vertices[i][0][3]=projective?(i==1 && projective==2?.001f:(float)(1u<<i)):1.0f;
+    }
     CHECK(SUCCEEDED(fut_native_immediate_upload(&immediate,device,context,vblob,&batch,0x209)),19);
     for(unsigned texture=0;texture<2;++texture) {
         const uint32_t commands[][2]={{0x1E60,1},{0x1E70,texture?4:0},
@@ -91,20 +94,32 @@ int main(void)
         ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)readback,(ID3D11Resource*)target);
         CHECK(fut_native_constants_finish(&completion,NULL,2000,NULL),16);
         D3D11_MAPPED_SUBRESOURCE mapped;CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)readback,0,D3D11_MAP_READ,0,&mapped)),17);
+        /* Clipped far-screen geometry is a separate host approximation:
+         * permit at most one normalized16-bit step; retain the old tolerance
+         * for ordinary geometry. This is not an NV2A precision measurement. */
+        float tolerance=projective==2?1.0f/65536.0f:.00001f;
+        float maximum_error=0;unsigned mismatches=0;
         for(unsigned y=0;y<8;++y) for(unsigned x=0;x<16;++x) {
-            unsigned logical=x/2,covered=logical+y+(x&1)<8;
+            unsigned logical=x/2,covered=projective==2?1:logical+y+(x&1)<8;
             float expected[4]={(logical+.5f)/8,(y+.5f)/8,texture?.75f:.25f,texture?1:.75f};
             if(projective) {
-                float l1=expected[0],l2=expected[1],denominator=1-l1-l2+l1/2+l2/4;
-                expected[0]=(l1/2)/denominator;expected[1]=(l2/4)/denominator;
+                double l1=(logical+.5)/(projective==2?1572864.0:8.0),l2=(y+.5)/8.0;
+                double w1=projective==2?(double).001f:2.0,denominator=1-l1-l2+l1/w1+l2/4;
+                expected[0]=(float)((l1/w1)/denominator);expected[1]=(float)((l2/4)/denominator);
             }
             const float *actual=(const float*)((const unsigned char*)mapped.pData+y*mapped.RowPitch)+x*4;
-            for(unsigned c=0;c<4;++c) if(!isfinite(actual[c]) || fabsf(actual[c]-(covered?expected[c]:-1))>.00001f) {
-                fprintf(stderr,"AA texture=%u stored=%u,%u channel=%u got=%g expected=%g covered=%u\n",texture,x,y,c,actual[c],covered?expected[c]:-1,covered);
-                return 18;
+            for(unsigned c=0;c<4;++c) {
+                float error=fabsf(actual[c]-(covered?expected[c]:-1));
+                if(error>maximum_error)maximum_error=error;
+                if(!isfinite(actual[c]) || error>tolerance) {
+                    if(!mismatches)fprintf(stderr,"AA texture=%u stored=%u,%u channel=%u got=%g expected=%g covered=%u\n",texture,x,y,c,actual[c],covered?expected[c]:-1,covered);
+                    ++mismatches;
+                }
             }
         }
         ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
+        if(projective==2)fprintf(stderr,"Far-screen clipping: texture=%u maximum_error=%g mismatches=%u\n",texture,maximum_error,mismatches);
+        if(mismatches)return 18;
         ID3D11PixelShader_Release(ps);ID3D10Blob_Release(pblob);
     }
     }

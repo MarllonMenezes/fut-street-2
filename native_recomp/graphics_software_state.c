@@ -97,18 +97,22 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int bc2_projective_header=(t0->format&~0x0FFF0000u)==0x00000E29u && (levels>1 || t0->filter==0x02063F1Bu);
     int projective_bc2=bc2_projective_header && u>=2 && u<=12 && v>=2 && v<=12 &&
         levels && levels<=largest+1 && fut_graphics_bc2_aa2_family_approximation_enabled();
+    int p8_projective_header=(t0->format&~0x0FFF0000u)==0x00000B29u && (levels>1 || t0->filter==0x02063F1Bu);
+    int projective_p8=p8_projective_header && u>=2 && u<=12 && v>=2 && v<=12 && levels && levels<=largest+1 &&
+        fut_graphics_p8_aa2_family_approximation_enabled() && !(t0->palette&0x3Fu) &&
+        t0->palette<=0x04000000u-1024u;
     int projective_bc3=t0->format==0x09A30F29u;
     unsigned projective_span=projective_bc3?688128u:86016u;
-    if(projective_bc1 || projective_bc2 || projective_argb) {
+    if(projective_bc1 || projective_bc2 || projective_argb || projective_p8) {
         projective_span=0;
         for(unsigned level=0;level<levels;++level) {
             unsigned w=(1u<<u)>>level,h=(1u<<v)>>level;
-            projective_span+=projective_argb?(w?w:1u)*(h?h:1u)*4u:
+            projective_span+=(projective_argb || projective_p8)?(w?w:1u)*(h?h:1u)*(projective_p8?1u:4u):
                 ((w?w:1u)+3u)/4u*(((h?h:1u)+3u)/4u)*(projective_bc1?8u:16u);
         }
     }
     int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
-        (projective_argb || projective_bc1 || projective_bc2 || projective_bc3) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        (projective_argb || projective_bc1 || projective_bc2 || projective_bc3 || projective_p8) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
         t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
         t0->filter==0x02063F1Bu && (t0->address==0x10101u ||
             (projective_bc1 && t0->address==0x10303u)) &&
@@ -128,7 +132,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     if(fut_graphics_untextured_aa2_approximation_enabled() &&
         !fut_graphics_software_draw_ready(s) && t0->valid &&
         t0->control0==0 && !untextured) return 0;
-    if(!untextured && (argb_header || bc2_projective_header || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
+    if(!untextured && (argb_header || p8_projective_header || bc2_projective_header || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
         (!observed_projective_texture || fut_graphics_software_draw_ready(s)))return 0;
     int bc2_family=bc2_format && fut_graphics_bc2_aa2_family_approximation_enabled() &&
         family_dimensions &&
@@ -146,7 +150,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
         (1u<<texture_u)*(1u<<texture_v)<=0x04000000u-t0->offset &&
         !(t0->palette&0x3Fu) && t0->palette<=0x04000000u-1024u;
     if(p8_format && !untextured && t0->format!=0x05510B29u && t0->format!=0x05710B29u &&
-        (!p8_family || fut_graphics_software_draw_ready(s))) return 0;
+        (!(p8_family || (projective_p8 && observed_projective_texture)) || fut_graphics_software_draw_ready(s))) return 0;
     if(bc2_format && !untextured && (!(t0->control0&0x40000000u) ||
         fut_graphics_software_draw_ready(s))) return 0;
     int bc2_c9df00=t0->format==0x09A10E29u &&

@@ -135,8 +135,13 @@ static unsigned coordinate_mask(const FutNativePosition *positions,unsigned coun
         if(unit_w) {if(p->screen[3]!=1 || p->clip[3]!=1)return 0;}
         else if(!isfinite(p->screen[3]) || fabsf(p->screen[3])<0x1p-64f ||
             fabsf(p->screen[3])>0x1p64f || p->clip[3]!=p->screen[3])return 0;
-        for(unsigned c=0;c<4;++c) if(!isfinite(p->screen[c]) || !isfinite(p->clip[c]) ||
-            (c<2 && (fabsf(p->screen[c])>0x1p20f || fabsf(p->clip[c])>0x1p16f))) return 0;
+        for(unsigned c=0;c<4;++c) if(!isfinite(p->screen[c]) || !isfinite(p->clip[c])) return 0;
+        for(unsigned c=0;c<2;++c) {
+            if(fabsf(p->clip[c])>0x1p16f)return 0;
+            if(fabsf(p->screen[c])>0x1p20f && (unit_w || p->clip[3]<=0 ||
+                fabsf(p->screen[c])>0x1p21f ||
+                !(fabsf(p->clip[0])>p->clip[3] || fabsf(p->clip[1])>p->clip[3])))return 0;
+        }
         for(unsigned stage=0;stage<4;++stage) {
             for(unsigned c=0;c<4;++c) if(!isfinite(p->texture[stage][c]) ||
                 fabsf(p->texture[stage][c])>0x1p20f) mask&=~(1u<<stage);

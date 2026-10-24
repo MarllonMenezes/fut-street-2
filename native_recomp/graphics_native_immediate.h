@@ -18,7 +18,9 @@ typedef struct {float clip[4],screen[4],texture[4][4];} FutNativePosition;
  * screen/clip W=1, bounded finite positions and finite UV with q=1.
  * Not a generic projective/interpolation or sampler fidelity certificate. */
 unsigned fut_native_immediate_constant_coordinates(const FutNativePosition *positions,unsigned count);
-/* Separate finite signed-W proof; used UVs remain bounded with unit q. */
+/* Separate finite signed-W proof; used UVs remain bounded with unit q.
+ * Positive-W vertices outside XY clip planes admit screen XY up to2^21;
+ * ordinary/affine screen bounds and homogeneous XY bounds remain unchanged. */
 unsigned fut_native_immediate_projective_coordinates(const FutNativePosition *positions,unsigned count);
 /* Exact observed fullscreen triangle and texel-space mapping only. A scope
  * certificate for the authorized resolve experiment, NOT NV2A fidelity. */
