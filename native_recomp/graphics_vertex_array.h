@@ -11,13 +11,13 @@ typedef struct {
 } FutGraphicsVertexArray;
 
 void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *array);
-/* Indexed TRIANGLES and the established triangle-strip capture. */
+/* Indexed TRIANGLES/strips, or contiguous DRAW_ARRAYS QUADS. */
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned primitive);
 int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
 int fut_graphics_vertex_array_index32(FutGraphicsVertexArray *array, uint32_t index);
 /* NV097 DRAW_ARRAYS: low24 first, high8 count-minus-one. Only a single
- * contiguous strip is admitted; disjoint ranges/mixed input remain refused. */
+ * contiguous strip or quad list is admitted; disjoint/mixed input is refused. */
 int fut_graphics_vertex_array_draw_arrays(FutGraphicsVertexArray *array, uint32_t range);
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *array, uint32_t word);
 int fut_graphics_vertex_array_end(FutGraphicsVertexArray *array);

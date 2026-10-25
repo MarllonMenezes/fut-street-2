@@ -16,49 +16,54 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 25 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** A navegação original
-atravessa Start, “PICK SIDES”, Ready e “SELECT TEAM”, chegando ao carregamento
-seguinte. A última imagem com apresentação confirmada e conferida continua
-em “LOADING”. Cenário apresentado, controles em partida e partida curta
-não foram comprovados.
+**NOT_READY — ainda não é um jogo recompilado jogável.** A última captura
+com apresentação confirmada continua em “LOADING”. Cenário apresentado,
+controles em partida e partida curta não foram comprovados.
 
-**ARRAY_ELEMENT16 em TRIANGLES** agora seleciona a captura de índices quando
-BEGIN está vazio. A busca preserva a ordem da lista, os slots originais de
-posição float3, UV float2 e cor ARGB8, os strides e a validação DMA. Misturar
-índices com emissão imediata ou dados pendentes continua recusado sem mutação.
-No jogo original, uma lista de **486 índices** executou o shader original de
-oito instruções, concluiu com **972 vértices de entrada GPU, 8.546 invocações
-de pixel shader e gravação na superfície**. Isso comprova rasterização desse
-desenho; sua apresentação ainda não foi demonstrada.
+**QUADS por DRAW_ARRAYS** agora captura faixas contíguas quando BEGIN está
+vazio, preservando float4, cor e UV nos slots originais. Cada grupo de quatro
+registros expande para `0,1,2` e `0,2,3`. Os testes CPU/GPU verificam início
+não zero, faixas que cruzam o quarto canto, dois quads, W=2, ordem, atributos,
+cor, gravação e consumo. Dados imediatos pendentes, mistura de comandos,
+faixas disjuntas, contagens incompletas e limites inválidos continuam recusados.
+O caso foi observado na fila original; sua conclusão nativa ainda está pendente.
 
-O gate projetivo admite o filtro sem bias nas famílias comprimidas já
-reconhecidas, preservando os opt-ins e os limites de formato, mipmaps,
-alinhamento, memória e controles. A textura BC2 original de 128×128 mantém
-seus dois níveis e 20.480 bytes. Os samplers conservam bias zero ou
-−229/256 conforme o comando original. O teste GPU com BC1/BC2/BC3 de cores
-distintas por nível verifica LOD 0/1, mistura em LOD 0,5, clamp superior e
-alpha; não substitui a cadeia pelo nível zero. Os testes de bias negativo
-continuam passando.
+O gate **ARGB8 de um nível e filtro sem bias** admite clamp XYZ e escrita Z
+ligada ou desligada, mantendo teste Z, stencil, baselines e opt-ins existentes.
+O teste GPU combina textura ARGB8 com cores e alpha variáveis, clamp,
+duas passadas AA2, comparação LEQUAL e escrita Z zero: a cor confere quando
+Z passa, o caso que reprova em Z não altera a cor e todos os bits D24S8 são
+preservados. A composição usa uma superfície sintética pequena e dither zero;
+o gate completo de 640×480 é testado separadamente em CPU. A execução original
+dessa combinação ainda não foi alcançada após a correção.
 
-**Os 45 gates obrigatórios passaram.** Os testes focais também conferem
-índices não sequenciais, ordem e atributos, último byte DMA, falha de leitura,
-limites e preservação transacional. Os caminhos anteriores de INLINE_ARRAY,
-float4, DRAW_ARRAYS, cor secundária programável e stencil AA2 permanecem
-exercitados. Testes sintéticos não são prova de gameplay.
+**Os 45 gates obrigatórios passaram**, além dos testes focais. Os caminhos
+anteriores de INLINE_ARRAY, float4, TRIANGLES indexados, DRAW_ARRAYS de strips,
+cor secundária e stencil AA2 permanecem exercitados. A evidência nativa de
+TRIANGLES com BC2 e dois mipmaps continua válida: **486 índices, shader original
+de oito instruções, 972 vértices de entrada GPU, 8.546 invocações de pixel shader
+e gravação na superfície**. Isso comprova rasterização desse desenho;
+sua apresentação ainda não foi demonstrada. Testes sintéticos não provam gameplay.
 
-**Bloqueio restante:** um strip original tenta acrescentar índices após
-atingir a capacidade de captura de **4.096 registros**. A contagem completa
-até END ainda precisa ser medida; o código continua recusando o pacote e
-não descarta geometria. O próximo experimento usa a opção de diagnóstico
-existente para salvar uma cópia somente leitura da fila validada, limitada
-a 4 MiB, e contar o strip antes de escolher uma correção. A cópia não é
-atômica, não é executada nem autoriza conclusão ou atualização de GET.
+**Limitação atual da validação:** duas execuções de até 300 segundos terminaram
+por timeout ainda no carregamento inicial, antes dos desenhos a conferir.
+A CPU estava em 100% com compilação concorrente de outro aplicativo. Repetir
+com menos tracing e o cache existente de alocações elevou as apresentações
+confirmadas de 228 para 276, mas não alcançou o cenário. O cache reutiliza
+até quatro recursos de staging e continua exigindo cópia GPU nova. É necessário
+repetir o teste com recursos de CPU disponíveis; a outra atividade foi preservada.
 
-A captura `native-presented-latest.bmp` só é promovida após recibo DXGI e
-aposentadoria correlacionada da fila original. A imagem pendente fica
-separada; a captura tem custo de leitura GPU por apresentação quando ativa.
-Cada execução nativa usa timeout de até 300 segundos e logs, saves e capturas
-isolados no D:. ISO/XBE e demais insumos originais são preservados.
+Há também uma recusa original de strip após **4.096 índices**. A contagem
+completa até END daquele strip ainda precisa ser medida. As novas cópias da
+fila pertencem a outros percursos e não justificam ampliar o limite; não há
+geometria descartada para contorná-lo. O diagnóstico opcional salva uma cópia
+somente leitura da fila validada, limitada a 4 MiB. Ela não é atômica, não é
+executada e não autoriza conclusão nem atualização de GET.
+
+`native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
+correlacionada da fila original; a imagem pendente fica separada. Cada execução
+nativa tem timeout de até 300 segundos e logs, saves e capturas isolados no D:.
+ISO/XBE e demais insumos originais são preservados.
 
 AA2/quincunx, omissão do ruído BC1, filtragem, PCM e bypass artificial da espera
 de áudio continuam experimentais, sem fidelidade NV2A ou DSP comprovada.

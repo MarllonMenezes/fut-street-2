@@ -124,15 +124,21 @@ static int verify_indexed_promotion_guards(const NativeGraphicsState *state)
 {
     NativeGraphicsState *guard=malloc(sizeof(*guard)),*before=malloc(sizeof(*before));
     CHECK(guard && before,171);
-    for(unsigned variant=0;variant<3;++variant) {
+    for(unsigned profile=0;profile<2;++profile)for(unsigned variant=0;variant<3;++variant) {
+        unsigned primitive=profile?8u:5u,method=profile?0x1810u:0x1800u;
         /* Shallow copies borrow COM resources; these paths must reject
          * before GPU work and are freed without releasing borrowed objects. */
         memcpy(guard,state,sizeof(*guard));
         memset(&guard->immediate,0,sizeof(guard->immediate));
         fut_graphics_vertex_array_reset(&guard->vertex_array);
-        if(variant==2)for(unsigned slot=0;slot<16;++slot)
-            CHECK(native_method(guard,0,0x1760+slot*4,slot==0?0x642:slot==3?0x640:0x602,0),172);
-        CHECK(native_method(guard,0,0x17FC,5,0),173);
+        if(variant==2)for(unsigned slot=0;slot<16;++slot) {
+            /* Create a valid pending legacy INLINE payload, independently
+             * of the new DMA quad's different attribute slots. */
+            unsigned format=profile?(slot==0?0xC32:slot==3?0xC40:slot==9?0xC22:0xC02):
+                (slot==0?0x642:slot==3?0x640:0x602);
+            CHECK(native_method(guard,0,0x1760+slot*4,format,0),172);
+        }
+        CHECK(native_method(guard,0,0x17FC,primitive,0),173);
         if(variant==2) {
             CHECK(native_method(guard,0,0x1818,0,0) && guard->immediate.inline_pending==1 &&
                 guard->immediate.input_kind==2,174);
@@ -142,7 +148,7 @@ static int verify_indexed_promotion_guards(const NativeGraphicsState *state)
             else CHECK(guard->immediate.pending_x==1 && !guard->immediate.count,177);
         }
         memcpy(before,guard,sizeof(*before));
-        CHECK(!native_method(guard,0,0x1800,0x00020005,0) &&
+        CHECK(!native_method(guard,0,method,profile?0x03000000u:0x00020005u,0) &&
             !memcmp(before,guard,sizeof(*guard)),178);
     }
     free(before);free(guard);return 0;
@@ -417,6 +423,61 @@ static int verify_draw_receiver(NativeGraphicsState *state)
         !memcmp(list_uv,guest_memory+0x9200,sizeof(list_uv)) &&
         !memcmp(list_colors,guest_memory+0x9300,sizeof(list_colors)),186);
     CHECK(!verify_indexed_promotion_guards(state),187);
+    /* Captured DMA QUADS profile: float4/ARGB8/float3 in original slots.
+     * A start1 range must skip the guard and merge across a quad boundary. */
+    const float array_quad[5][4]={{1000,1000,0,7},{0,0,0,2},{8,0,0,2},{8,6,0,2},{0,6,0,2}};
+    const uint32_t quad_colors[5]={0xFF010203u,0xFF204080u,0xFF204080u,0xFF204080u,0xFF204080u};
+    float quad_uv[5][3];
+    for(unsigned i=0;i<5;++i) {
+        quad_uv[i][0]=i*.125f;quad_uv[i][1]=.75f-i*.03125f;quad_uv[i][2]=-.5f+i*.25f;
+    }
+    memcpy(guest_memory+0x9000,array_quad,sizeof(array_quad));
+    memcpy(guest_memory+0x9200,quad_colors,sizeof(quad_colors));
+    memcpy(guest_memory+0x9300,quad_uv,sizeof(quad_uv));
+    for(unsigned slot=0;slot<16;++slot)
+        CHECK(native_method(state,0,0x1760+slot*4,
+            slot==0?0x1042:slot==1?0x440:slot==2?0xC32:0x1002,0),188);
+    CHECK(native_method(state,0,0x1720,0x9000,0) && native_method(state,0,0x1724,0x9200,0) &&
+        native_method(state,0,0x1728,0x9300,0),189);
+    const uint32_t quad_program[2][4]={
+        {0,(1u<<21)|0x1Bu,2u<<26,(15u<<12)|0x800u},
+        {0,(1u<<21)|(1u<<9)|0x1Bu,2u<<26,(15u<<12)|0x800u|(3u<<3)|1u}};
+    memcpy(state->kelvin.program,quad_program,sizeof(quad_program));
+    state->kelvin.program_valid[0]=state->kelvin.program_valid[1]=15;state->kelvin.program_dirty=1;
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,8,0) && state->immediate.active &&
+        native_method(state,0,0x1810,0x01000001,0) && !state->immediate.active &&
+        state->vertex_array.active && state->vertex_array.primitive==8 && state->vertex_array.count==2 &&
+        state->vertex_array.indices[0]==1 && state->vertex_array.indices[1]==2,190);
+    CHECK(native_method(state,0,0x1810,0x01000003,0) && state->vertex_array.count==4 &&
+        state->vertex_array.indices[2]==3 && state->vertex_array.indices[3]==4,191);
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->vertex_array.ready && !state->vertex_array.count && !state->immediate.ready &&
+        !state->immediate.count && !state->native_immediate.count && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==6 &&
+        state->native_immediate.ps_invocations>0 && !state->constant_coordinates &&
+        (state->projective_coordinates&1u),192);
+    static const unsigned quad_order[6]={1,2,3,1,3,4};
+    for(unsigned i=0;i<6;++i) {
+        unsigned record=quad_order[i];float uv[4]={quad_uv[record][0],quad_uv[record][1],quad_uv[record][2],1};
+        const float color[4]={32.0f/255,64.0f/255,128.0f/255,1};
+        CHECK(!memcmp(state->immediate.vertices[i][0],array_quad[record],16) &&
+            !memcmp(state->immediate.vertices[i][1],color,16) &&
+            !memcmp(state->immediate.vertices[i][2],uv,16) && (state->immediate.defined[i]&7u)==7u,193);
+    }
+    /* Borrow the already uploaded six-record buffer for an independent SO
+     * observation; consumption counters in the real receiver stay zero. */
+    FutNativeImmediate quad_probe=state->native_immediate;quad_probe.count=6;
+    FutNativePosition quad_outputs[6];
+    CHECK(SUCCEEDED(fut_native_immediate_probe_positions(&quad_probe,state->device,state->context,
+        state->vertex_shader,state->vertex_bytecode,&state->native_constants,quad_outputs,6,2000,NULL)),194);
+    for(unsigned i=0;i<6;++i)
+        CHECK(!memcmp(quad_outputs[i].screen,array_quad[quad_order[i]],16) && quad_outputs[i].clip[3]==2,195);
+    for(unsigned i=0;i<12;++i)CHECK(guest_word(0x3000+i*4)==0xFF204080u,196);
+    CHECK(!memcmp(float4_depth_before,guest_memory+0x4000,72) &&
+        !memcmp(array_quad,guest_memory+0x9000,sizeof(array_quad)) &&
+        !memcmp(quad_colors,guest_memory+0x9200,sizeof(quad_colors)) &&
+        !memcmp(quad_uv,guest_memory+0x9300,sizeof(quad_uv)) && !state->native_immediate.count,197);
     memcpy(state->kelvin.program,program,sizeof(program));state->kelvin.program_valid[1]=0;
     state->kelvin.program_dirty=1;
     for(unsigned profile=0;profile<4;++profile) {

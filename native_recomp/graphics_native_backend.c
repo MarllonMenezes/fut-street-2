@@ -1454,21 +1454,25 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                          uint32_t value, size_t offset)
 {
     NativeGraphicsState *state = context;
-    /* BEGIN(TRIANGLES) is shared by immediate emission and array draws.
-     * Select indexed capture only on its first ARRAY_ELEMENT16, before any
-     * emitted/pending attribute or inline payload. Commit both states once. */
-    if(subchannel==0 && method==0x1800u && state->immediate.active &&
-        state->immediate.primitive==5 && !state->immediate.ready &&
+    /* Select an array form only at the first observed array command, before
+     * any emitted/pending immediate data. Commit both states once. */
+    int indexed_triangles=method==0x1800u && state->immediate.primitive==5;
+    int ranged_quads=method==0x1810u && state->immediate.primitive==8;
+    if(subchannel==0 && (indexed_triangles || ranged_quads) && state->immediate.active &&
+        !state->immediate.ready &&
         !state->immediate.input_kind && !state->immediate.count &&
         !state->immediate.pending_x && !state->immediate.pending_position &&
         !state->immediate.inline_pending) {
         FutGraphicsVertexArray next=state->vertex_array;
-        if(!fut_graphics_vertex_array_begin(&next,5) ||
-            !fut_graphics_vertex_array_indices(&next,value)) return 0;
+        if(!fut_graphics_vertex_array_begin(&next,state->immediate.primitive) ||
+            !(indexed_triangles?fut_graphics_vertex_array_indices(&next,value):
+                fut_graphics_vertex_array_draw_arrays(&next,value))) return 0;
         state->vertex_array=next;
         state->immediate.active=0;
-        fprintf(stderr,"[GRAPHICS] indexed TRIANGLES capture selected: first_indices=%u,%u; no vertex fetch/draw/completion yet\n",
-            value&65535u,value>>16);
+        if(indexed_triangles)
+            fprintf(stderr,"[GRAPHICS] indexed TRIANGLES capture selected: first_indices=%u,%u; no vertex fetch/draw/completion yet\n",value&65535u,value>>16);
+        else
+            fprintf(stderr,"[GRAPHICS] DRAW_ARRAYS QUADS capture selected: first=%u count=%u; no vertex fetch/draw/completion yet\n",value&0x00FFFFFFu,(value>>24)+1u);
         return 1;
     }
     if(state->vertex_array.active && (subchannel!=0 ||

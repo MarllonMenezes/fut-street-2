@@ -835,19 +835,60 @@ int main(void)
         FutGraphicsKelvinState variant=argb_linear;
         switch(bad) {
         case 0:variant.textures[0].filter^=1;break;
-        case 1:variant.textures[0].address=0x30303;break;
+        case 1:variant.textures[0].address=0x10301;break;
         case 2:variant.textures[0].format+=0x10000;break;
         case 3:variant.textures[0].control1=0;break;
         case 4:variant.textures[0].image_rect=0;break;
         case 5:variant.textures[0].valid&=~2u;break;
         case 6:variant.textures[0].offset+=4;break;
-        case 7:variant.draw.depth_write=0;break;
+        case 7:variant.draw.depth_write=2;break;
         case 8:_putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");break;
         case 9:_putenv_s("RECOMP_AA2_APPROXIMATION","0");break;
         }
         if(fut_graphics_software_aa2_draw_ready(&state,&variant,&surface))return 169;
         _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
         _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+    }
+    FutGraphicsKelvinState argb_readonly=argb_linear;
+    argb_readonly.textures[0].format=0x04410629;
+    argb_readonly.textures[0].offset=0x04000000u-1024u;
+    argb_readonly.textures[0].address=0x30303;
+    argb_readonly.draw.depth_write=0;
+    const uint32_t argb_formats[]={0x00010629u,0x04410629u,0x04710629u,0x08810629u};
+    const uint32_t argb_addresses[]={0x10101u,0x10303u,0x30303u};
+    for(unsigned f=0;f<4;++f)for(unsigned address=0;address<3;++address)for(unsigned write=0;write<2;++write) {
+        FutGraphicsKelvinState variant=argb_readonly;
+        variant.textures[0].format=argb_formats[f];variant.textures[0].address=argb_addresses[address];
+        unsigned u=(argb_formats[f]>>20)&15u,v=(argb_formats[f]>>24)&15u;
+        variant.textures[0].offset=0x04000000u-(1u<<(u+v+2u));variant.draw.depth_write=write;
+        if(!fut_graphics_software_aa2_draw_ready(&state,&variant,&surface))return 180;
+    }
+    for(unsigned bad=0;bad<17;++bad) {
+        FutGraphicsKelvinState variant=argb_readonly;FutGraphicsSoftwareState sw=state;
+        switch(bad) {
+        case 0:variant.draw.depth_write=2;break;
+        case 1:variant.depth_test=0;break;
+        case 2:variant.stencil_test=1;break;
+        case 3:variant.compress_depth=0;break;
+        case 4:variant.control0^=1;break;
+        case 5:variant.textures[0].control0=0;break;
+        case 6:variant.textures[0].valid&=~2u;break;
+        case 7:variant.textures[0].address=0x10301;break;
+        case 8:variant.textures[0].filter^=1;break;
+        case 9:variant.textures[0].format=(variant.textures[0].format&~0xFF00u)|0x7F00u;break;
+        case 10:variant.textures[0].format+=0x10000;break;
+        case 11:variant.textures[0].offset++;break;
+        case 12:variant.textures[0].offset+=4;break;
+        case 13:_putenv_s("RECOMP_AA2_APPROXIMATION","0");break;
+        case 14:_putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");break;
+        case 15:sw.rdi_value[1]^=1;break;
+        case 16:variant.textures[1].control0=0x40000000u;break;
+        }
+        if(fut_graphics_software_aa2_draw_ready(&sw,&variant,&surface)) {
+            fprintf(stderr,"ARGB8 read-only depth variant admitted: %u\n",bad);return 181;
+        }
+        _putenv_s("RECOMP_AA2_APPROXIMATION","1");
+        _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","1");
     }
     kelvin.textures[0].format=0x07830629;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface))return 143;

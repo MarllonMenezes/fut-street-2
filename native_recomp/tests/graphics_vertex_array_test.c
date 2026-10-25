@@ -3,6 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 static uint8_t memory[128];
+static uint8_t quad_memory[288];
+static unsigned quad_guard_reads;
 static unsigned fail_read_at,read_calls;
 static uint32_t relocated_base;
 static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
@@ -29,7 +31,118 @@ static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
     if(address<0x1000u || address-0x1000u>sizeof(memory) || size>sizeof(memory)-(address-0x1000u)) return 0;
     memcpy(data,memory+(address-0x1000u),size);return 1;
 }
+static int read_quad_memory(void *ctx,uint32_t address,void *data,size_t size)
+{
+    (void)ctx;++read_calls;
+    if(fail_read_at && read_calls==fail_read_at)return 0;
+    if(address<0x2000u || address-0x2000u>sizeof(quad_memory) ||
+        size>sizeof(quad_memory)-(address-0x2000u))return 0;
+    unsigned offset=address-0x2000u;
+    if(offset<16u || (offset>=144u && offset<148u) || (offset>=180u && offset<192u))
+        ++quad_guard_reads;
+    memcpy(data,quad_memory+offset,size);return 1;
+}
 #define CHECK(x) do { if(!(x)){fprintf(stderr,"vertex array test failed at %d\n",__LINE__);return 1;} } while(0)
+static int test_quad_ranges(void)
+{
+    FutGraphicsVertexArray a={0},captured;
+    static FutGraphicsImmediate out,before;
+    FutGraphicsDmaView view={0x2000,288},short_view={0x2000,287};
+    uint32_t formats[16],offsets[16]={0,144,180};
+    float attrs[16][4]={0};uint8_t valid[16]={0};
+    float positions[9][4],auxiliary[9][3];
+    const float original_w[9]={-1,2,-3,.25f,-0.0f,4,.5f,8,1};
+    const uint32_t colors[9]={0xDEADBEEF,0x80402010,0x40102030,0xC0405060,
+        0xFF708090,0x20112233,0x60445566,0xA0778899,0xE0AABBCC};
+    for(unsigned i=0;i<9;++i) {
+        positions[i][0]=(float)(i*11+1);positions[i][1]=(float)(i*13+2);
+        positions[i][2]=(float)(i*17+3);positions[i][3]=original_w[i];
+        auxiliary[i][0]=(float)(i+100);auxiliary[i][1]=(float)(i+200);
+        auxiliary[i][2]=(float)(i+300);
+    }
+    memcpy(quad_memory,positions,sizeof(positions));memcpy(quad_memory+144,colors,sizeof(colors));
+    memcpy(quad_memory+180,auxiliary,sizeof(auxiliary));
+    for(unsigned i=0;i<16;++i)formats[i]=i==0?0x1042:i==1?0x440:i==2?0xC32:0x1002;
+    attrs[4][0]=.125f;attrs[4][1]=.25f;attrs[4][2]=.5f;attrs[4][3]=1;valid[4]=15;
+    fail_read_at=read_calls=quad_guard_reads=0;
+    CHECK(fut_graphics_vertex_array_begin(&a,8));captured=a;
+    CHECK(!fut_graphics_vertex_array_indices(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_index32(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_inline(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    /* Split after three records: the second contiguous range crosses the
+     * first quad's fourth corner and supplies the complete second quad. */
+    CHECK(fut_graphics_vertex_array_draw_arrays(&a,0x02000001));
+    captured=a;CHECK(!fut_graphics_vertex_array_end(&a) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_draw_arrays(&a,0x04000003) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_draw_arrays(&a,0x04000005) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(fut_graphics_vertex_array_draw_arrays(&a,0x04000004));
+    CHECK(a.count==8 && a.input_mode==3);
+    for(unsigned i=0;i<8;++i)CHECK(a.indices[i]==i+1);
+    captured=a;
+    CHECK(!fut_graphics_vertex_array_indices(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_index32(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_inline(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x17));
+    const unsigned order[12]={1,2,3,1,3,4,5,6,7,5,7,8};
+    CHECK(out.count==12 && out.ready && !out.active && out.primitive==5 && !quad_guard_reads);
+    for(unsigned i=0;i<12;++i) {
+        unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[0],positions[src],16)); /* Includes the original raw W bits. */
+        CHECK(v[1][0]==((colors[src]>>16)&255u)/255.0f &&
+            v[1][1]==((colors[src]>>8)&255u)/255.0f &&
+            v[1][2]==(colors[src]&255u)/255.0f && v[1][3]==(colors[src]>>24)/255.0f);
+        CHECK(!memcmp(v[2],auxiliary[src],12) && v[2][3]==1);
+        CHECK(out.defined[i]==0x17 && !memcmp(v[4],attrs[4],16));
+    }
+    uint32_t w_bits;memcpy(&w_bits,&out.vertices[5][0][3],4);CHECK(w_bits==0x80000000u);
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&short_view,&short_view,
+        formats,offsets,attrs,valid,0x17) && !memcmp(&out,&before,sizeof(out)));
+    for(unsigned fail=1;fail<=36;++fail) {
+        fail_read_at=fail;read_calls=0;
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+            formats,offsets,attrs,valid,0x17) && read_calls==fail &&
+            !memcmp(&out,&before,sizeof(out)));
+    }
+    fail_read_at=0;
+    const unsigned incomplete[]={0,1,2,3,5,6,7};
+    for(unsigned sample=0;sample<sizeof(incomplete)/sizeof(incomplete[0]);++sample) {
+        unsigned count=incomplete[sample];
+        fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,8));
+        if(count)CHECK(fut_graphics_vertex_array_draw_arrays(&a,((count-1)<<24)|1u));
+        captured=a;
+        CHECK(!fut_graphics_vertex_array_end(&a) && !memcmp(&a,&captured,sizeof(a)));
+        a.active=0;a.ready=1;read_calls=0;
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+            formats,offsets,attrs,valid,0x17) && !read_calls && !memcmp(&out,&before,sizeof(out)));
+    }
+    /* A zero start is valid too, and must fetch the authored record0 rather
+     * than silently rebasing every range to the first nonzero test record. */
+    fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,8));
+    CHECK(fut_graphics_vertex_array_draw_arrays(&a,0x03000000) && fut_graphics_vertex_array_end(&a));
+    quad_guard_reads=0;
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x17) && out.count==6 && quad_guard_reads);
+    const unsigned zero_order[6]={0,1,2,0,2,3};
+    for(unsigned i=0;i<6;++i)CHECK(!memcmp(out.vertices[i][0],positions[zero_order[i]],16));
+    before=out;
+    fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,8));
+    for(unsigned first=0;first<FUT_VERTEX_ARRAY_INDEX_CAPACITY;first+=256)
+        CHECK(fut_graphics_vertex_array_draw_arrays(&a,0xFF000000u|first));
+    CHECK(a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY && a.indices[a.count-1]==4095);
+    captured=a;
+    CHECK(!fut_graphics_vertex_array_draw_arrays(&a,FUT_VERTEX_ARRAY_INDEX_CAPACITY) &&
+        !memcmp(&a,&captured,sizeof(a)));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x17) && !memcmp(&out,&before,sizeof(out)));
+    a.count=FUT_VERTEX_ARRAY_INDEX_CAPACITY+4u;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_quad_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x17) && !read_calls && !memcmp(&out,&before,sizeof(out)));
+    return 0;
+}
 static int test_indexed_triangles(void)
 {
     FutGraphicsVertexArray a={0},captured;
@@ -47,7 +160,7 @@ static int test_indexed_triangles(void)
     attrs[9][0]=.125f;attrs[9][1]=.25f;attrs[9][2]=.5f;attrs[9][3]=1;valid[9]=15;
     fail_read_at=read_calls=0;relocated_base=0;
     captured=a;
-    CHECK(!fut_graphics_vertex_array_begin(&a,8) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_begin(&a,7) && !memcmp(&a,&captured,sizeof(a)));
     CHECK(!fut_graphics_vertex_array_begin(&a,9) && !memcmp(&a,&captured,sizeof(a)));
     CHECK(fut_graphics_vertex_array_begin(&a,5));
     for(unsigned i=0;i<6;i+=2)
@@ -327,6 +440,7 @@ static int test_float_streams(void)
 }
 int main(void)
 {
+    int quad_error=test_quad_ranges();if(quad_error)return quad_error;
     int triangle_error=test_indexed_triangles();if(triangle_error)return triangle_error;
     int float_error=test_float_streams();if(float_error)return float_error;
     int float4_error=test_float4_streams();if(float4_error)return float4_error;
@@ -337,7 +451,7 @@ int main(void)
     int16_t positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
     memcpy(memory,positions,sizeof(positions));memset(formats,0,sizeof(formats));
     formats[0]=0x635;for(unsigned i=1;i<16;++i)formats[i]=0x602;offsets[0]=0;
-    CHECK(fut_graphics_vertex_array_begin(&a,6));CHECK(!fut_graphics_vertex_array_begin(&a,8));
+    CHECK(fut_graphics_vertex_array_begin(&a,6));CHECK(!fut_graphics_vertex_array_begin(&a,7));
     CHECK(fut_graphics_vertex_array_indices(&a,0x00010000));
     CHECK(fut_graphics_vertex_array_indices(&a,0x00030002));
     CHECK(a.count==4 && a.indices[0]==0 && a.indices[1]==1 && a.indices[2]==2 && a.indices[3]==3);
