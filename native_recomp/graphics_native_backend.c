@@ -1454,9 +1454,26 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                          uint32_t value, size_t offset)
 {
     NativeGraphicsState *state = context;
+    /* BEGIN(TRIANGLES) is shared by immediate emission and array draws.
+     * Select indexed capture only on its first ARRAY_ELEMENT16, before any
+     * emitted/pending attribute or inline payload. Commit both states once. */
+    if(subchannel==0 && method==0x1800u && state->immediate.active &&
+        state->immediate.primitive==5 && !state->immediate.ready &&
+        !state->immediate.input_kind && !state->immediate.count &&
+        !state->immediate.pending_x && !state->immediate.pending_position &&
+        !state->immediate.inline_pending) {
+        FutGraphicsVertexArray next=state->vertex_array;
+        if(!fut_graphics_vertex_array_begin(&next,5) ||
+            !fut_graphics_vertex_array_indices(&next,value)) return 0;
+        state->vertex_array=next;
+        state->immediate.active=0;
+        fprintf(stderr,"[GRAPHICS] indexed TRIANGLES capture selected: first_indices=%u,%u; no vertex fetch/draw/completion yet\n",
+            value&65535u,value>>16);
+        return 1;
+    }
     if(state->vertex_array.active && (subchannel!=0 ||
         (method!=0x1800u && method!=0x1808u && method!=0x1810u && method!=0x1818u && method!=0x17FCu))) {
-        fprintf(stderr,"[GRAPHICS] command refused inside array triangle strip: sub=%u method=%04X value=%08X\n",subchannel,method,value);
+        fprintf(stderr,"[GRAPHICS] command refused inside array primitive: primitive=%u sub=%u method=%04X value=%08X\n",state->vertex_array.primitive,subchannel,method,value);
         return 0;
     }
     /* Only the observed attribute form is supported inside a primitive.
@@ -1559,7 +1576,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
         }
         if(subchannel==0 && method==0x1800u && state->vertex_array.active) {
             if(!fut_graphics_vertex_array_indices(&state->vertex_array,value)) {
-                fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT16 refused: value=%08X count=%u\n",value,state->vertex_array.count);return 0;
+                fprintf(stderr,"[GRAPHICS] ARRAY_ELEMENT16 refused: primitive=%u value=%08X count=%u\n",state->vertex_array.primitive,value,state->vertex_array.count);return 0;
             }
             return 1;
         }
@@ -1635,7 +1652,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 int has_a=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][7],&view_a);
                 int has_b=has_refs && fut_graphics_dma_surface_view(&state->bindings.references[0][8],&view_b);
                 if(has_a && has_b) fprintf(stderr,
-                    "[GRAPHICS] indexed strip DMA diagnostic: A=%08X/%08X B=%08X/%08X format0=%08X offset0=%08X indices=%u,%u,%u,%u\n",
+                    "[GRAPHICS] indexed array DMA diagnostic: A=%08X/%08X B=%08X/%08X format0=%08X offset0=%08X indices=%u,%u,%u,%u\n",
                     view_a.guest_address,view_a.size,view_b.guest_address,view_b.size,
                     state->kelvin.vertex_array_format[0],state->kelvin.vertex_array_offset[0],
                     state->vertex_array.indices[0],state->vertex_array.indices[1],
@@ -1643,7 +1660,7 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 else {
                     const FutGraphicsObject *aobj=&state->bindings.references[0][7];
                     const FutGraphicsObject *bobj=&state->bindings.references[0][8];
-                    fprintf(stderr,"[GRAPHICS] indexed strip DMA diagnostic: refs=%u viewA=%u viewB=%u mask=%08X A(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X) B(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X)\n",
+                    fprintf(stderr,"[GRAPHICS] indexed array DMA diagnostic: refs=%u viewA=%u viewB=%u mask=%08X A(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X) B(handle=%08X descriptor=%08X words=%08X/%08X/%08X/%08X)\n",
                         has_refs,has_a,has_b,state->bindings.reference_masks[0],
                         aobj->handle,aobj->descriptor,aobj->words[0],aobj->words[1],aobj->words[2],aobj->words[3],
                         bobj->handle,bobj->descriptor,bobj->words[0],bobj->words[1],bobj->words[2],bobj->words[3]);
@@ -1654,13 +1671,13 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                     state->kelvin.attributes,state->kelvin.attribute_valid,required);
             } else built=0;
             if(!built) {
-                fprintf(stderr,"[GRAPHICS] observed triangle-strip fetch refused: mode=%u indices=%u inline_words=%u required=%04X; no draw/completion\n",
-                    state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,required);return 0;
+                fprintf(stderr,"[GRAPHICS] array fetch refused: primitive=%u mode=%u indices=%u inline_words=%u required=%04X; no draw/completion\n",
+                    state->vertex_array.primitive,state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,required);return 0;
             }
-            fprintf(stderr,"[GRAPHICS] observed triangle strip fetched transactionally: mode=%u source_records=%u inline_words=%u expanded_vertices=%u; no pixels yet\n",
-                state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,state->immediate.count);
+            fprintf(stderr,"[GRAPHICS] array primitive fetched transactionally: primitive=%u mode=%u source_records=%u inline_words=%u expanded_vertices=%u; no pixels yet\n",
+                state->vertex_array.primitive,state->vertex_array.input_mode,state->vertex_array.count,state->vertex_array.inline_count,state->immediate.count);
             if(!native_prepare_immediate(state) || !native_prepare_draw(state)) return 0;
-            unsigned drawn=state->immediate.count;HRESULT hr;
+            unsigned drawn=state->immediate.count,primitive=state->vertex_array.primitive;HRESULT hr;
             if(state->native_surfaces.plan.samples==2 && state->aa2_projective)
                 hr=fut_native_draw_immediate_aa2_projective(&state->native_immediate,&state->immediate,
                     &state->native_surfaces,&state->pipeline,&state->kelvin,&state->software,
@@ -1675,11 +1692,11 @@ static int native_method(void *context, unsigned subchannel, uint32_t method,
                 state->device,state->context,state->vertex_shader,state->pixel_shader,
                 &state->native_constants,object_memory_read,object_memory_write,NULL,backend_stop);
             if(FAILED(hr)) {
-                fprintf(stderr,"[GRAPHICS] triangle-strip draw/completion refused: HRESULT=%08lX; no completion claimed\n",hr);return 0;
+                fprintf(stderr,"[GRAPHICS] array draw/completion refused: primitive=%u HRESULT=%08lX; no completion claimed\n",primitive,hr);return 0;
             }
             if(!fut_graphics_vertex_array_consume(&state->vertex_array)) return 0;
-            fprintf(stderr,"[GRAPHICS] triangle-strip draw completed with guest surface writeback: vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
-                drawn,(unsigned long long)state->native_immediate.ia_vertices,(unsigned long long)state->native_immediate.ps_invocations);
+            fprintf(stderr,"[GRAPHICS] array draw completed with guest surface writeback: primitive=%u vertices=%u IA_vertices=%llu PS_invocations=%llu; no present/VBlank\n",
+                primitive,drawn,(unsigned long long)state->native_immediate.ia_vertices,(unsigned long long)state->native_immediate.ps_invocations);
             return native_preview_original_draw(state);
         }
         if (subchannel==0 && (method==0x17FCu || method==0x1818u ||
@@ -1959,6 +1976,21 @@ static void native_capture_queue_wrap(uint32_t start,uint32_t end,uint32_t curso
         fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] read-only non-atomic snapshot: part=%u base=%08X bytes=%zu span=%zu prefix_only=%d saved=%d; no execution/completion\n",
             i,bases[i],size,total_size,size<total_size,written==size && closed);
     }
+    /* Prefixes cannot recover a rejected primitive beyond64KiB. Preserve
+     * the bounded ring only for the existing explicit diagnostic opt-in;
+     * this non-atomic copy is never decoded for execution or acknowledged. */
+    const char *snapshot=getenv("RECOMP_GRAPHICS_SNAPSHOT");
+    size_t span=(size_t)(end-start);
+    if(snapshot && !strcmp(snapshot,"1") && span<=FUT_GRAPHICS_WRAP_MAX_BYTES) {
+        uint8_t *ring=HeapAlloc(GetProcessHeap(),0,span);
+        int saved=0;
+        if(ring && read_guest(start,ring,span)) {
+            FILE *file=fopen("graphics-rejected-ring.bin","wb");
+            if(file) {size_t written=fwrite(ring,1,span,file);int closed=fclose(file)==0;saved=written==span && closed;}
+        }
+        if(ring)HeapFree(GetProcessHeap(),0,ring);
+        fprintf(stderr,"[GRAPHICS-QUEUE-WRAP] read-only non-atomic full-ring snapshot: base=%08X bytes=%zu saved=%d file=graphics-rejected-ring.bin; no execution/completion\n",start,span,saved);
+    }
 }
 
 static DWORD WINAPI native_worker(void *unused)
@@ -2074,8 +2106,8 @@ static DWORD WINAPI native_worker(void *unused)
             if (capture) { fwrite(bytes, 1, size, capture); fclose(capture); }
             if(wrapped) native_capture_queue_wrap(ring_start,ring_end,cursor,submitted,write_ptr,put);
             fprintf(stderr, "[GRAPHICS] submission blocked: start=%08X end=%08X "
-                    "status=%d offset=%zu header=%08X bytes=%zu; completion unchanged\n",
-                    cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size);
+                    "status=%d offset=%zu header=%08X bytes=%zu jump_offset=%zu; completion unchanged\n",
+                    cursor, submitted, status, decoded.blocked_offset, decoded.blocked_header, size,jump_offset);
             fail_backend("implement the reported native graphics method before continuing");
         }
         if (!native_traced_finish(&state))

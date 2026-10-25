@@ -30,6 +30,102 @@ static int read_memory(void *ctx,uint32_t address,void *data,size_t size)
     memcpy(data,memory+(address-0x1000u),size);return 1;
 }
 #define CHECK(x) do { if(!(x)){fprintf(stderr,"vertex array test failed at %d\n",__LINE__);return 1;} } while(0)
+static int test_indexed_triangles(void)
+{
+    FutGraphicsVertexArray a={0},captured;
+    static FutGraphicsImmediate out,before;
+    FutGraphicsDmaView view={0x1000,96},short_view={0x1000,95};
+    uint32_t formats[16],offsets[16]={0,48,80};
+    float attrs[16][4]={0};uint8_t valid[16]={0};
+    const float positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
+    const float uv[4][2]={{0,.25f},{.5f,.75f},{1,1.25f},{1.5f,1.75f}};
+    const uint32_t colors[4]={0x80402010,0x40102030,0xC0405060,0xFF708090};
+    const unsigned order[6]={3,1,2,2,3,1};
+    memcpy(memory,positions,sizeof(positions));memcpy(memory+48,uv,sizeof(uv));
+    memcpy(memory+80,colors,sizeof(colors));
+    for(unsigned i=0;i<16;++i)formats[i]=i==0?0xC32:i==1?0x822:i==2?0x440:0xC02;
+    attrs[9][0]=.125f;attrs[9][1]=.25f;attrs[9][2]=.5f;attrs[9][3]=1;valid[9]=15;
+    fail_read_at=read_calls=0;relocated_base=0;
+    captured=a;
+    CHECK(!fut_graphics_vertex_array_begin(&a,8) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_begin(&a,9) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(fut_graphics_vertex_array_begin(&a,5));
+    for(unsigned i=0;i<6;i+=2)
+        CHECK(fut_graphics_vertex_array_indices(&a,order[i]|(order[i+1]<<16)));
+    CHECK(a.count==6 && a.input_mode==1 && a.primitive==5);
+    captured=a;
+    CHECK(!fut_graphics_vertex_array_inline(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_index32(&a,2) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_draw_arrays(&a,0x02000001) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(fut_graphics_vertex_array_end(&a));
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x207));
+    CHECK(out.count==6 && out.ready && !out.active && out.primitive==5);
+    /* A list keeps each supplied index, including the second triangle's
+     * winding and repeated records. Strip expansion/alternation is wrong. */
+    for(unsigned i=0;i<6;++i) {
+        unsigned src=order[i];const float (*v)[4]=out.vertices[i];
+        CHECK(!memcmp(v[0],positions[src],12) && v[0][3]==1);
+        CHECK(!memcmp(v[1],uv[src],8) && v[1][2]==0 && v[1][3]==1);
+        CHECK(v[2][0]==((colors[src]>>16)&255u)/255.0f &&
+            v[2][1]==((colors[src]>>8)&255u)/255.0f &&
+            v[2][2]==(colors[src]&255u)/255.0f && v[2][3]==(colors[src]>>24)/255.0f);
+        CHECK(out.defined[i]==0x207 && !memcmp(v[9],attrs[9],16));
+    }
+    before=out;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&short_view,&short_view,
+        formats,offsets,attrs,valid,0x207) && !memcmp(&out,&before,sizeof(out)));
+    /* Every position/UV/color read can fail, even after previous records
+     * have decoded. The output batch must remain entirely unchanged. */
+    for(unsigned fail=1;fail<=18;++fail) {
+        fail_read_at=fail;read_calls=0;
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+            formats,offsets,attrs,valid,0x207) && read_calls==fail &&
+            !memcmp(&out,&before,sizeof(out)));
+    }
+    fail_read_at=0;
+    a.indices[5]=UINT16_MAX;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x207) && !memcmp(&out,&before,sizeof(out)));
+    a.indices[5]=order[5];
+    for(unsigned length=2;length<=4;length+=2) {
+        fut_graphics_vertex_array_reset(&a);
+        CHECK(fut_graphics_vertex_array_begin(&a,5));
+        for(unsigned i=0;i<length;i+=2)
+            CHECK(fut_graphics_vertex_array_indices(&a,0x00010003));
+        captured=a;
+        CHECK(!fut_graphics_vertex_array_end(&a) && !memcmp(&a,&captured,sizeof(a)));
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+            formats,offsets,attrs,valid,0x207) && !memcmp(&out,&before,sizeof(out)));
+        a.active=0;a.ready=1;read_calls=0;
+        CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+            formats,offsets,attrs,valid,0x207) && !read_calls &&
+            !memcmp(&out,&before,sizeof(out)));
+    }
+    fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,5));
+    for(unsigned i=0;i<FUT_VERTEX_ARRAY_INDEX_CAPACITY-4;i+=2)
+        CHECK(fut_graphics_vertex_array_indices(&a,0x00010003));
+    /* 4092 is the largest even complete list in the unchanged 4096 cap. */
+    CHECK(a.count==4092 && fut_graphics_vertex_array_end(&a));
+    CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x207) && out.count==4092);
+    for(unsigned i=0;i<out.count;++i)
+        CHECK(!memcmp(out.vertices[i][0],positions[(i&1u)?1:3],12) && out.defined[i]==0x207);
+    before=out;
+    a.active=1;a.ready=0;
+    CHECK(fut_graphics_vertex_array_indices(&a,0x00010003) &&
+        fut_graphics_vertex_array_indices(&a,0x00010003) && a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY);
+    captured=a;
+    CHECK(!fut_graphics_vertex_array_indices(&a,0) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_end(&a) && !memcmp(&a,&captured,sizeof(a)));
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x207) && !memcmp(&out,&before,sizeof(out)));
+    a.active=0;a.ready=1;a.count=FUT_VERTEX_ARRAY_INDEX_CAPACITY+2u;read_calls=0;
+    CHECK(!fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
+        formats,offsets,attrs,valid,0x207) && !read_calls &&
+        !memcmp(&out,&before,sizeof(out)));
+    return 0;
+}
 static int test_draw_arrays(void)
 {
     FutGraphicsVertexArray a={0},captured;
@@ -231,6 +327,7 @@ static int test_float_streams(void)
 }
 int main(void)
 {
+    int triangle_error=test_indexed_triangles();if(triangle_error)return triangle_error;
     int float_error=test_float_streams();if(float_error)return float_error;
     int float4_error=test_float4_streams();if(float4_error)return float4_error;
     int range_error=test_draw_arrays();if(range_error)return range_error;
@@ -240,7 +337,7 @@ int main(void)
     int16_t positions[4][3]={{10,20,30},{40,50,60},{70,80,90},{100,110,120}};
     memcpy(memory,positions,sizeof(positions));memset(formats,0,sizeof(formats));
     formats[0]=0x635;for(unsigned i=1;i<16;++i)formats[i]=0x602;offsets[0]=0;
-    CHECK(fut_graphics_vertex_array_begin(&a,6));CHECK(!fut_graphics_vertex_array_begin(&a,5));
+    CHECK(fut_graphics_vertex_array_begin(&a,6));CHECK(!fut_graphics_vertex_array_begin(&a,8));
     CHECK(fut_graphics_vertex_array_indices(&a,0x00010000));
     CHECK(fut_graphics_vertex_array_indices(&a,0x00030002));
     CHECK(a.count==4 && a.indices[0]==0 && a.indices[1]==1 && a.indices[2]==2 && a.indices[3]==3);

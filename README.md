@@ -14,89 +14,58 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 24 de outubro de 2026
+## Estado verificável — 25 de outubro de 2026
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** A navegação original
 atravessa Start, “PICK SIDES”, Ready e “SELECT TEAM”, chegando ao carregamento
-seguinte. A última imagem confirmada e conferida ainda mostra “LOADING”.
-Cenário apresentado, controles durante uma partida e partida curta ainda
+seguinte. A última imagem com apresentação confirmada e conferida continua
+em “LOADING”. Cenário apresentado, controles em partida e partida curta
 não foram comprovados.
 
-A causa do bloqueio histórico de **INLINE_ARRAY (0x1818)** foi reproduzida:
-o payload float3/cor/UV2 mantinha stride de memória `0xC`, enquanto o host
-exigia `0` ou `0x6`. A montagem agora usa TYPE/SIZE nos slots originais,
-independentemente desse stride. O pacote original de 48 palavras foi aceito
-e produziu 12 vértices para execução do shader original. Isso não equivale
-à conclusão do desenho. Testes de quads e strips conferem payload, W, cores,
-UVs, winding e preservação da saída em falhas.
+**ARRAY_ELEMENT16 em TRIANGLES** agora seleciona a captura de índices quando
+BEGIN está vazio. A busca preserva a ordem da lista, os slots originais de
+posição float3, UV float2 e cor ARGB8, os strides e a validação DMA. Misturar
+índices com emissão imediata ou dados pendentes continua recusado sem mutação.
+No jogo original, uma lista de **486 índices** executou o shader original de
+oito instruções, concluiu com **972 vértices de entrada GPU, 8.546 invocações
+de pixel shader e gravação na superfície**. Isso comprova rasterização desse
+desenho; sua apresentação ainda não foi demonstrada.
 
-A rota de desenhos imediatos AA2 agora seleciona o adaptador projetivo quando
-o certificado de coordenadas o exige, como já ocorria para strips. O teste
-GPU com W=2 reproduz a recusa antiga e verifica cobertura, consumo e gravação
-na superfície após a correção. BC2 com teste de profundidade ativo e escrita
-desligada também passou pelo teste GPU: a cor muda e os bytes D24S8 permanecem
-idênticos. Os limites, os opt-ins e os demais gates continuam obrigatórios.
+O gate projetivo admite o filtro sem bias nas famílias comprimidas já
+reconhecidas, preservando os opt-ins e os limites de formato, mipmaps,
+alinhamento, memória e controles. A textura BC2 original de 128×128 mantém
+seus dois níveis e 20.480 bytes. Os samplers conservam bias zero ou
+−229/256 conforme o comando original. O teste GPU com BC1/BC2/BC3 de cores
+distintas por nível verifica LOD 0/1, mistura em LOD 0,5, clamp superior e
+alpha; não substitui a cadeia pelo nível zero. Os testes de bias negativo
+continuam passando.
 
-**SPECULAR_ENABLE no modo programável** preserva o RGB secundário calculado
-pelo vertex shader original e aplica a seleção de alpha de LIGHT_CONTROL.
-Oito casos GPU verificam valores finitos, clamp, cache e alpha test. No jogo
-original, o shader de 46 instruções concluiu um desenho de 1.278 vértices,
-com 272 invocações de pixel shader e gravação na superfície. O tratamento
-especial de NaNs do NV2A não está reproduzido nem validado.
+**Os 45 gates obrigatórios passaram.** Os testes focais também conferem
+índices não sequenciais, ordem e atributos, último byte DMA, falha de leitura,
+limites e preservação transacional. Os caminhos anteriores de INLINE_ARRAY,
+float4, DRAW_ARRAYS, cor secundária programável e stencil AA2 permanecem
+exercitados. Testes sintéticos não são prova de gameplay.
 
-A leitura de arrays admite **float4 com stride limitado**, preservando o
-quarto componente. Descritores float com SIZE=0 ficam desativados sem leitura
-de memória, independentemente do stride retido. Testes verificam os últimos
-bytes do buffer, preenchimento entre registros e falhas transacionais.
-O receptor GPU confere W=2 sem substituí-lo por 1.
+**Bloqueio restante:** um strip original tenta acrescentar índices após
+atingir a capacidade de captura de **4.096 registros**. A contagem completa
+até END ainda precisa ser medida; o código continua recusando o pacote e
+não descarta geometria. O próximo experimento usa a opção de diagnóstico
+existente para salvar uma cópia somente leitura da fila validada, limitada
+a 4 MiB, e contar o strip antes de escolher uma correção. A cópia não é
+atômica, não é executada nem autoriza conclusão ou atualização de GET.
 
-**DRAW_ARRAYS (0x1810)** é tratado como início e contagem de registros de
-vértice. O caminho de triangle strip aceita uma faixa ou faixas contíguas
-dentro do limite existente; faixas disjuntas e mistura com comandos de índices
-continuam recusadas, sem conectar geometria indevidamente. O teste GPU usa
-início não zero e um registro de guarda para verificar endereço, ordem,
-cobertura e gravação. Não há aumento da capacidade de vértices.
-No jogo original, uma faixa de três registros float4 concluiu com seis
-vértices de entrada GPU e zero invocações de pixel shader.
-
-O experimento **AA2 sem textura** admite stencil ativo, preservando função,
-referência, máscaras e operações no pipeline. O readback GPU verifica
-comparação mascarada, escrita e preservação de Z e um único incremento por
-amostra nos dois passes. Um strip original de 702 vértices concluiu com
-stencil NEQUAL e REPLACE, mas teve zero invocações de pixel shader; isso
-não comprova efeito visual desse desenho.
-
-As famílias BC1/BC2 com mipmaps mantêm samplers independentes. Recursos retidos
-são distinguidos dos estágios amostrados pelo shader. Desenhos originais BC2/BC1
-e P8 já concluíram com gravação na superfície; isso comprova rasterização,
-sem comprovar apresentação desses desenhos ou gameplay. P8 de um nível com
-clamp e filtro sem bias mantém expansão pela paleta original e validação de
-limites. Os **45 gates obrigatórios passaram**.
-
-O orçamento da fila circular permanece limitado a **4 MiB**, fundamentado no
-percurso observado dentro da fila alocada de 4 MiB. Leituras de até 8 KiB,
-salto explícito e rechecagem de header continuam exigidos. A opção de captura
-agora preserva `native-presented-latest.bmp` somente após recibo DXGI e
-aposentadoria correlacionada da fila original; a imagem pendente fica separada.
-Há custo diagnóstico de leitura GPU por apresentação quando a captura está
-ativada. Um bitmap preparado, isoladamente, não é prova de apresentação.
-
-**Validação nativa atual:** a execução limitada a 300 segundos passou por
-DRAW_ARRAYS e pelo gate de stencil, encerrando com recusa de
-ARRAY_ELEMENT16 (0x1800) dentro de uma primitiva imediata. O tipo da primitiva
-e o layout desse próximo pacote ainda precisam ser identificados. A última
-captura correlacionada com recibo DXGI e aposentadoria original permanece
-em “LOADING”. O próximo experimento registra esses dados sem alterar a
-recusa ou simular conclusão. Os 45 gates passaram após as correções.
+A captura `native-presented-latest.bmp` só é promovida após recibo DXGI e
+aposentadoria correlacionada da fila original. A imagem pendente fica
+separada; a captura tem custo de leitura GPU por apresentação quando ativa.
+Cada execução nativa usa timeout de até 300 segundos e logs, saves e capturas
+isolados no D:. ISO/XBE e demais insumos originais são preservados.
 
 AA2/quincunx, omissão do ruído BC1, filtragem, PCM e bypass artificial da espera
 de áudio continuam experimentais, sem fidelidade NV2A ou DSP comprovada.
-Logs, saves, capturas e insumos permanecem no D:. ISO/XBE são preservados;
-assets, código proprietário gerado e relatórios locais não são publicados.
-As referências xemu/nxdk orientam a semântica, sem cópia de implementação
-externa. O REA está conectado, mas Ghidra/IDA não estão configurados e sua
-captura de processos não suporta Windows; nenhuma análise nativa foi
-atribuída a ele.
+Assets, código proprietário gerado, capturas e relatórios locais não são
+publicados. As referências xemu/nxdk orientam a semântica, sem cópia de
+implementação externa. O REA não realizou análise nativa: Ghidra/IDA não estão
+configurados e sua captura de processos não suporta Windows neste ambiente.
 
 ### Opções de diagnóstico e reprodução
 

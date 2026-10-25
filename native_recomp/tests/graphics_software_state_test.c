@@ -19,6 +19,17 @@ static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
         "RECOMP_BC2_AA2_FAMILY_APPROXIMATION","RECOMP_DXT1_NOISE_APPROXIMATION"};
     for(unsigned i=0;i<4;++i)_putenv_s(opts[i],"1");
     if(!fut_graphics_software_aa2_draw_ready(baseline,&base,&surface))return 160;
+    for(unsigned profile=1;profile<4;++profile) {
+        FutGraphicsKelvinState k=base;
+        if(profile&1u)k.textures[0].filter=0x02062000;
+        if(profile&2u)k.textures[1].filter=0x02062000;
+        if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 176;
+        for(unsigned opt=0;opt<4;++opt) {
+            _putenv_s(opts[opt],"0");
+            if(fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 177;
+            _putenv_s(opts[opt],"1");
+        }
+    }
     FutGraphicsKelvinState retained=base;
     retained.fragment.stage_program=1;
     retained.textures[0].format=0x07710B29;retained.textures[0].offset=0x013DC580;
@@ -46,8 +57,12 @@ static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
         k.textures[stage]=k.textures[1];k.fragment.stage_program|=1u<<(stage*5u);
         if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 164;
     }
+    for(unsigned profile=0;profile<4;++profile)
     for(unsigned stage=0;stage<2;++stage) for(unsigned bad=0;bad<17;++bad) {
-        k=base;FutGraphicsTextureState *t=&k.textures[stage];
+        k=base;
+        if(profile&1u)k.textures[0].filter=0x02062000;
+        if(profile&2u)k.textures[1].filter=0x02062000;
+        FutGraphicsTextureState *t=&k.textures[stage];
         switch(bad) {
         case 0:t->valid&=~1u;break;case 1:t->valid&=~2u;break;
         case 2:t->valid&=~4u;break;case 3:t->valid&=~8u;break;
@@ -78,6 +93,43 @@ static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
         }
         if(fut_graphics_software_aa2_draw_ready(&s,&k,&surface)) {
             fprintf(stderr,"projective common negative admitted: %u\n",bad);return 166;
+        }
+    }
+    /* Same min/mag/mip filter with zero LOD bias; the independently bounded
+     * chains stay intact and every existing software baseline is required. */
+    const uint32_t formats[]={0x07720C29u,0x07720E29u,0x09A30F29u};
+    const unsigned spans[]={10240u,20480u,688128u};
+    for(unsigned family=0;family<3;++family) {
+        k=base;k.fragment.stage_program=1;k.textures[1].control0=0;
+        k.textures[0].format=formats[family];k.textures[0].filter=0x02062000;
+        k.textures[0].offset=0x04000000u-spans[family];
+        if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 178;
+        for(unsigned bad=0;bad<16;++bad) {
+            FutGraphicsKelvinState variant=k;FutGraphicsSoftwareState s=*baseline;
+            const char *opt=NULL;
+            switch(bad) {
+            case 0:variant.textures[0].filter^=1;break;
+            case 1:variant.textures[0].offset+=16;break;
+            case 2:variant.textures[0].offset++;break;
+            case 3:variant.textures[0].format=(variant.textures[0].format&~0xFF00u)|0x7F00u;break;
+            case 4:variant.textures[0].format&=~0xF0000u;break;
+            case 5:variant.textures[0].valid&=~2u;break;
+            case 6:variant.textures[0].control1=0;break;
+            case 7:variant.textures[0].image_rect=0;break;
+            case 8:variant.draw.depth_write=0;break;
+            case 9:variant.stencil_test=1;break;
+            case 10:variant.depth_test=0;break;
+            case 11:variant.compress_depth=0;break;
+            case 12:s.register_words[1]^=1;break;
+            case 13:opt=opts[0];break;
+            case 14:opt=opts[1];break;
+            case 15:opt=family==0?opts[3]:family==1?opts[2]:opts[1];break;
+            }
+            if(opt)_putenv_s(opt,"0");
+            if(fut_graphics_software_aa2_draw_ready(&s,&variant,&surface)) {
+                fprintf(stderr,"unbiased compressed variant admitted: %u/%u\n",family,bad);return 179;
+            }
+            if(opt)_putenv_s(opt,"1");
         }
     }
     return 0;

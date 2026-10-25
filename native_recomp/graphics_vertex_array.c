@@ -23,7 +23,7 @@ void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *a)
 
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *a,unsigned primitive)
 {
-    if(!a || primitive!=6 || a->active || a->ready) return 0;
+    if(!a || (primitive!=5 && primitive!=6) || a->active || a->ready) return 0;
     a->count=0;a->inline_count=0;a->input_mode=0;a->primitive=primitive;a->active=1;return 1;
 }
 
@@ -45,7 +45,7 @@ int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *a,uint32_t packed)
 
 int fut_graphics_vertex_array_inline(FutGraphicsVertexArray *a,uint32_t word)
 {
-    if(!a || !a->active || a->ready || (a->input_mode && a->input_mode!=2) ||
+    if(!a || !a->active || a->ready || a->primitive!=6 || (a->input_mode && a->input_mode!=2) ||
         a->inline_count>=FUT_IMMEDIATE_CAPACITY*6u) return 0;
     a->input_mode=2;a->inline_words[a->inline_count++]=word;return 1;
 }
@@ -77,6 +77,10 @@ int fut_graphics_vertex_array_end(FutGraphicsVertexArray *a)
         if(a->input_mode!=1 || (a->count!=32u && a->count!=8u)) return 0;
         a->active=0;a->ready=1;return 1;
     }
+    if(a->primitive==5) {
+        if(a->input_mode!=1 || !a->count || a->count%3u) return 0;
+        a->active=0;a->ready=1;return 1;
+    }
     if(a->primitive!=6) return 0;
     if(((a->input_mode==1 || a->input_mode==3) && a->count<3) ||
         (a->input_mode==2 && (a->inline_count%6u || a->inline_count<18u)) ||
@@ -98,8 +102,10 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
     FutGraphicsImmediate next;
     uint64_t draw_count;
     if(!a || !out || !read || !view_equal(view_a,view_b) || !formats || !offsets ||
-        !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 ||
-        (a->input_mode!=1 && a->input_mode!=3) || a->count<3 ||
+        !attributes || !attribute_valid || a->active || !a->ready ||
+        (a->primitive!=5 && a->primitive!=6) ||
+        (a->input_mode!=1 && !(a->primitive==6 && a->input_mode==3)) || a->count<3 ||
+        (a->primitive==5 && a->count%3u) ||
         a->count>FUT_VERTEX_ARRAY_INDEX_CAPACITY ||
         view_a->guest_address>UINT32_MAX-view_a->size) return 0;
     const unsigned position_type=formats[0]&255u;
@@ -115,12 +121,13 @@ int fut_graphics_vertex_array_build(const FutGraphicsVertexArray *a,
         else if((required&(1u<<slot)) && attribute_valid[slot]!=15)return 0;
     }
     if((required&1u)==0) return 0;
-    draw_count=(uint64_t)(a->count-2)*3;
+    draw_count=a->primitive==5?a->count:(uint64_t)(a->count-2)*3;
     if(draw_count>FUT_IMMEDIATE_DRAW_CAPACITY || draw_count%3) return 0;
     initialize_batch(&next);
-    for(unsigned tri=0;tri<a->count-2;++tri) {
+    for(unsigned tri=0;tri<draw_count/3u;++tri) {
         unsigned order[3];
-        if(tri&1u) { order[0]=tri+1;order[1]=tri;order[2]=tri+2; }
+        if(a->primitive==5) {order[0]=tri*3;order[1]=tri*3+1;order[2]=tri*3+2;}
+        else if(tri&1u) { order[0]=tri+1;order[1]=tri;order[2]=tri+2; }
         else { order[0]=tri;order[1]=tri+1;order[2]=tri+2; }
         for(unsigned corner=0;corner<3;++corner) {
             unsigned dst=tri*3+corner;
@@ -175,7 +182,7 @@ int fut_graphics_vertex_array_build_inline(const FutGraphicsVertexArray *a,
     const float attributes[16][4],const uint8_t attribute_valid[16],uint16_t required)
 {
     FutGraphicsImmediate next;
-    if(!a || !out || !formats || !attributes || !attribute_valid || a->active || !a->ready ||
+    if(!a || !out || !formats || !attributes || !attribute_valid || a->active || !a->ready || a->primitive!=6 ||
         a->input_mode!=2 || a->inline_count<18u || a->inline_count%6u) return 0;
     for(unsigned slot=0;slot<16;++slot) {
         uint32_t expected=slot==0?0x32u:slot==3?0x40u:slot==9?0x22u:0x02u;

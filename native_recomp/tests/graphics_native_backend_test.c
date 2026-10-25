@@ -120,6 +120,33 @@ cleanup:
     return passed;
 #undef CAPTURE_CHECK
 }
+static int verify_indexed_promotion_guards(const NativeGraphicsState *state)
+{
+    NativeGraphicsState *guard=malloc(sizeof(*guard)),*before=malloc(sizeof(*before));
+    CHECK(guard && before,171);
+    for(unsigned variant=0;variant<3;++variant) {
+        /* Shallow copies borrow COM resources; these paths must reject
+         * before GPU work and are freed without releasing borrowed objects. */
+        memcpy(guard,state,sizeof(*guard));
+        memset(&guard->immediate,0,sizeof(guard->immediate));
+        fut_graphics_vertex_array_reset(&guard->vertex_array);
+        if(variant==2)for(unsigned slot=0;slot<16;++slot)
+            CHECK(native_method(guard,0,0x1760+slot*4,slot==0?0x642:slot==3?0x640:0x602,0),172);
+        CHECK(native_method(guard,0,0x17FC,5,0),173);
+        if(variant==2) {
+            CHECK(native_method(guard,0,0x1818,0,0) && guard->immediate.inline_pending==1 &&
+                guard->immediate.input_kind==2,174);
+        } else {
+            CHECK(native_method(guard,0,0x1880,0,0),175);
+            if(!variant)CHECK(native_method(guard,0,0x1884,0,0) && guard->immediate.count==1,176);
+            else CHECK(guard->immediate.pending_x==1 && !guard->immediate.count,177);
+        }
+        memcpy(before,guard,sizeof(*before));
+        CHECK(!native_method(guard,0,0x1800,0x00020005,0) &&
+            !memcmp(before,guard,sizeof(*guard)),178);
+    }
+    free(before);free(guard);return 0;
+}
 static int verify_draw_receiver(NativeGraphicsState *state)
 {
     /* Separate synthetic fixture after the refusal tests. No state mutation
@@ -337,6 +364,61 @@ static int verify_draw_receiver(NativeGraphicsState *state)
     for(unsigned i=0;i<12;++i)CHECK(guest_word(0x3000+i*4)==0xFF000000,169);
     CHECK(!memcmp(float4_depth_before,guest_memory+0x4000,72) &&
         !memcmp(ranged_points,guest_memory+0x9000,sizeof(ranged_points)),170);
+    /* Observed indexed TRIANGLES: float3/UV float2/ARGB8 in slots0/1/2.
+     * Separate DMA streams and shuffled indices must keep original slots. */
+    float list_positions[10][3],list_uv[10][2];uint32_t list_colors[10];
+    for(unsigned i=0;i<10;++i) {
+        list_positions[i][0]=1000.0f+i;list_positions[i][1]=1000;list_positions[i][2]=0;
+        list_uv[i][0]=i*.125f;list_uv[i][1]=.875f-i*.03125f;
+        list_colors[i]=0xFF000000u|i;
+    }
+    static const unsigned list_order[6]={5,2,7,7,2,9};
+    static const unsigned corners[4]={5,2,7,9};
+    for(unsigned i=0;i<4;++i) {
+        memcpy(list_positions[corners[i]],float4_points[i],12);
+        list_colors[corners[i]]=0xFF804020u;
+    }
+    memcpy(guest_memory+0x9000,list_positions,sizeof(list_positions));
+    memcpy(guest_memory+0x9200,list_uv,sizeof(list_uv));
+    memcpy(guest_memory+0x9300,list_colors,sizeof(list_colors));
+    for(unsigned slot=0;slot<16;++slot)
+        CHECK(native_method(state,0,0x1760+slot*4,
+            slot==0?0xC32:slot==1?0x822:slot==2?0x440:0xC02,0),179);
+    CHECK(native_method(state,0,0x1720,0x9000,0) && native_method(state,0,0x1724,0x9200,0) &&
+        native_method(state,0,0x1728,0x9300,0),180);
+    const uint32_t list_program[2][4]={
+        {0,(1u<<21)|0x1Bu,2u<<26,(15u<<12)|0x800u},
+        {0,(1u<<21)|(2u<<9)|0x1Bu,2u<<26,(15u<<12)|0x800u|(3u<<3)|1u}};
+    memcpy(state->kelvin.program,list_program,sizeof(list_program));
+    state->kelvin.program_valid[0]=state->kelvin.program_valid[1]=15;state->kelvin.program_dirty=1;
+    memset(guest_memory+0x3000,0xCD,48);
+    CHECK(native_method(state,0,0x17FC,5,0) && state->immediate.active &&
+        native_method(state,0,0x1800,0x00020005,0) && !state->immediate.active &&
+        state->vertex_array.active && state->vertex_array.primitive==5,181);
+    CHECK(native_method(state,0,0x1800,0x00070007,0) &&
+        native_method(state,0,0x1800,0x00090002,0) && state->vertex_array.count==6 &&
+        !memcmp(state->vertex_array.indices,list_order,sizeof(list_order)),182);
+    CHECK(native_method(state,0,0x17FC,0,0) && native_finish(state) &&
+        !state->vertex_array.ready && !state->vertex_array.count && !state->immediate.ready &&
+        !state->immediate.count && !state->native_immediate.count && !state->native_immediate.submitted &&
+        !state->native_surfaces.gpu_dirty && state->native_immediate.ia_vertices==6 &&
+        state->native_immediate.ps_invocations>0 && (state->constant_coordinates&1u),183);
+    for(unsigned i=0;i<6;++i) {
+        unsigned record=list_order[i];float position[4]={list_positions[record][0],list_positions[record][1],0,1};
+        float uv[4]={list_uv[record][0],list_uv[record][1],0,1};
+        const float color[4]={128.0f/255,64.0f/255,32.0f/255,1};
+        CHECK(!memcmp(state->immediate.vertices[i][0],position,16) &&
+            !memcmp(state->immediate.vertices[i][1],uv,16) &&
+            !memcmp(state->immediate.vertices[i][2],color,16) && (state->immediate.defined[i]&7u)==7u,184);
+    }
+    for(unsigned i=0;i<12;++i)CHECK(guest_word(0x3000+i*4)==0xFF804020u,185);
+    CHECK(!memcmp(float4_depth_before,guest_memory+0x4000,72) &&
+        !memcmp(list_positions,guest_memory+0x9000,sizeof(list_positions)) &&
+        !memcmp(list_uv,guest_memory+0x9200,sizeof(list_uv)) &&
+        !memcmp(list_colors,guest_memory+0x9300,sizeof(list_colors)),186);
+    CHECK(!verify_indexed_promotion_guards(state),187);
+    memcpy(state->kelvin.program,program,sizeof(program));state->kelvin.program_valid[1]=0;
+    state->kelvin.program_dirty=1;
     for(unsigned profile=0;profile<4;++profile) {
     for(unsigned i=0;i<16;++i) {
         unsigned stride=profile==0?0u:profile==1?0x600u:profile==2?0xC00u:

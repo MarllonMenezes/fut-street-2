@@ -187,8 +187,9 @@ HRESULT fut_native_texture_sampler(FutNativeTexture *native, ID3D11Device *devic
     else if(min==2 || min==4 || min==6) spatial_min=2;
     else spatial_min=0;
     if (!(state->control0 & 0x40000000u) || (state->control0 & ~0x4003FFC0u) ||
-        /* The captured single-level A8 state sets reserved filter bit 13;
-         * the NV2A LOD-bias mask excludes it, so it has no represented effect. */
+        /* Bit13 selects a convolution kernel, outside the LOD-bias mask.
+         * Ordinary MIN1..6/MAG1..2 do not select convolution; MIN7/MAG4
+         * remains refused by this sampler. */
         (state->filter & ~0x0F3F3FFFu) || (!mipped && levels!=1) || !spatial_min ||
         (mipped && (state->control0!=0x4003FFC0u || min!=6 || mag!=2 ||
             (state->format&~0x0FFF0003u)!=(native->plan.storage==1?0x00000C28u:native->plan.storage==6?0x00000F28u:native->plan.storage==3?0x00000E28u:native->plan.storage==2?0x00000B28u:0x00000628u) ||

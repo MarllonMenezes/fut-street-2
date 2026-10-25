@@ -11,6 +11,7 @@ typedef struct {
 } FutGraphicsVertexArray;
 
 void fut_graphics_vertex_array_reset(FutGraphicsVertexArray *array);
+/* Indexed TRIANGLES and the established triangle-strip capture. */
 int fut_graphics_vertex_array_begin(FutGraphicsVertexArray *array, unsigned primitive);
 int fut_graphics_vertex_array_begin_observed_lines(FutGraphicsVertexArray *array);
 int fut_graphics_vertex_array_indices(FutGraphicsVertexArray *array, uint32_t packed);
