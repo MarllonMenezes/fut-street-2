@@ -14,51 +14,32 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 > **Estado: em desenvolvimento — ainda não é um jogo recompilado jogável.** A tradução e a compilação de código gerado já foram exercitadas, mas inicialização completa, fidelidade e os gates de rendering, assets, gameplay e áudio não estão aprovados.
 
-## Estado verificável — 25 de outubro de 2026
+## Estado verificável — 27 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** A última captura
-com apresentação confirmada continua em “LOADING”. Cenário apresentado,
-controles em partida e partida curta não foram comprovados.
+**NOT_READY — ainda não é um jogo recompilado jogável.** A última execução
+limitada apresentou a tela de carregamento e preparou geometria original, mas
+cenário apresentado, controles em partida e partida curta não foram comprovados.
 
-**QUADS por DRAW_ARRAYS** agora captura faixas contíguas quando BEGIN está
-vazio, preservando float4, cor e UV nos slots originais. Cada grupo de quatro
-registros expande para `0,1,2` e `0,2,3`. Os testes CPU/GPU verificam início
-não zero, faixas que cruzam o quarto canto, dois quads, W=2, ordem, atributos,
-cor, gravação e consumo. Dados imediatos pendentes, mistura de comandos,
-faixas disjuntas, contagens incompletas e limites inválidos continuam recusados.
-O caso foi observado na fila original; sua conclusão nativa ainda está pendente.
+A aproximação projetiva AA2 passou a admitir coordenadas de tela fora do
+quadrante visível até 2²⁵, mantendo os demais limites e a exigência de opt-in.
+Testes D3D11 WARP com W positivo e negativo compararam as duas amostras e
+interpolação com referência em dupla precisão. Uma execução anterior recusou
+um strip original de 6.939 vértices por esse limite; o mesmo strip ainda não
+foi repetido após a alteração. O resultado sintético não prova fidelidade NV2A.
 
-O gate **ARGB8 de um nível e filtro sem bias** admite clamp XYZ e escrita Z
-ligada ou desligada, mantendo teste Z, stencil, baselines e opt-ins existentes.
-O teste GPU combina textura ARGB8 com cores e alpha variáveis, clamp,
-duas passadas AA2, comparação LEQUAL e escrita Z zero: a cor confere quando
-Z passa, o caso que reprova em Z não altera a cor e todos os bits D24S8 são
-preservados. A composição usa uma superfície sintética pequena e dither zero;
-o gate completo de 640×480 é testado separadamente em CPU. A execução original
-dessa combinação ainda não foi alcançada após a correção.
+O gate experimental admite também a textura BC3 32×32 de um mipmap observada
+com filtro sem bias, clamp e teste Z, inclusive escrita Z desligada. Os testes
+verificam limites, estados recusados e amostragem BC3 no WARP. O desenho
+original que motivou a alteração ainda não foi repetido no percurso posterior.
+Diagnósticos adicionais distinguem falhas de observação de VBlank, postagem de
+interrupção e leitura do estado de scanout sem simular conclusão.
 
-**Os 45 gates obrigatórios passaram**, além dos testes focais. Os caminhos
-anteriores de INLINE_ARRAY, float4, TRIANGLES indexados, DRAW_ARRAYS de strips,
-cor secundária e stencil AA2 permanecem exercitados. A evidência nativa de
-TRIANGLES com BC2 e dois mipmaps continua válida: **486 índices, shader original
-de oito instruções, 972 vértices de entrada GPU, 8.546 invocações de pixel shader
-e gravação na superfície**. Isso comprova rasterização desse desenho;
-sua apresentação ainda não foi demonstrada. Testes sintéticos não provam gameplay.
-
-**Limitação atual da validação:** duas execuções de até 300 segundos terminaram
-por timeout ainda no carregamento inicial, antes dos desenhos a conferir.
-A CPU estava em 100% com compilação concorrente de outro aplicativo. Repetir
-com menos tracing e o cache existente de alocações elevou as apresentações
-confirmadas de 228 para 276, mas não alcançou o cenário. O cache reutiliza
-até quatro recursos de staging e continua exigindo cópia GPU nova. É necessário
-repetir o teste com recursos de CPU disponíveis; a outra atividade foi preservada.
-
-Há também uma recusa original de strip após **4.096 índices**. A contagem
-completa até END daquele strip ainda precisa ser medida. As novas cópias da
-fila pertencem a outros percursos e não justificam ampliar o limite; não há
-geometria descartada para contorná-lo. O diagnóstico opcional salva uma cópia
-somente leitura da fila validada, limitada a 4 MiB. Ela não é atômica, não é
-executada e não autoriza conclusão nem atualização de GET.
+**Os 45 gates obrigatórios passaram.** A execução nativa mais recente preparou
+QUADS originais, mas recusou a superfície `0x113`, identificada como RGB565 com
+profundidade Z16: o backend atual suporta ARGB8/Z24S8. A implementação e os
+testes dessas superfícies são o próximo bloqueio. Uma recusa anterior de strip
+após 4.096 índices ainda exige medir a contagem completa; nenhum limite foi
+ampliado sem evidência nem geometria descartada para contorná-lo.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução

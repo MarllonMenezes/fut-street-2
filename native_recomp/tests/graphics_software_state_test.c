@@ -132,6 +132,43 @@ static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
             if(opt)_putenv_s(opt,"1");
         }
     }
+    /* Captured single-mip 32x32 BC3, clamp and read-only Z. Preserve every
+     * existing baseline and require the separate projective experiment. */
+    k=base;k.fragment.stage_program=1;k.textures[1].control0=0;
+    k.textures[0].format=0x05510F29;k.textures[0].offset=0x04000000u-1024u;
+    k.textures[0].filter=0x02062000;k.textures[0].address=0x30303;
+    k.draw.depth_write=0;
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 180;
+    k.draw.depth_write=1;
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 181;
+    k.draw.depth_write=0;
+    for(unsigned bad=0;bad<16;++bad) {
+        FutGraphicsKelvinState variant=k;FutGraphicsSoftwareState s=*baseline;
+        const char *opt=NULL;
+        switch(bad) {
+        case 0:variant.textures[0].format=0x05610F29;break;
+        case 1:variant.textures[0].offset+=16;break;
+        case 2:variant.textures[0].offset++;break;
+        case 3:variant.textures[0].address=0x10101;break;
+        case 4:variant.textures[0].filter=0x02063F1B;break;
+        case 5:variant.textures[0].valid&=~2u;break;
+        case 6:variant.textures[0].control1=0;break;
+        case 7:variant.textures[0].image_rect=0;break;
+        case 8:variant.depth_test=0;break;
+        case 9:variant.stencil_test=1;break;
+        case 10:variant.compress_depth=0;break;
+        case 11:s.register_words[1]^=1;break;
+        case 12:opt=opts[0];break;
+        case 13:opt=opts[1];break;
+        case 14:variant.draw.dither=0;break;
+        case 15:variant.textures[0].control0=0;break;
+        }
+        if(opt)_putenv_s(opt,"0");
+        if(fut_graphics_software_aa2_draw_ready(&s,&variant,&surface)) {
+            fprintf(stderr,"single BC3 negative admitted: %u\n",bad);return 182;
+        }
+        if(opt)_putenv_s(opt,"1");
+    }
     return 0;
 }
 int main(void)

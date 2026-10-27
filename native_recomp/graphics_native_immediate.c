@@ -139,7 +139,7 @@ static unsigned coordinate_mask(const FutNativePosition *positions,unsigned coun
         for(unsigned c=0;c<2;++c) {
             if(fabsf(p->clip[c])>0x1p16f)return 0;
             if(fabsf(p->screen[c])>0x1p20f && (unit_w ||
-                fabsf(p->screen[c])>0x1p23f ||
+                fabsf(p->screen[c])>0x1p25f ||
                 !(fabsf(p->clip[0])>fabsf(p->clip[3]) || fabsf(p->clip[1])>fabsf(p->clip[3]))))return 0;
         }
         for(unsigned stage=0;stage<4;++stage) {

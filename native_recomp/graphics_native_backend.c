@@ -284,8 +284,12 @@ static int native_observe_vblank(NativeGraphicsState *state)
         2,backend_stop,&receipt);
     if(hr==S_OK) {
         state->host_vblank_sequence=receipt.sequence;
-        return xbox_kernel_post_host_vblank();
+        int posted=xbox_kernel_post_host_vblank();
+        if(!posted) fprintf(stderr,"[VBLANK] guest interrupt post failed: sequence=%llu\n",(unsigned long long)receipt.sequence);
+        return posted;
     }
+    if(hr!=HRESULT_FROM_WIN32(WAIT_TIMEOUT) && hr!=E_ABORT)
+        fprintf(stderr,"[VBLANK] host observation failed: HRESULT=%08lX sequence=%llu\n",(unsigned long)hr,(unsigned long long)state->host_vblank_sequence);
     return hr==HRESULT_FROM_WIN32(WAIT_TIMEOUT) || hr==E_ABORT;
 }
 
@@ -417,6 +421,7 @@ static int native_scanout_service(NativeGraphicsState *state)
     }
     fut_guest_interrupt_leave();
     if(capture_retired) native_confirm_presented_capture(state,title_physical,1);
+    if(!valid) fputs("[GRAPHICS] scanout correlation guest state unavailable; no retirement\n",stderr);
     return valid;
 }
 
@@ -1174,7 +1179,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
           (((state->kelvin.textures[0].format>>16)&15u)==1 && state->kelvin.textures[0].filter==0x02062000u && state->kelvin.textures[0].address==0x10101u))) ||
         ((state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000E29u &&
          (((state->kelvin.textures[0].format>>16)&15u)>1 || state->kelvin.textures[0].filter==0x02063F1Bu)) ||
-        state->kelvin.textures[0].format==0x09A30F29u ||
+        state->kelvin.textures[0].format==0x09A30F29u || state->kelvin.textures[0].format==0x05510F29u ||
         ((state->kelvin.textures[0].format&~0x0FFF0000u)==0x00000C29u &&
          state->kelvin.textures[0].filter==0x02063F1Bu);
     if(aa2 && projective_format && state->surfaces.format!=0x1128u)
@@ -1228,6 +1233,8 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x09910C29u &&
         fut_graphics_dxt1_noise_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
+    if(aa2 && state->kelvin.textures[0].format==0x05510F29u)
+        fputs("[GRAPHICS] EXPERIMENTAL_BC3_SINGLE_AA2: observed 32x32, unbiased clamp, projective and depth baseline; NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && projective_format)
         fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_AA2_APPROXIMATION: rational pixel-center interpolation, original signed W and mip chain, logical-pixel gradients; NV2A precision/AA2 fidelity unverified NOT_READY\n",stderr);
     if(aa2 && projective_format) for(unsigned stage=1;stage<4;++stage) {

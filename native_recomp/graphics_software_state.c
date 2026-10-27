@@ -150,8 +150,9 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int projective_p8=p8_projective_header && u>=2 && u<=12 && v>=2 && v<=12 && levels && levels<=largest+1 &&
         fut_graphics_p8_aa2_family_approximation_enabled() && !(t0->palette&0x3Fu) &&
         t0->palette<=0x04000000u-1024u;
-    int projective_bc3=t0->format==0x09A30F29u;
-    unsigned projective_span=projective_bc3?688128u:86016u;
+    int bc3_single=t0->format==0x05510F29u;
+    int projective_bc3=t0->format==0x09A30F29u || bc3_single;
+    unsigned projective_span=bc3_single?1024u:projective_bc3?688128u:86016u;
     if(projective_bc1 || projective_bc2 || projective_argb || projective_p8) {
         projective_span=0;
         for(unsigned level=0;level<levels;++level) {
@@ -163,11 +164,12 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
     int argb_unbiased_single=projective_argb && levels==1 && t0->filter==0x02062000u;
     int observed_projective_texture=fut_graphics_projective_aa2_approximation_enabled() &&
         (projective_argb || projective_bc1 || projective_bc2 || projective_bc3 || projective_p8) && t0->valid==0x3BFu && t0->control0==0x4003FFC0u &&
+        (!bc3_single || (t0->filter==0x02062000u && t0->address==0x30303u)) &&
         t0->control1==0x14000000u && t0->image_rect==0x050001E0u &&
         (t0->filter==0x02063F1Bu || ((projective_bc1 || projective_bc2 || projective_bc3 ||
             ((projective_p8 || projective_argb) && levels==1)) && t0->filter==0x02062000u)) && (t0->address==0x10101u ||
             ((projective_bc1 || ((projective_argb || projective_p8) && levels==1 && t0->filter==0x02062000u)) && t0->address==0x10303u) ||
-            (argb_unbiased_single && t0->address==0x30303u)) &&
+            ((argb_unbiased_single || bc3_single) && t0->address==0x30303u)) &&
         !(t0->offset&((projective_bc3 || projective_bc2)?15u:projective_bc1?7u:3u)) && projective_span<=0x04000000u && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
@@ -264,7 +266,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
                 int yuy2=yuy2_first || yuy2_second || yuy2_family;
                 yuy2=yuy2 && t->image_rect==0x028001E0u &&
                     t->control1==0x05000000u && t->valid==0x3BFu;
-                int depth_write_matches=(p8_family || bc2_family || argb_unbiased_single) ? k->draw.depth_write<=1 :
+                int depth_write_matches=(p8_family || bc2_family || argb_unbiased_single || bc3_single) ? k->draw.depth_write<=1 :
                     (p8_128x32 || bc2 || projective_argb) ? k->draw.depth_write==1 : !k->draw.depth_write;
                 unsigned valid_mask=bc2?0x9Bu:0x2Fu;
                 int texture_state_matches=projective_argb ? 1 : yuy2 ? t->control0==0x4003FFC0u &&
