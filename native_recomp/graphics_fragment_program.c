@@ -74,7 +74,7 @@ static int portion(Writer *w,const FutGraphicsFragmentState *s,unsigned stage,in
     uint32_t ocw=alpha?s->alpha_output[stage]:s->color_output[stage];
     unsigned flags=ocw>>12,mapping=flags&0x38;
     if((flags&3) && s->dot_rgbmapping) return 0;
-    if((ocw & ~0x3FFFFu) || (flags&4) || (alpha && (flags&3)) || mapping==0x28 || mapping==0x38) return 0;
+    if((ocw & ~(alpha?0x3FFFFu:0xBFFFFu)) || (flags&4) || (alpha && (flags&3)) || mapping==0x28 || mapping==0x38) return 0;
     unsigned dest[3]={(ocw>>4)&15,ocw&15,(ocw>>8)&15};
     for(unsigned i=0;i<3;++i) {
         if(!writable(dest[i])) return 0;
@@ -101,6 +101,9 @@ static void assign(Writer *w,uint32_t ocw,int alpha,unsigned defined[16])
     for(unsigned i=0;i<3;++i) if(dest[i]) {
         emit(w,"r[%u].%s=%s%s;\n",dest[i],alpha?"a":"rgb",alpha?"a":"c",terms[i]);
         defined[dest[i]]|=alpha?8:7;
+        if(!alpha && i==0 && (ocw&0x80000u)) {
+            emit(w,"r[%u].a=cAB.b;\n",dest[i]);defined[dest[i]]|=8;
+        }
     }
 }
 int fut_fragment_program_hlsl(const FutGraphicsFragmentState *s,char *text,size_t capacity,size_t *length)
@@ -124,6 +127,11 @@ int fut_fragment_program_hlsl(const FutGraphicsFragmentState *s,char *text,size_
     }
     emit(&w,"r[12].a=%s;\n",(s->stage_program&31)?"r[8].a":"1.0");
     for(unsigned stage=0;stage<count;++stage) {
+        unsigned blue_dest=(s->color_output[stage]>>4)&15u;
+        uint32_t alpha_output=s->alpha_output[stage];
+        if((s->color_output[stage]&0x80000u) && blue_dest &&
+            (((alpha_output>>4)&15u)==blue_dest || (alpha_output&15u)==blue_dest ||
+             ((alpha_output>>8)&15u)==blue_dest)) return 0;
         emit(&w,"{\n");
         for(unsigned factor=0;factor<2;++factor) {
             unsigned index=(s->control&(factor?0x10000:0x1000))?stage:0;

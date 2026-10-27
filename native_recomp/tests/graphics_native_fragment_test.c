@@ -571,6 +571,31 @@ int main(void)
     ID3D11Device *device=NULL;ID3D11DeviceContext *context=NULL;D3D_FEATURE_LEVEL level;
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),11);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),12);
+    /* Captured two-stage AB dot/blue-to-alpha; authored input and independent
+     * dot-product oracle. No NV2A precision claim. */
+    FutGraphicsFragmentState blue={0};blue.valid=15;blue.control=0x11102;blue.stage_program=1;
+    blue.color_input_valid=blue.alpha_input_valid=blue.color_output_valid=blue.alpha_output_valid=255;
+    blue.factor_valid[0]=blue.factor_valid[1]=255;blue.final_factor_valid=3;
+    blue.color_input[0]=0xC8C10000;blue.color_output[0]=0x000820C0;blue.factors[0][0]=0x004C951D;
+    blue.color_input[1]=0xCC20C140;blue.alpha_input[1]=0xDC30D150;
+    blue.color_output[1]=blue.alpha_output[1]=0x00000C00;
+    blue.final_words[0]=0x0C010000;blue.final_words[1]=0x00001C80;blue.final_factor[0]=0xFFFFFFFF;
+    float dot=(.125f*76+.25f*149+.5f*29)/255.0f;
+    CHECK(verify_math(device,context,&completion,&blue,(float[]){dot,dot,dot,dot})==0,195);
+    const uint32_t factors[]={0x00FF0000u,0x0000FF00u,0x000000FFu,0};
+    const float dots[]={.125f,.25f,.5f,0};
+    for(unsigned i=0;i<4;++i) {
+        FutGraphicsFragmentState v=blue;v.factors[0][0]=factors[i];float d=dots[i];
+        CHECK(verify_math(device,context,&completion,&v,(float[]){d,d,d,d})==0,199);
+    }
+    FutGraphicsFragmentState scaled=blue;scaled.color_output[0]|=0x10000u;
+    CHECK(verify_math(device,context,&completion,&scaled,(float[]){2*dot,2*dot,2*dot,2*dot})==0,200);
+    FutGraphicsFragmentState invalid_blue=blue;invalid_blue.color_output[0]&=~0x80000u;
+    CHECK(verify_math(device,context,&completion,&invalid_blue,(float[]){dot,dot,dot,.875f})==0,196);
+    invalid_blue=blue;invalid_blue.alpha_output[0]=0xC0;
+    CHECK(!fut_fragment_program_hlsl(&invalid_blue,text,sizeof(text),&length),197);
+    invalid_blue=blue;invalid_blue.color_output[0]|=0x40000;
+    CHECK(!fut_fragment_program_hlsl(&invalid_blue,text,sizeof(text),&length),198);
     CHECK(verify_alpha_test(device,context,&completion)==0,135);
     CHECK(verify_dual_projective_mips(device,context,&completion)==0,188);
     CHECK(verify_programmable_specular(device,context,&completion)==0,215);

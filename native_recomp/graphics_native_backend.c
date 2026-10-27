@@ -966,6 +966,21 @@ static int native_prepare_fragment(NativeGraphicsState *state)
     if(FAILED(hr)) {
         fprintf(stderr,"[GRAPHICS] fragment-program translation pending/failed: control=%08X HRESULT=%08lX\n",
             state->kelvin.fragment.control,hr);
+        if(getenv("RECOMP_GRAPHICS_SNAPSHOT")) {
+            const FutGraphicsFragmentState *f=&state->kelvin.fragment;
+            char text[65536];size_t length=0;
+            int math=fut_fragment_program_hlsl(f,text,sizeof(text),&length);
+            fprintf(stderr,"[FRAGMENT-FAIL] math=%d valid=%X stages=%08X dot=%08X final=%08X/%08X masks=%X/%X/%X/%X factors=%X/%X/%X specular=%u mode=%08X light=%08X alpha=%u/%08X/%u\n",
+                math,f->valid,f->stage_program,f->dot_rgbmapping,f->final_words[0],f->final_words[1],
+                f->color_input_valid,f->alpha_input_valid,f->color_output_valid,f->alpha_output_valid,
+                f->factor_valid[0],f->factor_valid[1],f->final_factor_valid,state->kelvin.specular_enable,
+                state->kelvin.program_mode,state->kelvin.light_control,state->kelvin.draw.alpha_test,
+                state->kelvin.draw.alpha_func,state->kelvin.draw.alpha_ref);
+            for(unsigned i=0;i<8;++i)
+                fprintf(stderr,"[FRAGMENT-FAIL] stage=%u rgb_in=%08X alpha_in=%08X rgb_out=%08X alpha_out=%08X factors=%08X/%08X\n",
+                    i,f->color_input[i],f->alpha_input[i],f->color_output[i],f->alpha_output[i],f->factors[0][i],f->factors[1][i]);
+            fprintf(stderr,"[FRAGMENT-FAIL] final_factors=%08X/%08X; diagnostic only\n",f->final_factor[0],f->final_factor[1]);
+        }
         return 0;
     }
     if(state->pixel_shader) ID3D11PixelShader_Release(state->pixel_shader);

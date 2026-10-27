@@ -19,29 +19,28 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 **NOT_READY — ainda não é um jogo recompilado jogável.** Cenário apresentado,
 controles em partida e partida curta ainda não foram comprovados.
 
-Um strip original de **5.416 índices** foi executado e expandido a 16.242
-vértices: as duas passadas AA2 registraram 32.484 vértices de entrada,
-784.759 invocações de pixel shader e gravação de superfície. Isso demonstra
-rasterização desse desenho, não sua apresentação nem gameplay.
+O tradutor de combinadores agora suporta a operação observada que copia o
+azul do produto AB para o alfa do mesmo destino. Um teste no WARP usa os
+comandos originais capturados e uma referência aritmética independente; casos
+de escrita simultânea no mesmo alfa continuam recusados. A execução posterior
+não repetiu esse shader antes do limite de 300 segundos, então seu desenho
+original ainda não foi comprovado. **Os 45 gates obrigatórios passaram.**
 
-O experimento quincunx tem uma opção separada, desligada por padrão, para o
-caso observado de 1280×480 → 320×240 RGB565/Z16. O modelo de cinco amostras
-usa um deslocamento experimental de 0,001 texel para estabilizar a seleção no
-hardware D3D testado. Os dois triângulos e pixels RGB565 foram comparados a
-uma referência CPU no WARP e na GPU local; a profundidade Z16 permaneceu
-intacta. Fase, minificação e fidelidade NV2A não foram medidas. As execuções
-recentes não repetiram esse desenho original antes do limite ou de outra recusa.
+Antes da correção do combinador, um desenho original BC2 64×64 combinado com
+ARGB8 linear 256×256 concluiu as duas passadas AA2: 720 vértices de entrada,
+246 invocações de pixel shader e gravação da superfície. Em seguida, o quad
+original de 320×240 preparou a textura e o experimento quincunx, mas foi
+recusado no combinador antes de desenhar. Um strip original de 5.416 índices
+concluiu em outra execução, com 32.484 vértices de entrada nas duas passadas,
+784.759 invocações de pixel shader e gravação. Nenhum desses resultados prova
+apresentação ou gameplay.
 
-Um gate restrito admite também o estado observado de BC2 64×64 no primeiro
-estágio e ARGB8 linear 256×256 no segundo, sob os opt-ins e validações AA2
-existentes. Testes verificam os estados recusados e uma composição sintética
-com ambos os recursos nas duas passadas. A combinação original ainda precisa
-ser repetida. **Os 45 gates obrigatórios passaram.**
-
-A chamada original `0x00050060` foi recuperada e incorporada ao executável; o
-percurso recente não confirmou sua chamada e retorno. O próximo passo é
-executar novamente, identificar a primeira recusa e validar apresentação,
-controles e uma partida curta com a lógica original.
+O experimento quincunx 1280×480 → 320×240 RGB565/Z16 é separado e desligado por
+padrão. O modelo de cinco amostras inclui deslocamento experimental de 0,001
+texel para estabilizar a seleção em D3D; testes de pixels RGB565 e Z16 passaram
+no WARP e na GPU local. Fase, minificação e fidelidade NV2A não foram medidas.
+O próximo passo é repetir a execução para confirmar o desenho e encontrar a
+primeira recusa seguinte.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução

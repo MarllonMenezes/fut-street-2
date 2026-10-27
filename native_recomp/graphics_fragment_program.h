@@ -16,7 +16,7 @@ FutFragmentStatus fut_graphics_fragment_state(FutGraphicsFragmentState *state,ui
 /* Compile register-combiner COLOR/ALPHA equations to a HLSL function.
  * Inputs are already processed texture-stage results, not unfiltered texels.
  * Supported: up to8 stages, multiply/dot/add, all8 input mappings, scale/bias,
- * parallel color/alpha writes and direct final inputs. MUX/blue-to-alpha,
+ * parallel color/alpha writes, AB blue-to-alpha and direct final inputs. MUX/CD blue-to-alpha,
  * final SUM/EF pseudo registers, fog inputs and dependent texture modes fail.
  * Float32 equations are NOT proof of NV2A fixed-point/rounding equivalence.
  * Failure returns length0 and empty text; no runnable partial translation. */
