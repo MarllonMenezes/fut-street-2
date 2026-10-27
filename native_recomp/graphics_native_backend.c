@@ -1425,6 +1425,12 @@ static int native_prepare_immediate(NativeGraphicsState *state)
                 positions[i].texture[0][0],positions[i].texture[0][1],
                 positions[i].texture[0][2],positions[i].texture[0][3],state->quincunx_coordinates,
                 positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3]);
+    if(state->kelvin.textures[0].filter==0x04072000u && !state->quincunx_coordinates && state->native_immediate.count==6)
+        for(unsigned i=0;i<6;++i)
+            fprintf(stderr,"[GRAPHICS] unsupported convolution quad vertex=%u screen=%a/%a/%a/%a clip=%a/%a/%a/%a tex0=%a/%a/%a/%a; observation only\n",i,
+                positions[i].screen[0],positions[i].screen[1],positions[i].screen[2],positions[i].screen[3],
+                positions[i].clip[0],positions[i].clip[1],positions[i].clip[2],positions[i].clip[3],
+                positions[i].texture[0][0],positions[i].texture[0][1],positions[i].texture[0][2],positions[i].texture[0][3]);
     return 1;
 }
 

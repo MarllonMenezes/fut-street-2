@@ -160,14 +160,24 @@ def validate_int3_padding_gap(code: bytes, start: int, end: int, gap_end: int,
     return instructions, sites
 
 
-def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
-                               reference_code: bytes, reference_start: int,
-                               slot: int, registered: set[int], allow_indirect_calls: bool = False):
-    """Prove an observed object-slot callback with a complete multi-exit CFG."""
+def validate_data_reference(data: bytes, sections, ref: int, start: int):
+    """Require the literal pointer to be wholly inside original .rdata bytes."""
+    matches = [s for s in sections if s.name == ".rdata" and not s.is_code
+               and ref >= s.va and ref + 4 <= s.va + s.raw_size]
+    if ref & 3 or len(matches) != 1:
+        raise ValueError("Data callback reference must be an aligned original .rdata pointer")
+    offset = matches[0].raw_addr + ref - matches[0].va
+    if offset < 0 or offset + 4 > len(data) or struct.unpack_from("<I", data, offset)[0] != start:
+        raise ValueError("Data callback reference must be an aligned original .rdata pointer")
+
+
+def validate_padded_callback_gap(code: bytes, start: int, end: int, gap_end: int,
+                                 registered: set[int], max_gap: int,
+                                 allow_indirect_calls: bool = False):
+    """Prove all reachable instructions and exits within a padded callback."""
     import capstone
-    if (not start < end < gap_end or gap_end-start > 512
-            or not 1 <= gap_end-end <= 15 or len(code) != gap_end-start
-            or not 0 <= slot <= 0xFFC or slot & 3):
+    if (not start < end < gap_end or gap_end-start > max_gap
+            or not 1 <= gap_end-end <= 15 or len(code) != gap_end-start):
         raise ValueError("Slot callback requires an exact bounded padded gap and aligned slot")
     if code[end-start:] != b"\xCC" * (gap_end-end):
         raise ValueError("Slot callback gap must contain only INT3 padding")
@@ -218,6 +228,20 @@ def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
             pending.append(following)
     if seen != set(by_address):
         raise ValueError("Callback body contains unreachable code or embedded data")
+    return instructions
+
+
+def validate_slot_callback_gap(code: bytes, start: int, end: int, gap_end: int,
+                               reference_code: bytes, reference_start: int,
+                               slot: int, registered: set[int], allow_indirect_calls: bool = False):
+    """Prove an observed object-slot callback with a complete multi-exit CFG."""
+    import capstone
+    if not 0 <= slot <= 0xFFC or slot & 3:
+        raise ValueError("Slot callback requires an aligned slot")
+    instructions = validate_padded_callback_gap(code, start, end, gap_end,
+                                                registered, 512, allow_indirect_calls)
+    decoder = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    decoder.detail = True
     refs = list(decoder.disasm(reference_code,reference_start))
     if not refs or sum(i.size for i in refs) != len(reference_code):
         raise ValueError("Slot reference function does not decode completely")
@@ -291,7 +315,7 @@ def register_callback(dispatch: str, header: str, start: int) -> tuple[str, str]
 def recover(args: argparse.Namespace) -> dict:
     import capstone
 
-    if sum((args.tail_jump_stub, args.linear_leaf_gap, args.int3_padding_gap, args.slot_callback_gap)) > 1:
+    if sum((args.tail_jump_stub, args.linear_leaf_gap, args.int3_padding_gap, args.slot_callback_gap, args.data_reference is not None)) > 1:
         raise ValueError("Gap recovery modes are mutually exclusive")
     if (args.reference_slot is not None) != args.slot_callback_gap:
         raise ValueError("Reference slot is required only for slot-callback gap recovery")
@@ -315,6 +339,7 @@ def recover(args: argparse.Namespace) -> dict:
     linear_gap_end = None
     int3_gap_end = None
     slot_gap_end = None
+    data_gap_end = None
     if args.tail_jump_stub:
         following = [address for address in known if address > args.start]
         if not following:
@@ -345,6 +370,13 @@ def recover(args: argparse.Namespace) -> dict:
         slot_gap_end = min(following)
         if not args.start < args.end < slot_gap_end or slot_gap_end-args.start > 512:
             raise ValueError("Slot callback must end inside a bounded following-function gap")
+    elif args.data_reference is not None:
+        following = [address for address in known if address > args.start]
+        if not following or args.reference_function is not None or args.contained_owner is not None:
+            raise ValueError("Data callback requires a known following function and no owner")
+        data_gap_end = min(following)
+        if not args.start < args.end < data_gap_end or data_gap_end-args.start > 1024:
+            raise ValueError("Data callback must end inside a bounded following-function gap")
     elif args.end not in known:
         raise ValueError("Expected an omitted start bounded by a known following function")
     overlaps = [f for f in functions
@@ -380,6 +412,14 @@ def recover(args: argparse.Namespace) -> dict:
     code = data[offset:offset + size]
     int3_proof = None
     slot_proof = None
+    data_proof = None
+    if data_gap_end is not None:
+        ref = args.data_reference
+        validate_data_reference(data,config._SECTIONS,ref,args.start)
+        if config.va_to_file_offset(data_gap_end-1) != offset+data_gap_end-args.start-1:
+            raise ValueError("Data callback gap is not contiguous")
+        data_proof = (validate_padded_callback_gap(data[offset:offset+data_gap_end-args.start],
+            args.start,args.end,data_gap_end,set(registered),1024,args.allow_indirect_calls), [ref])
     if args.slot_callback_gap:
         reference = known[args.reference_function]
         ref_start,ref_end = int(reference["start"],16),int(reference["end"],16)
@@ -464,20 +504,22 @@ def recover(args: argparse.Namespace) -> dict:
                     raise ValueError("Branch enters the middle of an instruction")
             elif target not in registered:
                 raise ValueError(f"External destination {target:08X} is not registered")
-            elif ins.mnemonic != "call" and ins.address != instructions[-1].address and not (slot_proof and ins.mnemonic == "jmp"):
+            elif ins.mnemonic != "call" and ins.address != instructions[-1].address and not ((slot_proof or data_proof) and ins.mnemonic == "jmp"):
                 raise ValueError("External branch before the final tail requires further analysis")
     symbol = f"sub_{args.start:08X}"
-    following_boundary = slot_gap_end if args.slot_callback_gap else int3_gap_end if args.int3_padding_gap else tail_gap_end if args.tail_jump_stub else linear_gap_end
+    following_boundary = data_gap_end if data_proof else slot_gap_end if args.slot_callback_gap else int3_gap_end if args.int3_padding_gap else tail_gap_end if args.tail_jump_stub else linear_gap_end
     boundary = known[following_boundary if following_boundary is not None else args.end]
     functions.append({"start": f"0x{args.start:08X}", "end": f"0x{args.end:08X}",
                       "size": size, "name": symbol, "section": boundary["section"],
-                      "detection_method": ("observed_slot_callback" if slot_proof else "observed_int3_padded_callback" if int3_proof else "observed_linear_leaf" if linear_leaf_proof else
+                      "detection_method": ("observed_data_callback" if data_proof else "observed_slot_callback" if slot_proof else "observed_int3_padded_callback" if int3_proof else "observed_linear_leaf" if linear_leaf_proof else
                           "observed_tail_jump_stub" if args.tail_jump_stub else
                           "observed_contained_callback" if contained_proof else "observed_callback"), "confidence": 1.0,
                       "overlap_owner": f"0x{args.contained_owner:08X}" if contained_proof else None,
                       "reference_function": f"0x{args.reference_function:08X}" if contained_proof or int3_proof or slot_proof else None,
                       "literal_reference_sites": [f"0x{x:08X}" for x in (contained_proof or int3_proof or slot_proof)[1]] if contained_proof or int3_proof or slot_proof else [],
                       "reference_slot": args.reference_slot,
+                      "data_reference": f"0x{args.data_reference:08X}" if data_proof else None,
+                      "data_callback_gap_end": f"0x{data_gap_end:08X}" if data_proof else None,
                       "slot_callback_gap_end": f"0x{slot_gap_end:08X}" if slot_proof else None,
                       "int3_padding_gap_end": f"0x{int3_gap_end:08X}" if int3_proof else None,
                       "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
@@ -514,6 +556,8 @@ def recover(args: argparse.Namespace) -> dict:
               "reference_function": f"0x{args.reference_function:08X}" if contained_proof or int3_proof or slot_proof else None,
               "literal_reference_sites": [f"0x{x:08X}" for x in (contained_proof or int3_proof or slot_proof)[1]] if contained_proof or int3_proof or slot_proof else [],
               "reference_slot": args.reference_slot,
+              "data_reference": f"0x{args.data_reference:08X}" if data_proof else None,
+              "data_callback_gap_end": f"0x{data_gap_end:08X}" if data_proof else None,
               "slot_callback_gap_end": f"0x{slot_gap_end:08X}" if slot_proof else None,
               "int3_padding_gap_end": f"0x{int3_gap_end:08X}" if int3_proof else None,
               "tail_stub_gap_end": f"0x{tail_gap_end:08X}" if args.tail_jump_stub else None,
@@ -553,6 +597,8 @@ def main() -> None:
                         help="Prove a complete callback CFG and exact literal MOV to a known object slot")
     parser.add_argument("--reference-slot",type=lambda x:int(x,0),
                         help="Object field displacement for slot-callback recovery")
+    parser.add_argument("--data-reference",type=lambda x:int(x,0),
+                        help="Aligned .rdata address containing the observed callback start")
     args = parser.parse_args()
     print(json.dumps(recover(args), indent=2))
 

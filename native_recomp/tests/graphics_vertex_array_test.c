@@ -129,9 +129,11 @@ static int test_quad_ranges(void)
     for(unsigned i=0;i<6;++i)CHECK(!memcmp(out.vertices[i][0],positions[zero_order[i]],16));
     before=out;
     fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,8));
-    for(unsigned first=0;first<FUT_VERTEX_ARRAY_INDEX_CAPACITY;first+=256)
-        CHECK(fut_graphics_vertex_array_draw_arrays(&a,0xFF000000u|first));
-    CHECK(a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY && a.indices[a.count-1]==4095);
+    for(unsigned first=0;first<FUT_VERTEX_ARRAY_INDEX_CAPACITY;first+=256) {
+        unsigned remaining=FUT_VERTEX_ARRAY_INDEX_CAPACITY-first,count=remaining<256?remaining:256;
+        CHECK(fut_graphics_vertex_array_draw_arrays(&a,((count-1u)<<24)|first));
+    }
+    CHECK(a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY && a.indices[a.count-1]==FUT_VERTEX_ARRAY_INDEX_CAPACITY-1);
     captured=a;
     CHECK(!fut_graphics_vertex_array_draw_arrays(&a,FUT_VERTEX_ARRAY_INDEX_CAPACITY) &&
         !memcmp(&a,&captured,sizeof(a)));
@@ -218,10 +220,10 @@ static int test_indexed_triangles(void)
     fut_graphics_vertex_array_reset(&a);CHECK(fut_graphics_vertex_array_begin(&a,5));
     for(unsigned i=0;i<FUT_VERTEX_ARRAY_INDEX_CAPACITY-4;i+=2)
         CHECK(fut_graphics_vertex_array_indices(&a,0x00010003));
-    /* 4092 is the largest even complete list in the unchanged 4096 cap. */
-    CHECK(a.count==4092 && fut_graphics_vertex_array_end(&a));
+    /* The largest even complete triangle list below the captured cap. */
+    CHECK(a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY-4 && fut_graphics_vertex_array_end(&a));
     CHECK(fut_graphics_vertex_array_build(&a,&out,read_memory,NULL,&view,&view,
-        formats,offsets,attrs,valid,0x207) && out.count==4092);
+        formats,offsets,attrs,valid,0x207) && out.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY-4);
     for(unsigned i=0;i<out.count;++i)
         CHECK(!memcmp(out.vertices[i][0],positions[(i&1u)?1:3],12) && out.defined[i]==0x207);
     before=out;
@@ -277,8 +279,10 @@ static int test_draw_arrays(void)
     captured=a;CHECK(a.count==1 && !fut_graphics_vertex_array_end(&a) && !memcmp(&a,&captured,sizeof(a)));
     fut_graphics_vertex_array_reset(&a);
     CHECK(fut_graphics_vertex_array_begin(&a,6));
-    for(unsigned first=0;first<FUT_VERTEX_ARRAY_INDEX_CAPACITY;first+=256)
-        CHECK(fut_graphics_vertex_array_draw_arrays(&a,0xFF000000u|first));
+    for(unsigned first=0;first<FUT_VERTEX_ARRAY_INDEX_CAPACITY;first+=256) {
+        unsigned remaining=FUT_VERTEX_ARRAY_INDEX_CAPACITY-first,count=remaining<256?remaining:256;
+        CHECK(fut_graphics_vertex_array_draw_arrays(&a,((count-1u)<<24)|first));
+    }
     CHECK(a.count==FUT_VERTEX_ARRAY_INDEX_CAPACITY && a.indices[a.count-1]==FUT_VERTEX_ARRAY_INDEX_CAPACITY-1);
     captured=a;
     CHECK(!fut_graphics_vertex_array_draw_arrays(&a,FUT_VERTEX_ARRAY_INDEX_CAPACITY) && !memcmp(&a,&captured,sizeof(a)));

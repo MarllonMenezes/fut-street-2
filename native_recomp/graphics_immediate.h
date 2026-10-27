@@ -2,9 +2,9 @@
 #define FUT_GRAPHICS_IMMEDIATE_H
 #include "graphics_kelvin_state.h"
 #define FUT_IMMEDIATE_CAPACITY 256u
-/* Observed scene strip contains 3522 indices; 4096 expand to 12282 vertices.
+/* A rejected queue snapshot contains 5416 indices; these expand to 16242 vertices.
  * Immediate-method emission remains separately capped at 256 inputs. */
-#define FUT_IMMEDIATE_DRAW_CAPACITY 12288u
+#define FUT_IMMEDIATE_DRAW_CAPACITY 16242u
 typedef struct {
     float vertices[FUT_IMMEDIATE_DRAW_CAPACITY][16][4];
     uint16_t defined[FUT_IMMEDIATE_DRAW_CAPACITY];

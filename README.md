@@ -20,27 +20,30 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 limitada preparou geometria original, mas cenário apresentado, controles em
 partida e partida curta ainda não foram comprovados.
 
-O backend aceita a superfície observada RGB565/Z16 em layout linear: os recursos
-D3D usam 16 bits, preservam pixels e padding no upload e no retorno ao jogo, e
-normalizam a profundidade para Z16. Um teste WARP verifica desenho aprovado e
-reprovado em Z, gravação e preservação do padding. Limpeza, stencil e dithering
-nesse formato continuam recusados. Na execução original, uma superfície
-320×240 foi carregada e o shader de vértices do quad executou; o desenho parou
-antes da rasterização por outro filtro. Não há comprovação de fidelidade NV2A.
+Uma chamada indireta observada para `0x00050060` apontou para código original
+não incluído na geração anterior. A função foi recuperada a partir do XBE local,
+com validação da referência em `.rdata`, fluxo de controle e limites, e o
+executável foi reconstruído com a nova entrada de despacho. A execução mais
+recente seguiu outro percurso e não demonstrou a chamada ou o retorno dessa
+função. Código gerado proprietário permanece local.
 
-O gate AA2 sem textura também reconhece o estado capturado de BC3 desativada
-com parâmetros retidos e shader sem estágio de textura. O shader e os demais
-estados continuam validados separadamente. Os testes cobrem a combinação e
-recusam ativação ou pedido de amostragem fora do escopo; a chamada original
-específica ainda precisa ser repetida.
+Uma cópia não atômica da fila indica um strip de **5.416 índices**, após uma
+recusa real aos 4.096. A capacidade foi ajustada para essa contagem; testes
+verificam degenerados, ordem e expansão a 16.242 vértices, além de upload,
+sondagem e desenho WARP com gravação de superfície. O trecho posterior à
+recusa na cópia não havia sido executado, e o strip original ainda precisa ser
+repetido para comprovar seu desenho.
 
-**Os 45 gates obrigatórios passaram.** O bloqueio atual é o filtro quincunx
-numa textura 1280×480 desenhada para uma superfície 320×240 RGB565/Z16. O
-experimento existente está autorizado apenas para resolução 1280×480 →
-640×480, por isso esse uso permanece recusado. É necessário caracterizar seu
-comportamento e definir um experimento específico antes de prosseguir. Uma
-recusa anterior de strip após 4.096 índices ainda exige medir a contagem
-completa; nenhuma geometria foi descartada para contorná-la.
+**Os 45 gates obrigatórios e os 33 testes da ferramenta de recuperação
+passaram.** O bloqueio atual é o filtro quincunx numa textura 1280×480 desenhada
+para uma superfície RGB565/Z16 de 320×240. Os seis vértices originais foram
+observados, mas a chamada foi recusada antes da amostragem. O experimento
+existente é restrito a 1280×480 → 640×480; este uso permanece recusado.
+
+O backend carregou a superfície RGB565/Z16 e executou o shader de vértices do
+quad. Testes WARP verificam preservação de pixels e padding e um desenho com
+Z16 aprovado e reprovado. Limpeza, stencil e dithering nesse formato continuam
+recusados. Esses resultados não provam fidelidade NV2A ou apresentação de cena.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução

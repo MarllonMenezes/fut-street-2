@@ -3,7 +3,7 @@
 #include "graphics_immediate.h"
 #include "graphics_objects.h"
 
-#define FUT_VERTEX_ARRAY_INDEX_CAPACITY 4096u
+#define FUT_VERTEX_ARRAY_INDEX_CAPACITY 5416u
 typedef struct {
     uint32_t indices[FUT_VERTEX_ARRAY_INDEX_CAPACITY];
     uint32_t inline_words[FUT_IMMEDIATE_CAPACITY*6u];

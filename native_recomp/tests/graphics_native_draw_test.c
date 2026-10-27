@@ -5,6 +5,7 @@
 #include "graphics_experiment.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #define CHECK(x,n) do {if(!(x)){fprintf(stderr,"native draw test failed: %d\n",n);return n;}}while(0)
 typedef struct {
     uint8_t color[96],depth[96];
@@ -24,7 +25,7 @@ static int read_memory(void *opaque,uint32_t address,void *data,size_t size)
 static int write_memory(void *opaque,uint32_t address,const void *data,size_t size)
 {
     Memory *m=opaque;++m->writes;
-    unsigned supported_count=m->batch->count==3 ||
+    unsigned supported_count=m->batch->count==3 || m->batch->count==FUT_IMMEDIATE_DRAW_CAPACITY ||
         (m->batch->primitive==2 && fut_graphics_lines_aa2_count_enabled(m->batch->count));
     if(!m->batch->ready || !supported_count || !m->native->submitted) m->bad_order=1;
     if(address==m->fail_address || size>96) return 0;
@@ -107,6 +108,20 @@ int main(void)
     }
     for(unsigned i=0;i<96;++i) if(i>=64 || i%24>=16) CHECK(m.color[i]==0xCD,19);
     CHECK(DRAW()==E_INVALIDARG && m.writes==1,20);
+    /* Captured strip size after expansion; exercise full upload, SO probe,
+     * draw completion and transactional surface writeback on WARP. */
+    batch=original;batch.count=FUT_IMMEDIATE_DRAW_CAPACITY;
+    for(unsigned i=0;i<batch.count;++i) {
+        memcpy(batch.vertices[i][0],points[i%3],16);batch.defined[i]=1;
+    }
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,vs,&batch,1)),80);
+    FutNativePosition *positions=malloc(sizeof(*positions)*batch.count);CHECK(positions,81);
+    CHECK(SUCCEEDED(fut_native_immediate_probe_positions(&native,device,context,vertex,vs,&completion,
+        positions,batch.count,2000,NULL)) && fut_native_immediate_constant_coordinates(positions,batch.count)==15,82);
+    free(positions);
+    CHECK(SUCCEEDED(DRAW()) && native.ia_vertices==FUT_IMMEDIATE_DRAW_CAPACITY &&
+        native.ps_invocations>0 && m.writes==2 && !m.bad_order,83);
+    m.writes=1;
     /* Explicit AA2 path: corner/center coverage with real Z/S writeback.
      * This synthetic fixture has no RDI/raw controls and dithering is off. */
     batch=original;

@@ -1,11 +1,12 @@
 """Synthetic contracts for adding a recovered callback to generated dispatch."""
 import unittest
 import struct
+from types import SimpleNamespace
 
 from tools.analysis.recomp_recover_observed_callback import (
     read_dispatch, register_callback, validate_contained_callback, validate_switch,
     validate_linear_leaf, validate_tail_jump_stub_gap, validate_int3_padding_gap,
-    validate_slot_callback_gap,
+    validate_slot_callback_gap, validate_padded_callback_gap, validate_data_reference,
 )
 
 
@@ -48,6 +49,26 @@ class RecoveryRegistrationTests(unittest.TestCase):
     def test_refuses_orphan_declaration_without_duplicating_it(self):
         with self.assertRaisesRegex(ValueError, "already registered"):
             register_callback(dispatch(self.rows), self.header + "void sub_00001100(void);", 0x1100)
+
+
+class DataCallbackTests(unittest.TestCase):
+    def test_original_pointer_is_aligned_and_inside_noncode_rdata(self):
+        data = bytes(8) + struct.pack('<I', 0x1000) + bytes(4)
+        section = SimpleNamespace(name='.rdata', is_code=False, va=0x2000, raw_size=8, raw_addr=8)
+        validate_data_reference(data, [section], 0x2000, 0x1000)
+        for ref, target, candidate in [(0x2001,0x1000,section), (0x2000,0x1001,section),
+                                       (0x2008,0x1000,section),
+                                       (0x2000,0x1000,SimpleNamespace(name='.rdata',is_code=True,va=0x2000,raw_size=8,raw_addr=8))]:
+            with self.subTest(ref=ref,target=target), self.assertRaises(ValueError):
+                validate_data_reference(data,[candidate],ref,target)
+
+    def test_padded_callback_rejects_bad_flow_padding_and_extent(self):
+        body=bytes.fromhex('90c3cccc')
+        self.assertEqual(len(validate_padded_callback_gap(body,0x1000,0x1002,0x1004,set(),1024)),2)
+        for code, maximum in [(bytes.fromhex('90c390cc'),1024),
+                              (bytes.fromhex('eb01c3cc'),1024), (body,3)]:
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                validate_padded_callback_gap(code,0x1000,0x1002,0x1004,set(),maximum)
 
 
 class SwitchRecoveryTests(unittest.TestCase):
