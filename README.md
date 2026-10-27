@@ -21,8 +21,9 @@ controles em partida e partida curta ainda não foram comprovados.
 
 Na execução nativa limitada a 300 segundos, o quad original de 320×240
 concluiu com 76.800 invocações de pixel shader e gravação da superfície do
-jogo, usando as opções experimentais descritas abaixo. A execução parou no
-desenho seguinte: uma textura de formato `00011129` ainda não é aceita.
+jogo, usando as opções experimentais descritas abaixo. No desenho seguinte,
+uma textura linear RGB565 de 320×240 foi carregada nas quatro etapas; o gate
+de controles gráficos recusou o estado do quadro 160×120 antes do desenho.
 Esse resultado não comprova apresentação do quad nem gameplay. Uma tentativa
 anterior atingiu o limite na tela de carregamento. **Os 45 testes de
 integração passaram.**
@@ -33,7 +34,7 @@ texel para estabilizar a seleção em D3D; testes de pixels RGB565 e Z16 passara
 no WARP e na GPU local. Fase, minificação e fidelidade NV2A não foram medidas.
 Um segundo opt-in restringe o dithering RGB565 ao estado observado, usando a
 quantização D3D sem adicionar dithering espacial. Não há medição de fidelidade
-NV2A. O próximo passo é investigar a textura recusada no desenho seguinte.
+NV2A. O próximo passo é investigar os controles recusados no desenho seguinte.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução

@@ -178,8 +178,8 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
                         stage,stage,stage,stage,stage,stage);
                 else n=snprintf(source+used,sizeof(source)-used,
                     "float4 T%u=fut_linear_texture(tex%u,samp%u,input.t%u,float2(%u,%u));\n",
-                    stage,stage,stage,stage,native->plan.storage?1:native->plan.width,
-                    native->plan.storage?1:native->plan.height);
+                    stage,stage,stage,stage,(native->plan.storage && native->plan.storage!=7)?1:native->plan.width,
+                    (native->plan.storage && native->plan.storage!=7)?1:native->plan.height);
             }
         } else if(mode==4) n=snprintf(source+used,sizeof(source)-used,"float4 T%u=input.t%u;\n",stage,stage);
         else if(mode==0) n=snprintf(source+used,sizeof(source)-used,"float4 T%u=float4(0,0,0,1);\n",stage);

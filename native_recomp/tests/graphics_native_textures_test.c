@@ -19,6 +19,30 @@ static uint32_t memory_pixel(const Memory *memory,unsigned x,unsigned y)
 {
     uint32_t word; memcpy(&word,memory->bytes+y*20+x*4,4); return word;
 }
+static int verify_rgb565(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion,
+    const FutGraphicsTextureState *base,const FutGraphicsDmaView *dma)
+{
+    FutGraphicsTextureState s=*base;s.format=0x11129;s.control1=12u<<16;
+    FutGraphicsTexturePlan p={0},unchanged={.width=99};
+    CHECK(fut_graphics_texture_plan(&s,dma,&p)==FUT_TEXTURE_READY && p.storage==7 &&
+        p.bytes_per_pixel==2 && p.width==4 && p.height==3 && p.pitch==12 && p.span==32,230);
+    FutGraphicsTextureState bad=s;bad.control1=4u<<16;
+    CHECK(fut_graphics_texture_plan(&bad,dma,&unchanged)==FUT_TEXTURE_INVALID_RANGE && unchanged.width==99,231);
+    CHECK(fut_graphics_texture_plan(&s,&(FutGraphicsDmaView){0x80000000,0x101f},&unchanged)==FUT_TEXTURE_INVALID_RANGE,232);
+    Memory m={0};const uint16_t words[4]={0xF800,0x07E0,0x001F,0x7BEF};
+    for(unsigned y=0;y<3;++y)memcpy(m.bytes+y*12,words,sizeof(words));
+    FutNativeTexture t={0};CHECK(SUCCEEDED(fut_native_texture_upload(&t,device,&p,memory_read,&m)),233);
+    D3D11_TEXTURE2D_DESC d;ID3D11Texture2D_GetDesc(t.texture,&d);
+    CHECK(d.Format==DXGI_FORMAT_B5G6R5_UNORM && t.texel_and==0 && t.texel_or==UINT32_MAX,234);
+    d.Usage=D3D11_USAGE_STAGING;d.CPUAccessFlags=D3D11_CPU_ACCESS_READ;d.BindFlags=0;
+    ID3D11Texture2D *staging=NULL;CHECK(SUCCEEDED(ID3D11Device_CreateTexture2D(device,&d,NULL,&staging)),235);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)staging,(ID3D11Resource*)t.texture);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),236);
+    D3D11_MAPPED_SUBRESOURCE map;CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)staging,0,D3D11_MAP_READ,0,&map)),237);
+    for(unsigned y=0;y<3;++y)CHECK(!memcmp((uint8_t*)map.pData+y*map.RowPitch,words,sizeof(words)),238);
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)staging,0);ID3D11Texture2D_Release(staging);
+    fut_native_texture_destroy(&t);return 0;
+}
 static int verify_upload(ID3D11Device *device,ID3D11DeviceContext *context,FutNativeConstants *completion,
     FutNativeTexture *native,const Memory *memory)
 {
@@ -674,6 +698,7 @@ int main(void)
     ID3D11Device *device=NULL;ID3D11DeviceContext *context=NULL;D3D_FEATURE_LEVEL level;
     CHECK(SUCCEEDED(D3D11CreateDevice(NULL,D3D_DRIVER_TYPE_WARP,NULL,0,NULL,0,D3D11_SDK_VERSION,&device,&level,&context)),13);
     FutNativeConstants completion;CHECK(SUCCEEDED(fut_native_constants_init(&completion,device,context)),14);
+    CHECK(!verify_rgb565(device,context,&completion,state,&dma),239);
     CHECK(verify_bc1(device,context,&completion)==0,133);
     CHECK(verify_bc2(device,context,&completion)==0,174);
     CHECK(verify_p8(device,context,&completion)==0,151);
