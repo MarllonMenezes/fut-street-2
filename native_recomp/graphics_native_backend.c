@@ -1364,7 +1364,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(state->kelvin.specular_enable)
         fprintf(stderr,"[GRAPHICS] programmable secondary color prepared: original oD1 RGB, alpha_from_program=%u light_control=%08X; finite host color clamp, NV2A exceptional/precision behavior unverified; no draw/completion yet\n",
             (state->kelvin.light_control&0x00020000u)!=0,state->kelvin.light_control);
-    if(state->kelvin.draw.dither) fprintf(stderr,aa2?
+    if(state->kelvin.draw.dither && state->native_surfaces.plan.rgb565_z16)
+        fputs("[GRAPHICS] EXPERIMENTAL_RGB565_DITHER: host quantization without spatial dither for scoped 320 resolve; NV2A fidelity unverified; NOT_READY\n",stderr);
+    else if(state->kelvin.draw.dither) fprintf(stderr,aa2?
         "[GRAPHICS] AUTHORIZED_AA2_APPROXIMATION: ARGB8 dither uses host UNORM conversion without added noise; no NV2A hardware validation\n":
         "[GRAPHICS] ACCEPTED_APPROXIMATION: ARGB8 single-sample dither uses host UNORM conversion without added noise; no NV2A hardware validation\n");
     return 1;

@@ -34,6 +34,7 @@ param(
     [switch]$Lines4segmentAa2Approximation,
     [switch]$QuincunxApproximation,
     [switch]$Quincunx320Approximation,
+    [switch]$Rgb565DitherApproximation,
     [switch]$Ac97ResetApproximation,
     [switch]$AudioEffectsBypass,
     [ValidateRange(1, 16384)][int]$AudioEffectsBypassMaxCompletions = 4096,
@@ -156,6 +157,7 @@ $variables = @{
     RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '0'
     RECOMP_QUINCUNX_APPROXIMATION = '0'
     RECOMP_QUINCUNX_320_APPROXIMATION = '0'
+    RECOMP_RGB565_DITHER_APPROXIMATION = '0'
     RECOMP_NATIVE_DISPLAY_ORIGIN = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS = '0'
     RECOMP_AUDIO_EFFECTS_BYPASS_MAX_COMPLETIONS = [string]$AudioEffectsBypassMaxCompletions
@@ -253,6 +255,7 @@ if ($Lines16segmentAa2Approximation) { $variables.RECOMP_LINES_16SEGMENT_AA2_APP
 if ($Lines4segmentAa2Approximation) { $variables.RECOMP_LINES_4SEGMENT_AA2_APPROXIMATION = '1' }
 if ($QuincunxApproximation) { $variables.RECOMP_QUINCUNX_APPROXIMATION = '1' }
 if ($Quincunx320Approximation) { $variables.RECOMP_QUINCUNX_320_APPROXIMATION = '1' }
+if ($Rgb565DitherApproximation) { $variables.RECOMP_RGB565_DITHER_APPROXIMATION = '1' }
 if ($Ac97ResetApproximation) { $variables.RECOMP_AC97_RESET_ONLY = '1' }
 $process = $null
 $stdoutFile = $null
@@ -324,6 +327,7 @@ try {
         lines_4segment_aa2_approximation = [bool]$Lines4segmentAa2Approximation
         quincunx_approximation = [bool]$QuincunxApproximation
         quincunx_320_approximation = [bool]$Quincunx320Approximation
+        rgb565_dither_approximation = [bool]$Rgb565DitherApproximation
         ac97_reset_approximation = [bool]$Ac97ResetApproximation
         audio_effects_bypass = [bool]$AudioEffectsBypass
         native_pcm_output = [bool]$NativePcmOutput

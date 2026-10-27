@@ -19,28 +19,21 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 **NOT_READY — ainda não é um jogo recompilado jogável.** Cenário apresentado,
 controles em partida e partida curta ainda não foram comprovados.
 
-O tradutor de combinadores agora suporta a operação observada que copia o
-azul do produto AB para o alfa do mesmo destino. Um teste no WARP usa os
-comandos originais capturados e uma referência aritmética independente; casos
-de escrita simultânea no mesmo alfa continuam recusados. A execução posterior
-não repetiu esse shader antes do limite de 300 segundos, então seu desenho
-original ainda não foi comprovado. **Os 45 gates obrigatórios passaram.**
-
-Antes da correção do combinador, um desenho original BC2 64×64 combinado com
-ARGB8 linear 256×256 concluiu as duas passadas AA2: 720 vértices de entrada,
-246 invocações de pixel shader e gravação da superfície. Em seguida, o quad
-original de 320×240 preparou a textura e o experimento quincunx, mas foi
-recusado no combinador antes de desenhar. Um strip original de 5.416 índices
-concluiu em outra execução, com 32.484 vértices de entrada nas duas passadas,
-784.759 invocações de pixel shader e gravação. Nenhum desses resultados prova
-apresentação ou gameplay.
+Na execução nativa limitada a 300 segundos, o quad original de 320×240
+concluiu com 76.800 invocações de pixel shader e gravação da superfície do
+jogo, usando as opções experimentais descritas abaixo. A execução parou no
+desenho seguinte: uma textura de formato `00011129` ainda não é aceita.
+Esse resultado não comprova apresentação do quad nem gameplay. Uma tentativa
+anterior atingiu o limite na tela de carregamento. **Os 45 testes de
+integração passaram.**
 
 O experimento quincunx 1280×480 → 320×240 RGB565/Z16 é separado e desligado por
 padrão. O modelo de cinco amostras inclui deslocamento experimental de 0,001
 texel para estabilizar a seleção em D3D; testes de pixels RGB565 e Z16 passaram
 no WARP e na GPU local. Fase, minificação e fidelidade NV2A não foram medidas.
-O próximo passo é repetir a execução para confirmar o desenho e encontrar a
-primeira recusa seguinte.
+Um segundo opt-in restringe o dithering RGB565 ao estado observado, usando a
+quantização D3D sem adicionar dithering espacial. Não há medição de fidelidade
+NV2A. O próximo passo é investigar a textura recusada no desenho seguinte.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução
@@ -58,6 +51,10 @@ configurados e sua captura de processos não suporta Windows neste ambiente.
 
 `-Quincunx320Approximation` habilita somente o experimento 1280×480 →
 320×240 RGB565/Z16; é separado e desligado por padrão.
+
+`-Rgb565DitherApproximation`, junto da opção anterior, habilita a aproximação
+sem dithering espacial para o estado RGB565 de 320×240 observado; também é
+desligada por padrão.
 
 `-ProjectiveAa2Approximation`, junto de `-Aa2Approximation`, habilita o
 experimento de interpolação em perspectiva. É desligado por padrão e exige

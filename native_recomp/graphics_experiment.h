@@ -32,6 +32,11 @@ static inline int fut_graphics_quincunx_320_approximation_enabled(void)
     const char *value=getenv("RECOMP_QUINCUNX_320_APPROXIMATION");
     return value && !strcmp(value,"1");
 }
+static inline int fut_graphics_rgb565_dither_approximation_enabled(void)
+{
+    const char *value=getenv("RECOMP_RGB565_DITHER_APPROXIMATION");
+    return value && !strcmp(value,"1");
+}
 /* Authorized separately on 2026-10-17, only at the exact captured BC1 gate. */
 static inline int fut_graphics_dxt1_noise_approximation_enabled(void)
 {
