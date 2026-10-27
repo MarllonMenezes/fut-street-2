@@ -17,29 +17,30 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 ## Estado verificável — 27 de outubro de 2026
 
 **NOT_READY — ainda não é um jogo recompilado jogável.** A última execução
-limitada apresentou a tela de carregamento e preparou geometria original, mas
-cenário apresentado, controles em partida e partida curta não foram comprovados.
+limitada preparou geometria original, mas cenário apresentado, controles em
+partida e partida curta ainda não foram comprovados.
 
-A aproximação projetiva AA2 passou a admitir coordenadas de tela fora do
-quadrante visível até 2²⁵, mantendo os demais limites e a exigência de opt-in.
-Testes D3D11 WARP com W positivo e negativo compararam as duas amostras e
-interpolação com referência em dupla precisão. Uma execução anterior recusou
-um strip original de 6.939 vértices por esse limite; o mesmo strip ainda não
-foi repetido após a alteração. O resultado sintético não prova fidelidade NV2A.
+O backend aceita a superfície observada RGB565/Z16 em layout linear: os recursos
+D3D usam 16 bits, preservam pixels e padding no upload e no retorno ao jogo, e
+normalizam a profundidade para Z16. Um teste WARP verifica desenho aprovado e
+reprovado em Z, gravação e preservação do padding. Limpeza, stencil e dithering
+nesse formato continuam recusados. Na execução original, uma superfície
+320×240 foi carregada e o shader de vértices do quad executou; o desenho parou
+antes da rasterização por outro filtro. Não há comprovação de fidelidade NV2A.
 
-O gate experimental admite também a textura BC3 32×32 de um mipmap observada
-com filtro sem bias, clamp e teste Z, inclusive escrita Z desligada. Os testes
-verificam limites, estados recusados e amostragem BC3 no WARP. O desenho
-original que motivou a alteração ainda não foi repetido no percurso posterior.
-Diagnósticos adicionais distinguem falhas de observação de VBlank, postagem de
-interrupção e leitura do estado de scanout sem simular conclusão.
+O gate AA2 sem textura também reconhece o estado capturado de BC3 desativada
+com parâmetros retidos e shader sem estágio de textura. O shader e os demais
+estados continuam validados separadamente. Os testes cobrem a combinação e
+recusam ativação ou pedido de amostragem fora do escopo; a chamada original
+específica ainda precisa ser repetida.
 
-**Os 45 gates obrigatórios passaram.** A execução nativa mais recente preparou
-QUADS originais, mas recusou a superfície `0x113`, identificada como RGB565 com
-profundidade Z16: o backend atual suporta ARGB8/Z24S8. A implementação e os
-testes dessas superfícies são o próximo bloqueio. Uma recusa anterior de strip
-após 4.096 índices ainda exige medir a contagem completa; nenhum limite foi
-ampliado sem evidência nem geometria descartada para contorná-lo.
+**Os 45 gates obrigatórios passaram.** O bloqueio atual é o filtro quincunx
+numa textura 1280×480 desenhada para uma superfície 320×240 RGB565/Z16. O
+experimento existente está autorizado apenas para resolução 1280×480 →
+640×480, por isso esse uso permanece recusado. É necessário caracterizar seu
+comportamento e definir um experimento específico antes de prosseguir. Uma
+recusa anterior de strip após 4.096 índices ainda exige medir a contagem
+completa; nenhuma geometria foi descartada para contorná-la.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução

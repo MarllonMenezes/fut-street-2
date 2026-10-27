@@ -173,6 +173,14 @@ int main(void)
         !pipeline.raster && state.draw.dither==1,44);
     state.draw.dither=0;
     CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),5);
+    FutGraphicsSurfacePlan z16_surface={.width=8,.height=4,.logical_width=8,.logical_height=4,.samples=1,.rgb565_z16=1};
+    FutGraphicsKelvinState z16_state=state;
+    CHECK(z16_state.stencil_test && fut_native_pipeline_apply(&pipeline,device,context,&z16_state,&z16_surface)==E_NOTIMPL,90);
+    z16_state.stencil_test=0;z16_state.draw.dither=1;
+    CHECK(fut_native_pipeline_apply(&pipeline,device,context,&z16_state,&z16_surface)==E_NOTIMPL,91);
+    z16_state.draw.dither=0;
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&z16_state,&z16_surface)),92);
+    CHECK(SUCCEEDED(fut_native_pipeline_apply(&pipeline,device,context,&state,&surface)),93);
     D3D11_BLEND_DESC blend; ID3D11BlendState_GetDesc(pipeline.blend,&blend);
     CHECK(blend.RenderTarget[0].SrcBlend==D3D11_BLEND_SRC_ALPHA && blend.RenderTarget[0].DestBlend==D3D11_BLEND_INV_SRC_ALPHA &&
         blend.RenderTarget[0].RenderTargetWriteMask==(D3D11_COLOR_WRITE_ENABLE_RED|D3D11_COLOR_WRITE_ENABLE_BLUE|D3D11_COLOR_WRITE_ENABLE_ALPHA),6);

@@ -107,8 +107,9 @@ HRESULT fut_native_vertex_surface_prepare(FutNativeVertexSurface *native,
         surface->width!=surface->logical_width*(surface->samples==2?2u:1u) ||
         surface->height!=surface->logical_height)
         return E_NOTIMPL;
-    if(!native->buffer || native->width!=surface->logical_width || native->height!=surface->logical_height) {
-        const float values[4]={(float)surface->logical_width,(float)surface->logical_height,16777215.0f,0};
+    if(surface->rgb565_z16>1 || (surface->rgb565_z16 && surface->samples!=1)) return E_NOTIMPL;
+    if(!native->buffer || native->width!=surface->logical_width || native->height!=surface->logical_height || native->rgb565_z16!=surface->rgb565_z16) {
+        const float values[4]={(float)surface->logical_width,(float)surface->logical_height,surface->rgb565_z16?65535.0f:16777215.0f,0};
         D3D11_BUFFER_DESC desc={0};desc.ByteWidth=sizeof(values);
         desc.Usage=D3D11_USAGE_IMMUTABLE;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
         D3D11_SUBRESOURCE_DATA data={values,0,0};ID3D11Buffer *buffer=NULL;
@@ -116,6 +117,7 @@ HRESULT fut_native_vertex_surface_prepare(FutNativeVertexSurface *native,
         if(FAILED(hr)) return hr;
         fut_native_vertex_surface_destroy(native);native->buffer=buffer;
         native->width=surface->logical_width;native->height=surface->logical_height;
+        native->rgb565_z16=surface->rgb565_z16;
     }
     ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&native->buffer);
     return S_OK;

@@ -1233,7 +1233,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
     if(aa2 && state->kelvin.textures[0].format==0x09910C29u &&
         fut_graphics_dxt1_noise_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
-    if(aa2 && state->kelvin.textures[0].format==0x05510F29u)
+    if(aa2 && state->kelvin.textures[0].format==0x05510F29u && (state->kelvin.textures[0].control0&0x40000000u))
         fputs("[GRAPHICS] EXPERIMENTAL_BC3_SINGLE_AA2: observed 32x32, unbiased clamp, projective and depth baseline; NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && projective_format)
         fputs("[GRAPHICS] AUTHORIZED_PROJECTIVE_AA2_APPROXIMATION: rational pixel-center interpolation, original signed W and mip chain, logical-pixel gradients; NV2A precision/AA2 fidelity unverified NOT_READY\n",stderr);
@@ -1261,7 +1261,7 @@ static int native_prepare_draw(NativeGraphicsState *state)
         fut_graphics_bc2_c9df00_aa2_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_BC2_C9DF00_AA2_APPROXIMATION: exact offset=00C9DF00 FORMAT=09A10E29 1024x512 BC2, pitch=4096; existing 640x480 AA2 and depth-write mappings; filtering/compress-depth/NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && fut_graphics_untextured_aa2_approximation_enabled() &&
-        state->kelvin.textures[0].control0==0 && state->kelvin.fragment.stage_program==0)
+        (state->kelvin.textures[0].control0==0 || (state->kelvin.textures[0].format==0x05510F29u && state->kelvin.textures[0].control0==0x0003FFC0u)) && state->kelvin.fragment.stage_program==0)
         fprintf(stderr,"[GRAPHICS] AUTHORIZED_UNTEXTURED_AA2_APPROXIMATION: disabled texture stages; no retained resource sampling; stencil=%u func=%08X ref=%08X read=%08X write=%08X ops=%08X/%08X/%08X depth_func=%08X; AA2/depth/stencil fidelity unverified NOT_READY\n",
             state->kelvin.stencil_test,state->kelvin.draw.stencil_func,state->kelvin.draw.stencil_ref,
             state->kelvin.draw.stencil_read,state->kelvin.draw.stencil_write,state->kelvin.draw.stencil_op[0],

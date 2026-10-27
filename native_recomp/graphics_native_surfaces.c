@@ -18,10 +18,12 @@ static int valid_plan(const FutGraphicsSurfacePlan *p)
         (p->samples != 1 && p->samples != 2 && p->samples != 4) ||
         p->width != p->logical_width * (p->samples > 1 ? 2u : 1u) ||
         p->height != p->logical_height * (p->samples == 4 ? 2u : 1u) ||
-        p->width > 16384 || p->height > 16384) return 0;
-    uint64_t row = (uint64_t)p->width * 4;
+        p->width > 16384 || p->height > 16384 || p->rgb565_z16>1 ||
+        (p->rgb565_z16 && p->samples!=1)) return 0;
+    unsigned bpp=p->rgb565_z16?2u:4u;
+    uint64_t row = (uint64_t)p->width * bpp;
     if (p->color_pitch < row || p->depth_pitch < row ||
-        ((p->color_pitch | p->depth_pitch | p->color_address | p->depth_address) & 3) ||
+        ((p->color_pitch | p->depth_pitch | p->color_address | p->depth_address) & (bpp-1u)) ||
         (uint64_t)(p->height - 1) * p->color_pitch + row != p->color_span ||
         (uint64_t)(p->height - 1) * p->depth_pitch + row != p->depth_span) return 0;
     if ((p->color_address & 0xFC000000u) != 0x80000000u ||
@@ -49,14 +51,14 @@ HRESULT fut_native_surfaces_prepare(FutNativeSurfaces *native, ID3D11Device *dev
     /* Guest Z24S8 = depth in bits31:8, stencil7:0. D3D11 reverses the
      * placement of these fields; preserve every bit rather than converting
      * depth through a rounded float. Padding is not part of any pixel. */
-    for (uint32_t y = 0; y < plan->height; ++y) {
+    for (uint32_t y = 0; !plan->rgb565_z16 && y < plan->height; ++y) {
         uint32_t *row = (uint32_t *)(depth + (size_t)y * plan->depth_pitch);
         for (uint32_t x = 0; x < plan->width; ++x) row[x] = fut_graphics_depth_to_native(row[x]);
     }
     D3D11_TEXTURE2D_DESC desc = {0};
     desc.Width = plan->width; desc.Height = plan->height;
     desc.MipLevels = 1; desc.ArraySize = 1;
-    desc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    desc.Format = plan->rgb565_z16 ? DXGI_FORMAT_B5G6R5_UNORM : DXGI_FORMAT_B8G8R8A8_UNORM;
     desc.SampleDesc.Count = 1; /* Each packed sample is a stored pixel. */
     desc.Usage = D3D11_USAGE_DEFAULT; desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
     D3D11_SUBRESOURCE_DATA initial = {color, plan->color_pitch, 0};
@@ -64,13 +66,13 @@ HRESULT fut_native_surfaces_prepare(FutNativeSurfaces *native, ID3D11Device *dev
     if (FAILED(hr)) goto done;
     hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)next.color, NULL, &next.target);
     if (FAILED(hr)) goto done;
-    desc.Format = DXGI_FORMAT_R24G8_TYPELESS;
+    desc.Format = plan->rgb565_z16 ? DXGI_FORMAT_R16_TYPELESS : DXGI_FORMAT_R24G8_TYPELESS;
     desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
     initial.pSysMem = depth; initial.SysMemPitch = plan->depth_pitch;
     hr = ID3D11Device_CreateTexture2D(device, &desc, &initial, &next.depth);
     if (FAILED(hr)) goto done;
     D3D11_DEPTH_STENCIL_VIEW_DESC view = {0};
-    view.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; view.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+    view.Format = plan->rgb565_z16 ? DXGI_FORMAT_D16_UNORM : DXGI_FORMAT_D24_UNORM_S8_UINT; view.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
     hr = ID3D11Device_CreateDepthStencilView(device, (ID3D11Resource *)next.depth, &view, &next.depth_target);
     if (SUCCEEDED(hr)) {
         next.plan = *plan; next.valid = 1;
@@ -99,11 +101,12 @@ static HRESULT download_pixels(ID3D11Device *device, ID3D11DeviceContext *contex
     if (SUCCEEDED(hr)) hr = ID3D11DeviceContext_Map(context, (ID3D11Resource *)staging, 0, D3D11_MAP_READ, 0, &mapped);
     if (SUCCEEDED(hr)) {
         uint32_t pitch = depth ? plan->depth_pitch : plan->color_pitch;
+        unsigned bpp=plan->rgb565_z16?2u:4u;
         for (uint32_t y = 0; y < plan->height; ++y) for (uint32_t x = 0; x < plan->width; ++x) {
-            uint32_t word; memcpy(&word, (const uint8_t *)mapped.pData + (size_t)y*mapped.RowPitch+x*4, 4);
-            if (depth) word = fut_graphics_depth_to_guest(word);
+            uint32_t word=0; memcpy(&word, (const uint8_t *)mapped.pData + (size_t)y*mapped.RowPitch+x*bpp, bpp);
+            if (depth && !plan->rgb565_z16) word = fut_graphics_depth_to_guest(word);
             if ((word & mask) != (expected & mask)) hr = E_FAIL;
-            memcpy(bytes + (size_t)y*pitch+x*4, &word, 4);
+            memcpy(bytes + (size_t)y*pitch+x*bpp, &word, bpp);
         }
         ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)staging, 0);
     }
@@ -158,7 +161,7 @@ HRESULT fut_native_surfaces_capture_bmp(const FutNativeSurfaces *native,
     FutNativeConstants *completion, const char *path, HANDLE stop_event)
 {
     if (!native || !native->valid || !native->color || !valid_plan(&native->plan) ||
-        native->plan.samples != 1 || native->plan.width > 1920 || native->plan.height > 1080 ||
+        native->plan.samples != 1 || native->plan.rgb565_z16 || native->plan.width > 1920 || native->plan.height > 1080 ||
         native->plan.color_span > 16u * 1024u * 1024u || !device || !context ||
         !completion || !path || !path[0]) return E_INVALIDARG;
     if (stop_event && WaitForSingleObject(stop_event, 0) != WAIT_TIMEOUT) return E_ABORT;
@@ -209,6 +212,7 @@ HRESULT fut_native_surfaces_clear(FutNativeSurfaces *native, ID3D11Device *devic
     unsigned colors = flags & 0xF0, depth_flags = flags & 3;
     unsigned required = 12 | (colors ? 2 : 0) | (depth_flags ? 1 : 0);
     const FutGraphicsSurfacePlan *p = &native->plan;
+    if(p->rgb565_z16) return E_NOTIMPL; /* Clear packing remains unverified. */
     if(p->clip_x || p->clip_y || (p->clip_width && p->clip_width!=p->logical_width) ||
         (p->clip_height && p->clip_height!=p->logical_height)) return E_NOTIMPL;
     if ((state->clear_valid & required) != required || (state->control0 & 0x1000) ||

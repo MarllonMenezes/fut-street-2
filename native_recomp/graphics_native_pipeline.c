@@ -75,6 +75,7 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
         surface->width != surface->logical_width * (surface->samples > 1 ? 2u : 1u) ||
         surface->height != surface->logical_height * (surface->samples == 4 ? 2u : 1u)) return E_INVALIDARG;
     const FutGraphicsDrawState *s = &state->draw;
+    if(surface->rgb565_z16 && state->stencil_test) return E_NOTIMPL;
     uint32_t clip_w=surface->clip_width,clip_h=surface->clip_height;
     if(!clip_w && !clip_h && !surface->clip_x && !surface->clip_y) {
         clip_w=surface->logical_width;clip_h=surface->logical_height;
@@ -93,14 +94,14 @@ HRESULT fut_native_pipeline_apply(FutNativePipeline *native, ID3D11Device *devic
     float factor, bias; memcpy(&factor, &s->offset_factor, 4); memcpy(&bias, &s->offset_bias, 4);
     /* User-accepted approximation (2026-10-14), NOT measured NV2A fidelity:
      * ARGB8 single-sample uses normal host UNORM conversion, with no spatial
-     * dither added. Surface plans currently admit only ARGB8 color. Retain
+     * dither added. RGB565 with dither remains refused. Retain
      * the original enable bit. A separate user authorization on2026-10-15
      * permits ONLY the explicitly opted-in observed640x480 AA2 experiment;
      * never generalize to lower-bit or other AA render targets. */
-    if(s->dither && surface->samples!=1 &&
+    if(s->dither && (surface->rgb565_z16 || (surface->samples!=1 &&
         !(fut_graphics_aa2_approximation_enabled() && surface->samples==2 &&
           surface->logical_width==640 && surface->logical_height==480 &&
-          state->anti_aliasing_control==0xFFFF0001)) return E_NOTIMPL;
+          state->anti_aliasing_control==0xFFFF0001)))) return E_NOTIMPL;
     /* Programmable oD1 already carries the original secondary RGB. The
      * fragment adapter implements LIGHT_CONTROL's secondary-alpha selection;
      * enabling it does not request host fixed-function lighting. */

@@ -1,6 +1,7 @@
 #define COBJMACROS
 #include "graphics_native_surfaces.h"
 #include "graphics_native_constants.h"
+#include <d3dcompiler.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +65,69 @@ static int verify_texture(ID3D11Device *device, ID3D11DeviceContext *context,
     ID3D11Texture2D_Release(staging);
     return correct ? 0 : 44;
 }
+static int verify_rgb565_z16(ID3D11Device *device, ID3D11DeviceContext *context,
+    FutNativeConstants *completion)
+{
+    FutGraphicsSurfaceState state={.valid=63,.horizontal=4u<<16,.vertical=3u<<16,
+        .format=0x113,.pitch=(14u<<16)|12u,.color_offset=0x1000,.depth_offset=0x2000};
+    FutGraphicsDmaView dma={0x80000000,0x4000};FutGraphicsSurfacePlan plan={0};
+    CHECK(fut_graphics_surface_plan(&state,&dma,&dma,&plan)==FUT_SURFACE_READY &&
+        plan.rgb565_z16 && plan.samples==1 && plan.color_span==32 && plan.depth_span==36,80);
+    FutGraphicsSurfaceState bad=state;bad.format=0x1113;
+    CHECK(fut_graphics_surface_plan(&bad,&dma,&dma,&plan)==FUT_SURFACE_UNSUPPORTED,81);
+    bad=state;bad.pitch=(14u<<16)|7u;
+    CHECK(fut_graphics_surface_plan(&bad,&dma,&dma,&plan)==FUT_SURFACE_INVALID_RANGE,82);
+    Memory mem={0};memset(mem.color,0xCD,sizeof(mem.color));memset(mem.depth,0xAB,sizeof(mem.depth));
+    for(unsigned y=0;y<3;++y)for(unsigned x=0;x<4;++x) {
+        uint16_t c=(uint16_t)(0x1021u*(1+x+y*4)),z=(uint16_t)(0x1234u+x+y*4);
+        memcpy(mem.color+y*12+x*2,&c,2);memcpy(mem.depth+y*14+x*2,&z,2);
+    }
+    Memory before=mem;FutNativeSurfaces native={0};
+    CHECK(SUCCEEDED(fut_native_surfaces_prepare(&native,device,&plan,memory_read,&mem)),83);
+    fut_native_surfaces_mark_dirty(&native,3);
+    CHECK(SUCCEEDED(fut_native_surfaces_writeback(&native,device,context,completion,memory_read,memory_write,&mem,NULL)) &&
+        !memcmp(mem.color,before.color,256) && !memcmp(mem.depth,before.depth,256),84);
+    const float red[4]={1,0,0,1};
+    ID3D11DeviceContext_ClearRenderTargetView(context,native.target,red);
+    ID3D11DeviceContext_ClearDepthStencilView(context,native.depth_target,D3D11_CLEAR_DEPTH,.5f,0);
+    fut_native_surfaces_mark_dirty(&native,3);
+    CHECK(SUCCEEDED(fut_native_surfaces_writeback(&native,device,context,completion,memory_read,memory_write,&mem,NULL)),85);
+    for(unsigned y=0;y<3;++y)for(unsigned x=0;x<4;++x) {
+        uint16_t c,z;memcpy(&c,mem.color+y*12+x*2,2);memcpy(&z,mem.depth+y*14+x*2,2);
+        CHECK(c==0xF800 && z==0x8000,86);
+    }
+    CHECK(mem.color[8]==0xCD && mem.color[20]==0xCD && mem.depth[8]==0xAB && mem.depth[22]==0xAB,87);
+    const char *vs_source="float4 main(uint i:SV_VertexID):SV_POSITION{float2 p=float2((i<<1)&2,i&2);return float4(p*float2(2,-2)+float2(-1,1),.25,1);}";
+    const char *ps_source="float4 main():SV_TARGET{return float4(0,1,0,1);}";
+    ID3DBlob *vb=NULL,*pb=NULL;ID3D11VertexShader *vs=NULL;ID3D11PixelShader *ps=NULL;
+    CHECK(SUCCEEDED(D3DCompile(vs_source,strlen(vs_source),"z16_vs",NULL,NULL,"main","vs_5_0",0,0,&vb,NULL)) &&
+        SUCCEEDED(D3DCompile(ps_source,strlen(ps_source),"z16_ps",NULL,NULL,"main","ps_5_0",0,0,&pb,NULL)) &&
+        SUCCEEDED(ID3D11Device_CreateVertexShader(device,ID3D10Blob_GetBufferPointer(vb),ID3D10Blob_GetBufferSize(vb),NULL,&vs)) &&
+        SUCCEEDED(ID3D11Device_CreatePixelShader(device,ID3D10Blob_GetBufferPointer(pb),ID3D10Blob_GetBufferSize(pb),NULL,&ps)),90);
+    D3D11_DEPTH_STENCIL_DESC ds={0};ds.DepthEnable=TRUE;ds.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ALL;ds.DepthFunc=D3D11_COMPARISON_LESS;
+    ID3D11DepthStencilState *dstate=NULL;CHECK(SUCCEEDED(ID3D11Device_CreateDepthStencilState(device,&ds,&dstate)),91);
+    D3D11_VIEWPORT viewport={0,0,4,3,0,1};ID3D11DeviceContext_RSSetViewports(context,1,&viewport);
+    ID3D11DeviceContext_IASetInputLayout(context,NULL);ID3D11DeviceContext_IASetPrimitiveTopology(context,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);ID3D11DeviceContext_PSSetShader(context,ps,NULL,0);
+    ID3D11DeviceContext_OMSetDepthStencilState(context,dstate,0);
+    for(unsigned pass=0;pass<2;++pass) {
+        ID3D11DeviceContext_ClearRenderTargetView(context,native.target,red);
+        ID3D11DeviceContext_ClearDepthStencilView(context,native.depth_target,D3D11_CLEAR_DEPTH,pass?.125f:.5f,0);
+        ID3D11DeviceContext_OMSetRenderTargets(context,1,&native.target,native.depth_target);
+        ID3D11DeviceContext_Draw(context,3,0);ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+        fut_native_surfaces_mark_dirty(&native,3);
+        CHECK(SUCCEEDED(fut_native_surfaces_writeback(&native,device,context,completion,memory_read,memory_write,&mem,NULL)),92);
+        for(unsigned y=0;y<3;++y)for(unsigned x=0;x<4;++x) {
+            uint16_t c,z;memcpy(&c,mem.color+y*12+x*2,2);memcpy(&z,mem.depth+y*14+x*2,2);
+            CHECK(c==(pass?0xF800:0x07E0) && z==(pass?0x2000:0x4000),93);
+        }
+    }
+    ID3D11DeviceContext_ClearState(context);ID3D11DepthStencilState_Release(dstate);
+    ID3D11VertexShader_Release(vs);ID3D11PixelShader_Release(ps);ID3D10Blob_Release(vb);ID3D10Blob_Release(pb);
+    FutGraphicsKelvinState clear={0};
+    CHECK(fut_native_surfaces_clear(&native,device,context,completion,&clear,1,memory_read,memory_write,&mem,NULL)==E_NOTIMPL,88);
+    fut_native_surfaces_destroy(&native);return 0;
+}
 int main(void)
 {
     FutGraphicsSurfaceState state = {0};
@@ -121,6 +185,7 @@ int main(void)
         D3D11_SDK_VERSION, &device, &level, &context)), 12);
     FutNativeConstants completion;
     CHECK(SUCCEEDED(fut_native_constants_init(&completion, device, context)), 13);
+    CHECK(verify_rgb565_z16(device,context,&completion)==0,89);
     FutNativeSurfaces native = {0};
     FutGraphicsSurfacePlan invalid = plan; invalid.logical_width = UINT32_MAX;
     CHECK(fut_native_surfaces_prepare(&native, device, &invalid, memory_read, &memory) == E_INVALIDARG &&

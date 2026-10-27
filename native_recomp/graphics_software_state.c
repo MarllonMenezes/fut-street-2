@@ -172,10 +172,12 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
             ((argb_unbiased_single || bc3_single) && t0->address==0x30303u)) &&
         !(t0->offset&((projective_bc3 || projective_bc2)?15u:projective_bc1?7u:3u)) && projective_span<=0x04000000u && t0->offset<=0x04000000u-projective_span && k->draw.dither==1;
     int bc2_format=(t0->format&~0x0FF00000u)==0x00010E29u;
+    int untextured_control=t0->control0==0 ||
+        (t0->format==0x05510F29u && t0->control0==0x0003FFC0u);
     int untextured=fut_graphics_untextured_aa2_approximation_enabled() &&
         !fut_graphics_software_draw_ready(s) &&
         surface->logical_width==640 && surface->logical_height==480 &&
-        t0->control0==0 && (k->fragment.valid&2u) &&
+        untextured_control && (k->fragment.valid&2u) &&
         k->fragment.stage_program==0 && k->draw.dither==1 &&
         k->depth_test==1 && k->draw.depth_write==1 && k->compress_depth==1 &&
         k->stencil_test<=1 && k->control0==0x00100001u;
@@ -187,7 +189,7 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
      * Actual shader/draw validation is separate. */
     if(fut_graphics_untextured_aa2_approximation_enabled() &&
         !fut_graphics_software_draw_ready(s) && t0->valid &&
-        t0->control0==0 && !untextured) return 0;
+        !(t0->control0&0x40000000u) && !untextured) return 0;
     if(!untextured && (argb_header || p8_projective_header || bc2_projective_header || (bc1_header && t0->filter==0x02063F1Bu) || projective_bc3) &&
         (!observed_projective_texture || fut_graphics_software_draw_ready(s)))return 0;
     int bc2_family=bc2_format && fut_graphics_bc2_aa2_family_approximation_enabled() &&

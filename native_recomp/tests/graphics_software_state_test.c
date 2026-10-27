@@ -780,6 +780,26 @@ int main(void)
     _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","1");
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 100;
     FutGraphicsKelvinState untextured=kelvin;
+    FutGraphicsKelvinState retained_bc3=untextured;
+    retained_bc3.textures[0].format=0x05510F29;
+    retained_bc3.textures[0].control0=0x0003FFC0;
+    if(!fut_graphics_software_aa2_draw_ready(&state,&retained_bc3,&surface))return 183;
+    for(unsigned bad=0;bad<7;++bad) {
+        FutGraphicsKelvinState variant=retained_bc3;FutGraphicsSoftwareState sw=state;
+        const char *opt=NULL;
+        switch(bad) {
+        case 0:variant.textures[0].format^=0x100;break;
+        case 1:variant.textures[0].control0^=1;break;
+        case 2:variant.textures[0].control0|=0x40000000;break;
+        case 3:variant.fragment.stage_program=1;break;
+        case 4:variant.textures[1].control0=1;break;
+        case 5:sw.register_words[1]^=1;break;
+        case 6:opt="RECOMP_UNTEXTURED_AA2_APPROXIMATION";break;
+        }
+        if(opt)_putenv_s(opt,"0");
+        if(fut_graphics_software_aa2_draw_ready(&sw,&variant,&surface))return 184;
+        if(opt)_putenv_s(opt,"1");
+    }
     kelvin.stencil_test=1;
     if(!fut_graphics_software_aa2_draw_ready(&state,&kelvin,&surface)) return 166;
     _putenv_s("RECOMP_UNTEXTURED_AA2_APPROXIMATION","0");

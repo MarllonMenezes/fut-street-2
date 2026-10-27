@@ -115,6 +115,14 @@ static int verify_screen(ID3D11Device *device,ID3D11DeviceContext *context,FutNa
     ID3D11DeviceContext_GSGetShader(context,&bound,NULL,NULL);
     CHECK(bound==occupied_gs,51);ID3D11GeometryShader_Release(bound);
     ID3D11DeviceContext_GSSetShader(context,NULL,NULL,0);ID3D11GeometryShader_Release(occupied_gs);
+    plan.rgb565_z16=1;
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)) && surface.rgb565_z16,69);
+    batch.vertices[0][0][2]=65535.0f;
+    CHECK(SUCCEEDED(fut_native_immediate_upload(&native,device,context,bytecode,&batch,0x201)) &&
+        SUCCEEDED(fut_native_immediate_probe_positions(&native,device,context,shader,bytecode,completion,positions,3,2000,NULL)) &&
+        fabsf(positions[0].clip[2]-1.0f)<0.000002f,70);
+    batch.vertices[0][0][2]=points[0][2];plan.rgb565_z16=0;
+    CHECK(SUCCEEDED(fut_native_vertex_surface_prepare(&surface,device,context,&plan)) && !surface.rgb565_z16,71);
     const float invalid_w[]={0,-0.0f,0x1p-65f,0x1p65f,INFINITY,NAN};
     for(unsigned i=0;i<sizeof(invalid_w)/sizeof(invalid_w[0]);++i) {
         batch.vertices[0][0][3]=invalid_w[i];
