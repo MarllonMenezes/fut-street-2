@@ -386,6 +386,46 @@ static int verify_dual_projective_mips(ID3D11Device *device,ID3D11DeviceContext 
         ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);
         ID3D11PixelShader_Release(ps);ID3D10Blob_Release(pblob);
     }
+    /* Authored single-mip BC2 red and linear ARGB8 blue, sampled together
+     * through the production affine AA2 fragment adapter on both passes. */
+    for(unsigned i=0;i<64;++i){uint32_t blue=0xFF0000FFu;memcpy(memory+256+i*4,&blue,4);}
+    state.textures[0].format=0x03310E29u;state.textures[0].filter=0x02062000u;
+    state.textures[1]=(FutGraphicsTextureState){.valid=0xFEBFu,.offset=256u,.format=0x00011229u,
+        .address=0x30303u,.control0=0x4003FFC0u,.control1=32u<<16,.filter=0x02062000u,.image_rect=(8u<<16)|8u};
+    for(unsigned stage=0;stage<2;++stage) {
+        FutGraphicsTexturePlan plan;
+        CHECK(fut_graphics_texture_plan(&state.textures[stage],&dma,&plan)==FUT_TEXTURE_READY &&
+            SUCCEEDED(fut_native_texture_upload(&textures[stage],device,&plan,dual_mip_read,memory)) &&
+            SUCCEEDED(fut_native_texture_sampler(&textures[stage],device,&state.textures[stage])),188);
+    }
+    configure(&state.fragment,0x08200920u,0x18201920u,0x21u);
+    state.fragment.color_output[0]=state.fragment.alpha_output[0]=0x30C00u;
+    ID3D11PixelShader *mixed_ps=NULL;ID3DBlob *mixed_blob=NULL;
+    CHECK(SUCCEEDED(fut_native_fragment_compile_aa2_affine(device,&state,textures,1,&mixed_ps,&mixed_blob)) &&
+        SUCCEEDED(fut_native_fragment_linkage(vblob,mixed_blob)),189);
+    const float scales[4]={.5f,4.0f,0,0},clear[4]={-1,-1,-1,-1};
+    ID3D11DeviceContext_UpdateSubresource(context,(ID3D11Resource*)scale_buffer,0,NULL,scales,0,0);
+    ID3D11DeviceContext_ClearRenderTargetView(context,view,clear);ID3D11DeviceContext_OMSetRenderTargets(context,1,&view,NULL);
+    ID3D11DeviceContext_VSSetShader(context,vs,NULL,0);ID3D11DeviceContext_PSSetShader(context,mixed_ps,NULL,0);
+    ID3D11DeviceContext_VSSetConstantBuffers(context,3,1,&scale_buffer);
+    for(unsigned stage=0;stage<2;++stage) {
+        ID3D11DeviceContext_PSSetShaderResources(context,stage,1,&textures[stage].view);
+        ID3D11DeviceContext_PSSetSamplers(context,stage,1,&textures[stage].sampler);
+    }
+    for(unsigned slot=0;slot<2;++slot) {
+        ID3D11DeviceContext_VSSetConstantBuffers(context,4,1,&passes[slot]);
+        ID3D11DeviceContext_PSSetConstantBuffers(context,4,1,&passes[slot]);
+        ID3D11DeviceContext_Draw(context,3,0);
+    }
+    ID3D11DeviceContext_OMSetRenderTargets(context,0,NULL,NULL);
+    ID3D11DeviceContext_CopyResource(context,(ID3D11Resource*)readback,(ID3D11Resource*)target);
+    CHECK(fut_native_constants_finish(completion,NULL,2000,NULL),190);D3D11_MAPPED_SUBRESOURCE mix;
+    CHECK(SUCCEEDED(ID3D11DeviceContext_Map(context,(ID3D11Resource*)readback,0,D3D11_MAP_READ,0,&mix)),191);
+    for(unsigned y=1;y<7;++y)for(unsigned x=2;x<14;++x) {
+        const float *v=(const float*)((const unsigned char*)mix.pData+y*mix.RowPitch)+x*4;
+        CHECK(fabsf(v[0]-.5f)<.002f && fabsf(v[1])<.002f && fabsf(v[2]-.5f)<.002f && fabsf(v[3]-1)<.002f,192);
+    }
+    ID3D11DeviceContext_Unmap(context,(ID3D11Resource*)readback,0);ID3D11PixelShader_Release(mixed_ps);ID3D10Blob_Release(mixed_blob);
     _putenv_s("RECOMP_PROJECTIVE_AA2_APPROXIMATION","0");
     ID3D11DeviceContext_ClearState(context);fut_native_pipeline_destroy(&pipeline);
     for(unsigned stage=0;stage<2;++stage)fut_native_texture_destroy(&textures[stage]);
@@ -597,6 +637,18 @@ int main(void)
     configure(&kelvin.fragment,0x04200000,0x14200000,0);
     CHECK(SUCCEEDED(fut_native_fragment_compile(device,&kelvin,textures,&shader,&bytecode)) && shader && bytecode,20);
     ID3D11PixelShader_Release(shader);ID3D10Blob_Release(bytecode);
+    /* Compile the 320-specific adapter with its independent opt-in. The
+     * non-null sentinel is only inspected by the compiler, never bound. */
+    configure(&kelvin.fragment,0x08200000,0x14200000,1);
+    textures[0].valid=1;textures[0].view=(ID3D11ShaderResourceView*)(uintptr_t)1;
+    textures[0].plan.width=1280;textures[0].plan.height=480;textures[0].quincunx_experiment=2;
+    textures[0].sampling_state=kelvin.textures[0];shader=NULL;bytecode=NULL;
+    _putenv_s("RECOMP_QUINCUNX_APPROXIMATION","1");_putenv_s("RECOMP_QUINCUNX_320_APPROXIMATION","0");
+    CHECK(fut_native_fragment_compile(device,&kelvin,textures,&shader,&bytecode)==E_NOTIMPL && !shader && !bytecode,193);
+    _putenv_s("RECOMP_QUINCUNX_APPROXIMATION","0");_putenv_s("RECOMP_QUINCUNX_320_APPROXIMATION","1");
+    CHECK(SUCCEEDED(fut_native_fragment_compile(device,&kelvin,textures,&shader,&bytecode)) && shader && bytecode,194);
+    ID3D11PixelShader_Release(shader);ID3D10Blob_Release(bytecode);
+    _putenv_s("RECOMP_QUINCUNX_320_APPROXIMATION","0");
     fut_native_constants_destroy(&completion);ID3D11DeviceContext_Release(context);ID3D11Device_Release(device);
     puts("Combiner HLSL: parallel RGB/alpha, input mapping, output bias/scale/dot and strict rejection verified on WARP; no NV2A precision/original draw proof");
     return 0;

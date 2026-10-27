@@ -172,3 +172,19 @@ int fut_native_immediate_quincunx_coordinates(const FutNativePosition *p,unsigne
     }
     return 1;
 }
+
+int fut_native_immediate_quincunx_320_coordinates(const FutNativePosition *p,unsigned count)
+{
+    if(!p || count!=6 || !(fut_native_immediate_constant_coordinates(p,count)&1)) return 0;
+    static const unsigned corner[6][2]={{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
+    for(unsigned i=0;i<6;++i) {
+        float x=corner[i][0]?320.0f:0.0f;
+        float y=corner[i][1]?0x1.e00002p+7f:0.0f;
+        float cy=corner[i][1]?-0x1.fffffep-1f:0x1.fffffep-1f;
+        if(p[i].screen[0]!=x || p[i].screen[1]!=y || p[i].screen[2]!=0 ||
+            p[i].clip[0]!=(corner[i][0]?1.0f:-1.0f) || p[i].clip[1]!=cy || p[i].clip[2]!=0 ||
+            p[i].texture[0][0]!=(corner[i][0]?1280.0f:0.0f) ||
+            p[i].texture[0][1]!=(corner[i][1]?480.0f:0.0f) || p[i].texture[0][2]!=1.0f) return 0;
+    }
+    return 1;
+}

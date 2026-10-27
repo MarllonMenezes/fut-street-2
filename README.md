@@ -16,34 +16,32 @@ Projeto comunitário de **recompilação estática de FIFA Street 2 (Xbox origin
 
 ## Estado verificável — 27 de outubro de 2026
 
-**NOT_READY — ainda não é um jogo recompilado jogável.** A última execução
-limitada preparou geometria original, mas cenário apresentado, controles em
-partida e partida curta ainda não foram comprovados.
+**NOT_READY — ainda não é um jogo recompilado jogável.** Cenário apresentado,
+controles em partida e partida curta ainda não foram comprovados.
 
-Uma chamada indireta observada para `0x00050060` apontou para código original
-não incluído na geração anterior. A função foi recuperada a partir do XBE local,
-com validação da referência em `.rdata`, fluxo de controle e limites, e o
-executável foi reconstruído com a nova entrada de despacho. A execução mais
-recente seguiu outro percurso e não demonstrou a chamada ou o retorno dessa
-função. Código gerado proprietário permanece local.
+Um strip original de **5.416 índices** foi executado e expandido a 16.242
+vértices: as duas passadas AA2 registraram 32.484 vértices de entrada,
+784.759 invocações de pixel shader e gravação de superfície. Isso demonstra
+rasterização desse desenho, não sua apresentação nem gameplay.
 
-Uma cópia não atômica da fila indica um strip de **5.416 índices**, após uma
-recusa real aos 4.096. A capacidade foi ajustada para essa contagem; testes
-verificam degenerados, ordem e expansão a 16.242 vértices, além de upload,
-sondagem e desenho WARP com gravação de superfície. O trecho posterior à
-recusa na cópia não havia sido executado, e o strip original ainda precisa ser
-repetido para comprovar seu desenho.
+O experimento quincunx tem uma opção separada, desligada por padrão, para o
+caso observado de 1280×480 → 320×240 RGB565/Z16. O modelo de cinco amostras
+usa um deslocamento experimental de 0,001 texel para estabilizar a seleção no
+hardware D3D testado. Os dois triângulos e pixels RGB565 foram comparados a
+uma referência CPU no WARP e na GPU local; a profundidade Z16 permaneceu
+intacta. Fase, minificação e fidelidade NV2A não foram medidas. As execuções
+recentes não repetiram esse desenho original antes do limite ou de outra recusa.
 
-**Os 45 gates obrigatórios e os 33 testes da ferramenta de recuperação
-passaram.** O bloqueio atual é o filtro quincunx numa textura 1280×480 desenhada
-para uma superfície RGB565/Z16 de 320×240. Os seis vértices originais foram
-observados, mas a chamada foi recusada antes da amostragem. O experimento
-existente é restrito a 1280×480 → 640×480; este uso permanece recusado.
+Um gate restrito admite também o estado observado de BC2 64×64 no primeiro
+estágio e ARGB8 linear 256×256 no segundo, sob os opt-ins e validações AA2
+existentes. Testes verificam os estados recusados e uma composição sintética
+com ambos os recursos nas duas passadas. A combinação original ainda precisa
+ser repetida. **Os 45 gates obrigatórios passaram.**
 
-O backend carregou a superfície RGB565/Z16 e executou o shader de vértices do
-quad. Testes WARP verificam preservação de pixels e padding e um desenho com
-Z16 aprovado e reprovado. Limpeza, stencil e dithering nesse formato continuam
-recusados. Esses resultados não provam fidelidade NV2A ou apresentação de cena.
+A chamada original `0x00050060` foi recuperada e incorporada ao executável; o
+percurso recente não confirmou sua chamada e retorno. O próximo passo é
+executar novamente, identificar a primeira recusa e validar apresentação,
+controles e uma partida curta com a lógica original.
 
 `native-presented-latest.bmp` só é promovido após recibo DXGI e aposentadoria
 correlacionada da fila original; a imagem pendente fica separada. Cada execução
@@ -58,6 +56,9 @@ implementação externa. O REA não realizou análise nativa: Ghidra/IDA não es
 configurados e sua captura de processos não suporta Windows neste ambiente.
 
 ### Opções de diagnóstico e reprodução
+
+`-Quincunx320Approximation` habilita somente o experimento 1280×480 →
+320×240 RGB565/Z16; é separado e desligado por padrão.
 
 `-ProjectiveAa2Approximation`, junto de `-Aa2Approximation`, habilita o
 experimento de interpolação em perspectiva. É desligado por padrão e exige

@@ -270,15 +270,16 @@ HRESULT fut_native_texture_quincunx_experiment(FutNativeTexture *n,
     if(!n) return E_INVALIDARG;
     n->sampling_ready=n->zero_rgb_candidate=n->quincunx_experiment=0;
     if(!s || !n->valid || !n->texture || !n->view) return E_INVALIDARG;
-    if(!fut_graphics_quincunx_approximation_enabled() || verified!=1 ||
+    if(!((verified==1 && fut_graphics_quincunx_approximation_enabled()) ||
+         (verified==2 && fut_graphics_quincunx_320_approximation_enabled())) ||
         n->plan.width!=1280 || n->plan.height!=480 || n->plan.pitch!=5120 ||
         n->plan.bytes_per_pixel!=4 || (s->valid&0xBF)!=0xBF ||
         s->format!=(0x11228u|n->plan.dma_context) ||
         s->filter!=0x04072000u ||
-        (s->address!=0x00030303u && s->address!=0x00010303u) ||
+        (s->address!=0x00030303u && (verified!=1 || s->address!=0x00010303u)) ||
         s->control0!=0x4003FFC0u ||
         s->control1!=(5120u<<16) || s->image_rect!=((1280u<<16)|480u)) return E_NOTIMPL;
     /* This approximate Texture2D.Load kernel clamps U/V itself and never
      * accesses W. Both observed W modes share the same 2D model. */
-    n->quincunx_experiment=1;n->sampling_state=*s;return S_OK;
+    n->quincunx_experiment=verified;n->sampling_state=*s;return S_OK;
 }

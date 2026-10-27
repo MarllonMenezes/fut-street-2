@@ -678,8 +678,9 @@ static int native_prepare_textures(NativeGraphicsState *state)
         if(FAILED(hr) && stage==0 && state->quincunx_coordinates &&
             state->immediate.ready && !state->immediate.active &&
             state->native_surfaces.plan.samples==1 &&
-            state->native_surfaces.plan.width==640 && state->native_surfaces.plan.height==480)
-            hr=fut_native_texture_quincunx_experiment(&state->textures[stage],texture,1);
+            ((state->quincunx_coordinates==1 && state->native_surfaces.plan.width==640 && state->native_surfaces.plan.height==480 && !state->native_surfaces.plan.rgb565_z16) ||
+             (state->quincunx_coordinates==2 && state->native_surfaces.plan.width==320 && state->native_surfaces.plan.height==240 && state->native_surfaces.plan.rgb565_z16)))
+            hr=fut_native_texture_quincunx_experiment(&state->textures[stage],texture,state->quincunx_coordinates);
         if (FAILED(hr)) {
             fprintf(stderr,"[GRAPHICS] texture sampling translation pending: stage=%u filter=%08X address=%08X control=%08X HRESULT=%08lX\n",
                 stage,texture->filter,texture->address,texture->control0,hr);
@@ -692,7 +693,9 @@ static int native_prepare_textures(NativeGraphicsState *state)
             fprintf(stderr,"[GRAPHICS] zero-RGB snapshot candidate: stage=%u finite unit-q coordinates proven; alpha/residual sample still unimplemented\n",stage);
             continue;
         }
-        if(state->textures[stage].quincunx_experiment)
+        if(state->textures[stage].quincunx_experiment==2)
+            fputs("[GRAPHICS] EXPERIMENTAL_QUINCUNX_320: five-tap model, 1280x480 to RGB565 320x240; phase/minification and NV2A fidelity unverified; NOT_READY\n",stderr);
+        if(state->textures[stage].quincunx_experiment==1)
             fputs("[GRAPHICS] AUTHORIZED_QUINCUNX_APPROXIMATION: five taps center=1/2 corners=1/8, parity-preserving edge clamp, identity color space; 1280x480->640x480 only; no NV2A precision/edge validation\n",stderr);
         ID3D11DeviceContext_PSSetShaderResources(state->context,stage,1,&state->textures[stage].view);
         ID3D11DeviceContext_PSSetSamplers(state->context,stage,1,&state->textures[stage].sampler);
@@ -1230,6 +1233,9 @@ static int native_prepare_draw(NativeGraphicsState *state)
                 rop.compare_always_read,rop.depth_read,rop.dont_cull_uncompressed,rop.baseline[0],rop.baseline[1]);
         return 0;
     }
+    if(aa2 && state->kelvin.fragment.stage_program==0x21u &&
+        state->kelvin.textures[0].format==0x06610E29u && state->kelvin.textures[1].format==0x00011229u)
+        fputs("[GRAPHICS] EXPERIMENTAL_BC2_LINEAR_SECONDARY_AA2: captured BC2 plus linear ARGB8 stage; host filtering/depth approximation, NV2A fidelity unverified; NOT_READY\n",stderr);
     if(aa2 && state->kelvin.textures[0].format==0x09910C29u &&
         fut_graphics_dxt1_noise_approximation_enabled())
         fputs("[GRAPHICS] AUTHORIZED_DXT1_NOISE_APPROXIMATION: BC1 standard decoding, unknown NV2A noise omitted; exact 512x512/640x480 AA2 scope; NOT_READY\n",stderr);
@@ -1400,6 +1406,8 @@ static int native_prepare_immediate(NativeGraphicsState *state)
     state->constant_coordinates=fut_native_immediate_constant_coordinates(positions,state->native_immediate.count);
     state->projective_coordinates=fut_native_immediate_projective_coordinates(positions,state->native_immediate.count);
     state->quincunx_coordinates=fut_native_immediate_quincunx_coordinates(positions,state->native_immediate.count);
+    if(!state->quincunx_coordinates && fut_native_immediate_quincunx_320_coordinates(positions,state->native_immediate.count))
+        state->quincunx_coordinates=2;
     if(!state->constant_coordinates && !(state->projective_coordinates&1u)) {
         const char *capture=getenv("RECOMP_GRAPHICS_SNAPSHOT");
         if(capture && !strcmp(capture,"1")) {

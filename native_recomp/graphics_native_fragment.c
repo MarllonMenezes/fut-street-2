@@ -161,10 +161,14 @@ static HRESULT compile_fragment(ID3D11Device *device,const FutGraphicsKelvinStat
                 n=snprintf(source+used,sizeof(source)-used,
                     "float4 T%u=float4(0,0,0,tex%u.Load(int3(0,0,0)).a);\n",stage,stage);
             } else if(native->quincunx_experiment) {
-                if(aa2 || stage!=0 || !fut_graphics_quincunx_approximation_enabled() ||
+                if(aa2 || stage!=0 || !((native->quincunx_experiment==1 && fut_graphics_quincunx_approximation_enabled()) ||
+                    (native->quincunx_experiment==2 && fut_graphics_quincunx_320_approximation_enabled())) ||
                     native->sampling_ready || native->plan.width!=1280 || native->plan.height!=480)
                     return E_NOTIMPL;
-                n=snprintf(source+used,sizeof(source)-used,
+                if(native->quincunx_experiment==2)
+                    n=snprintf(source+used,sizeof(source)-used,
+                        "float4 T%u=fut_quincunx_experiment(tex%u,float4(input.t%u.xy+0.001f,input.t%u.zw));\n",stage,stage,stage,stage);
+                else n=snprintf(source+used,sizeof(source)-used,
                     "float4 T%u=fut_quincunx_experiment(tex%u,input.t%u);\n",stage,stage,stage);
             } else {
                 if(!native->sampling_ready || !native->sampler) return E_NOTIMPL;

@@ -232,6 +232,20 @@ int fut_graphics_software_aa2_draw_ready(const FutGraphicsSoftwareState *s,
             s->noise_valid!=1 || s->dxt1_noise!=1 ||
             s->rdi_index[0]!=0xE00050 || s->rdi_index[1]!=0xDF0008 ||
             s->rdi_value[0]!=1 || s->rdi_value[1]!=1) return 0;
+        /* Observed BC2 64x64 plus linear ARGB8 256x256; normal fragment,
+         * coordinate, DMA and depth-pipeline validation remain mandatory. */
+        const FutGraphicsTextureState *t1=&k->textures[1];
+        if(bc2_family && t0->format==0x06610E29u && t0->address==0x10101u &&
+            (k->fragment.valid&2u) && k->fragment.stage_program==0x21u &&
+            k->depth_test==1 && !k->stencil_test && k->draw.depth_write==1 &&
+            k->compress_depth==1 && k->control0==0x00100001u &&
+            (t1->valid&0xBFu)==0xBFu && t1->format==0x00011229u &&
+            t1->address==0x00030303u && t1->control0==0x4003FFC0u &&
+            t1->control1==0x04000000u && t1->filter==0x02062000u &&
+            t1->image_rect==0x01000100u && !(t1->offset&3u) &&
+            t1->offset<=0x04000000u-262144u &&
+            !(k->textures[2].control0&0x40000000u) && !(k->textures[3].control0&0x40000000u))
+            return 1;
         unsigned secondary_projective=k->fragment.stage_program&~31u;
         for(unsigned stage=1;stage<4;++stage)
             secondary_projective|=k->textures[stage].control0&0x40000000u;

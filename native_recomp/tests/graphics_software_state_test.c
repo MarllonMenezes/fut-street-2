@@ -169,6 +169,28 @@ static int verify_projective_stages(const FutGraphicsSoftwareState *baseline)
         }
         if(opt)_putenv_s(opt,"1");
     }
+    /* Captured single-level BC2 plus linear ARGB8 stage1. */
+    k=base;k.fragment.stage_program=0x21;k.textures[0].format=0x06610E29;
+    k.textures[0].filter=0x02062000;k.textures[0].address=0x10101;
+    k.textures[1]=(FutGraphicsTextureState){.valid=0xFEBF,.format=0x00011229,.offset=0x03FC0000,
+        .address=0x30303,.control0=0x4003FFC0,.control1=0x04000000,.filter=0x02062000,.image_rect=0x01000100};
+    if(!fut_graphics_software_aa2_draw_ready(baseline,&k,&surface))return 185;
+    for(unsigned bad=0;bad<17;++bad) {
+        FutGraphicsKelvinState v=k;FutGraphicsSoftwareState s=*baseline;const char *opt=NULL;
+        switch(bad) {
+        case 0:v.textures[0].format=0x06710E29;break;case 1:v.textures[0].address=0x10303;break;
+        case 2:v.textures[1].valid&=~1u;break;case 3:v.textures[1].format^=0x100;break;
+        case 4:v.textures[1].offset+=4;break;case 5:v.textures[1].offset--;break;
+        case 6:v.textures[1].address^=1;break;case 7:v.textures[1].control0^=0x40;break;
+        case 8:v.textures[1].control1^=0x10000;break;case 9:v.textures[1].filter^=1;break;
+        case 10:v.textures[1].image_rect^=1;break;case 11:v.fragment.stage_program=1;break;
+        case 12:v.depth_test=0;break;case 13:v.stencil_test=1;break;
+        case 14:s.register_words[1]^=1;break;case 15:opt=opts[0];break;case 16:opt=opts[2];break;
+        }
+        if(opt)_putenv_s(opt,"0");
+        if(fut_graphics_software_aa2_draw_ready(&s,&v,&surface)) {fprintf(stderr,"BC2 linear stage negative %u\n",bad);return 186;}
+        if(opt)_putenv_s(opt,"1");
+    }
     return 0;
 }
 int main(void)

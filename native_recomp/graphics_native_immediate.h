@@ -25,6 +25,7 @@ unsigned fut_native_immediate_projective_coordinates(const FutNativePosition *po
 /* Exact observed fullscreen triangle and texel-space mapping only. A scope
  * certificate for the authorized resolve experiment, NOT NV2A fidelity. */
 int fut_native_immediate_quincunx_coordinates(const FutNativePosition *positions,unsigned count);
+int fut_native_immediate_quincunx_320_coordinates(const FutNativePosition *positions,unsigned count);
 /* Execute VS only with SO_NO_RASTERIZED_STREAM, query, copy and validate.
  * Finite signed screen W with magnitude [2^-64,2^64]; preserve its sign for
  * homogeneous clipping. No pixels, batch consumption,
